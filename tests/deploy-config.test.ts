@@ -13,6 +13,9 @@ const personalRuntimesCompose = await Bun.file(
 const testbedCompose = await Bun.file(
   "deploy/testbed/compose/docker-compose.yml"
 ).text();
+const llmAbCompose = await Bun.file(
+  "deploy/testbed/compose/docker-compose.llm-ab.yml"
+).text();
 const agentGatewayCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.agentgateway.yml"
 ).text();
@@ -986,5 +989,40 @@ describe("dev deploy config", () => {
       '{{- include "burble.appSelectorLabels" . | nindent 14 }}'
     );
     expect(k8sNetworkPolicy).not.toContain("ingress: []");
+  });
+});
+
+describe("local LLM A/B testbed", () => {
+  test("keeps direct and LiteLLM runtimes identical except for inference routing", () => {
+    expect(llmAbCompose).toContain("name: burble-llm-ab");
+    expect(llmAbCompose).toContain("runtime-direct:");
+    expect(llmAbCompose).toContain("runtime-litellm:");
+    expect(llmAbCompose).toContain("openai-direct:");
+    expect(llmAbCompose).toContain("ghcr.io/berriai/litellm:v1.92.0");
+    expect(llmAbCompose).toContain("OPENCLAW_MODEL_API: openai-responses");
+    expect(llmAbCompose).toContain("AI_MODEL: ${AI_MODEL:-openai:gpt-5.4}");
+    expect(llmAbCompose).toContain(
+      "AGENT_RUNTIME_INFERENCE_BASE_URL: http://llm-gw:4000/v1"
+    );
+    expect(llmAbCompose).toContain(
+      "AGENT_RUNTIME_INFERENCE_BASE_URL: http://openai-direct:4100/v1"
+    );
+    expect(llmAbCompose).toContain(
+      "OPENAI_API_KEY: sk-BURBLE-INFERENCE-PROXY"
+    );
+    expect(llmAbCompose.match(/Dockerfile\.openclaw-cli/g)).toHaveLength(1);
+    expect(llmAbCompose.match(/build: \*openclaw-build/g)).toHaveLength(1);
+    expect(
+      llmAbCompose.match(
+        /OPENCLAW_VERSION: \$\{OPENCLAW_VERSION:-2026\.6\.11\}/g
+      )
+    ).toHaveLength(1);
+    expect(llmAbCompose).toContain('profiles: ["soak"]');
+    expect(llmAbCompose).toContain(
+      "LLM_AB_DIRECT_URL: http://runtime-direct:8080"
+    );
+    expect(llmAbCompose).toContain(
+      "LLM_AB_LITELLM_URL: http://runtime-litellm:8080"
+    );
   });
 });

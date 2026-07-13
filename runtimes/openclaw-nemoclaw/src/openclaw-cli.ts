@@ -433,9 +433,9 @@ async function runOpenClawGatewayHttpRequest(
       agentId,
       attemptSessionId
     );
-    const llmCorrelationId = hashOpenClawPromptCacheKey(attemptSessionKey);
+    const gatewayCorrelationId = hashOpenClawPromptCacheKey(attemptSessionKey);
     logInfo(
-      `OpenClaw gateway provider correlation runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} llmCorrelationId=${llmCorrelationId}`
+      `OpenClaw gateway provider correlation pending runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} gatewayCorrelationId=${gatewayCorrelationId}`
     );
     const hardDeadlineRemainingMs =
       openClawGatewayHardDeadlineRemainingMs(hardDeadlineAt);
@@ -602,6 +602,15 @@ async function runOpenClawGatewayHttpRequest(
         `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
       );
       return { exitCode: 1, stdout, stderr, ...usageTelemetry };
+    } finally {
+      const llmCorrelationId = await resolveOpenClawProviderCorrelationId(
+        config,
+        agentId,
+        attemptSessionKey
+      );
+      logInfo(
+        `OpenClaw gateway provider correlation resolved runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} gatewayCorrelationId=${gatewayCorrelationId} llmCorrelationId=${llmCorrelationId ?? "unresolved"}`
+      );
     }
   }
   throw new Error("OpenClaw gateway HTTP retry loop exhausted unexpectedly");
@@ -1117,6 +1126,36 @@ function buildGatewayHttpAttemptSessionId(
 
 function hashOpenClawPromptCacheKey(sessionKey: string): string {
   return hashLogValue(Array.from(sessionKey).slice(0, 64).join(""));
+}
+
+export async function resolveOpenClawProviderCorrelationId(
+  config: RuntimeConfig,
+  agentId: string,
+  sessionKey: string
+): Promise<string | null> {
+  const sessionsPath = join(
+    config.openClawStateDir,
+    "agents",
+    agentId,
+    "sessions",
+    "sessions.json"
+  );
+  try {
+    const parsed = JSON.parse(await readFile(sessionsPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    const entry = parsed[sessionKey];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return null;
+    }
+    const sessionId = (entry as Record<string, unknown>).sessionId;
+    return typeof sessionId === "string" && sessionId.trim()
+      ? hashOpenClawPromptCacheKey(sessionId)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function buildGatewayHttpResponsesUrl(config: RuntimeConfig): string {

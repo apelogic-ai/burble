@@ -199,7 +199,14 @@ function buildProviderConfig(
             api: modelApi,
             timeoutSeconds: 300,
             models: [
-              ...providerModelsFor(parsed.provider, parsed, fallbackModels)
+              ...providerModelsFor(parsed.provider, parsed, fallbackModels).map(
+                (model) => ({
+                  ...model,
+                  compat: {
+                    supportsPromptCacheKey: true
+                  }
+                })
+              )
             ]
           }
         }

@@ -1,0 +1,107 @@
+name: burble-llm-ab
+
+x-openclaw-build: &openclaw-build
+  context: ../../..
+  dockerfile: runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli
+  args:
+    OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.6.11}
+
+x-openclaw-environment: &openclaw-environment
+  PORT: "8080"
+  BURBLE_TOOL_GATEWAY_URL: http://127.0.0.1:9/internal/tools
+  BURBLE_INTERNAL_TOKEN: bench-internal-token
+  AGENT_RUNTIME_ENGINE: openclaw
+  OPENCLAW_TIMEOUT_MS: "180000"
+  OPENCLAW_MODEL_API: openai-responses
+  OPENCLAW_FAST_MODE: "false"
+  OPENCLAW_SETUP_ON_START: "true"
+  OPENCLAW_VALIDATE_ON_START: "true"
+  AI_MODEL: ${AI_MODEL:-openai:gpt-5.4}
+  OPENAI_API_KEY: sk-BURBLE-INFERENCE-PROXY
+
+x-openclaw-healthcheck: &openclaw-healthcheck
+  test:
+    - CMD
+    - bun
+    - -e
+    - fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+  interval: 5s
+  timeout: 3s
+  retries: 30
+  start_period: 30s
+
+services:
+  openai-direct:
+    image: oven/bun:1.2.21-alpine
+    command: ["bun", "/app/openai-forwarder.ts"]
+    environment:
+      PORT: "4100"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+    volumes:
+      - ../../../src/testbed/openai-forwarder.ts:/app/openai-forwarder.ts:ro
+
+  llm-gw:
+    image: ghcr.io/berriai/litellm:v1.92.0
+    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000"]
+    ports:
+      - "14000:4000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+    volumes:
+      - ../../dev/compose/litellm/config.yaml:/app/config.yaml:ro
+      - ../../dev/compose/litellm/burble_observability.py:/app/burble_observability.py:ro
+
+  runtime-direct:
+    image: burble-openclaw-ab:dev
+    build: *openclaw-build
+    ports:
+      - "18080:8080"
+    environment:
+      <<: *openclaw-environment
+      AGENT_RUNTIME_INFERENCE_BASE_URL: http://openai-direct:4100/v1
+    volumes:
+      - openclaw_direct_data:/data
+    healthcheck: *openclaw-healthcheck
+    depends_on:
+      - openai-direct
+
+  runtime-litellm:
+    image: burble-openclaw-ab:dev
+    ports:
+      - "18081:8080"
+    environment:
+      <<: *openclaw-environment
+      AGENT_RUNTIME_INFERENCE_BASE_URL: http://llm-gw:4000/v1
+    volumes:
+      - openclaw_litellm_data:/data
+    depends_on:
+      - llm-gw
+    healthcheck: *openclaw-healthcheck
+
+  soak:
+    image: oven/bun:1.2.21-alpine
+    profiles: ["soak"]
+    working_dir: /app
+    command:
+      - bun
+      - scripts/llm-ab.ts
+      - run
+      - --iterations
+      - ${LLM_AB_ITERATIONS:-60}
+      - --interval-seconds
+      - ${LLM_AB_INTERVAL_SECONDS:-60}
+    environment:
+      LLM_AB_DIRECT_URL: http://runtime-direct:8080
+      LLM_AB_LITELLM_URL: http://runtime-litellm:8080
+    volumes:
+      - ../../../scripts/llm-ab.ts:/app/scripts/llm-ab.ts:ro
+      - ../../../scripts/runtime-bench.ts:/app/scripts/runtime-bench.ts:ro
+    depends_on:
+      runtime-direct:
+        condition: service_healthy
+      runtime-litellm:
+        condition: service_healthy
+
+volumes:
+  openclaw_direct_data:
+  openclaw_litellm_data:

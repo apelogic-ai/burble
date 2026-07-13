@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   resolveOpenClawCliArgv,
   resolveOpenClawCliCommand,
+  resolveOpenClawProviderCorrelationId,
   runCliCommand,
   runCliCommandStream,
   runOpenClawCliRequest,
@@ -10,7 +11,7 @@ import {
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
 import type { RunEvent } from "../../../runtimes/openclaw-nemoclaw/src/types";
 import { providerToolCatalog } from "../../../src/providers/catalog";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -63,6 +64,30 @@ describe("OpenClaw CLI command resolution", () => {
     expect(resolveOpenClawCliCommand("openclaw", () => false)).toBe("openclaw");
     expect(resolveOpenClawCliCommand("/custom/openclaw", () => true)).toBe(
       "/custom/openclaw"
+    );
+  });
+});
+
+describe("OpenClaw provider correlation", () => {
+  test("hashes the internal session id used as the downstream prompt cache key", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "burble-openclaw-correlation-"));
+    const sessionsDir = join(stateDir, "agents", "main", "sessions");
+    const sessionKey = "agent:main:explicit:burble-step-example";
+    const internalSessionId = "566217da-d5a3-4afb-a65c-2048d7f6e79c";
+    await mkdir(sessionsDir, { recursive: true });
+    await writeFile(
+      join(sessionsDir, "sessions.json"),
+      JSON.stringify({ [sessionKey]: { sessionId: internalSessionId } })
+    );
+
+    expect(
+      await resolveOpenClawProviderCorrelationId(
+        { ...config, openClawStateDir: stateDir },
+        "main",
+        sessionKey
+      )
+    ).toBe(
+      createHash("sha256").update(internalSessionId).digest("hex").slice(0, 16)
     );
   });
 });
@@ -4490,17 +4515,11 @@ describe("runOpenClawCliRequest", () => {
     );
     expect(requests[0].body.model).toBe("openclaw/main");
     expect(requests[0].body.input).toContain("what can you do?");
-    const promptCacheKey = Array.from(
-      requests[0].headers.get("x-openclaw-session-key") ?? ""
-    )
-      .slice(0, 64)
-      .join("");
-    const correlationId = createHash("sha256")
-      .update(promptCacheKey)
-      .digest("hex")
-      .slice(0, 16);
+    expect(requests[0].body.metadata).toBeUndefined();
     expect(
-      logs.some((line) => line.includes(`llmCorrelationId=${correlationId}`))
+      logs.some((line) =>
+        line.includes("llmCorrelationId=unresolved")
+      )
     ).toBe(true);
   });
 

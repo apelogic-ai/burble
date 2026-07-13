@@ -16,6 +16,7 @@
     "release:check": "bun scripts/check-release-metadata.ts",
     "provider-tools:generate-hints": "bun src/providers/generate-runtime-tool-hints.ts",
     "openclaw:replay": "bun scripts/openclaw-replay-harness.ts",
+    "llm-ab": "bun scripts/llm-ab.ts",
     "runtime-sdk:generate-schema": "bun packages/runtime-sdk/scripts/generate-json-schema.ts",
     "test:e2e:runtime-readiness": "BURBLE_E2E_RUNTIMES=1 bun test tests/e2e/runtime-readiness.test.ts",
     "testbed:up": "bun scripts/testbed-up.ts",

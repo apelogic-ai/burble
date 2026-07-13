@@ -136,6 +136,12 @@ describe("buildOpenClawLlmPatch", () => {
         (model: { id: string }) => model.id
       )
     ).toEqual(["gpt-5.4", "gpt-5.4-mini"]);
+    expect(
+      patch.models.providers.openai.models.every(
+        (model: { compat?: { supportsPromptCacheKey?: boolean } }) =>
+          model.compat?.supportsPromptCacheKey === true
+      )
+    ).toBe(true);
     expect(JSON.stringify(patch)).not.toContain("sk-");
   });
 

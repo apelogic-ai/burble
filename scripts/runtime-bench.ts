@@ -6,7 +6,7 @@ type RuntimeEvent =
   | { type: "final"; response: { classification: string; text: string; usage?: unknown } }
   | { type: "error"; message: string };
 
-type BenchOptions = {
+export type BenchOptions = {
   url: string;
   label: string;
   iterations: number;
@@ -14,10 +14,12 @@ type BenchOptions = {
   stream: boolean;
   executionMode: "default" | "openclaw-native";
   routeId: string;
+  token?: string;
+  scheduled?: boolean;
   questions: string[];
 };
 
-type BenchResult = {
+export type BenchResult = {
   runId: string;
   label: string;
   question: string;
@@ -59,7 +61,7 @@ async function main(): Promise<void> {
   printSummary(results);
 }
 
-async function runOnce(
+export async function runOnce(
   options: BenchOptions,
   question: string,
   iteration: number
@@ -73,7 +75,8 @@ async function runOnce(
       method: "POST",
       headers: {
         "accept": options.stream ? "application/x-ndjson" : "application/json",
-        "content-type": "application/json"
+        "content-type": "application/json",
+        "authorization": `Bearer ${options.token ?? "bench-internal-token"}`
       },
       body: JSON.stringify(body)
     });
@@ -223,7 +226,11 @@ async function readNdjsonRun(input: {
   };
 }
 
-function buildRunRequest(options: BenchOptions, question: string, runId: string): unknown {
+export function buildRunRequest(
+  options: BenchOptions,
+  question: string,
+  runId: string
+): unknown {
   return {
     runId,
     principal: {
@@ -239,6 +246,25 @@ function buildRunRequest(options: BenchOptions, question: string, runId: string)
     },
     input: {
       text: question,
+      ...(options.scheduled
+        ? {
+            scheduledJob: {
+              jobId: "job_bench",
+              capabilityProfile: "scheduled_job",
+              allowedTools: [
+                "web_search",
+                "web_fetch",
+                "burble_provider_call"
+              ],
+              routeId: options.routeId,
+              runtimeType: "openclaw",
+              stateRefs: [],
+              visibilityPolicy: {
+                maxOutputVisibility: "user_private"
+              }
+            }
+          }
+        : {}),
       conversation: {
         routeId: options.routeId,
         source: "slack",
@@ -308,6 +334,8 @@ function parseArgs(args: string[]): BenchOptions {
   let stream = true;
   let executionMode: BenchOptions["executionMode"] = "openclaw-native";
   let routeId = "convrt_bench";
+  let token = Bun.env.BURBLE_RUNTIME_BENCH_TOKEN ?? "bench-internal-token";
+  let scheduled = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? "";
@@ -344,6 +372,12 @@ function parseArgs(args: string[]): BenchOptions {
       case "--route-id":
         routeId = nextValue();
         break;
+      case "--token":
+        token = nextValue();
+        break;
+      case "--scheduled":
+        scheduled = readBoolean(nextValue(), "--scheduled");
+        break;
       case "--help":
         printHelp();
         process.exit(0);
@@ -360,6 +394,8 @@ function parseArgs(args: string[]): BenchOptions {
     stream,
     executionMode,
     routeId,
+    token,
+    scheduled,
     questions: questions.length ? questions : defaultQuestions
   };
 }
@@ -391,7 +427,7 @@ function readBoolean(value: string, name: string): boolean {
   throw new Error(`${name} must be true or false`);
 }
 
-function printResult(result: BenchResult): void {
+export function printResult(result: BenchResult): void {
   console.log(
     [
       result.ok ? "ok" : "fail",
@@ -461,10 +497,14 @@ Options:
   --stream <true|false>          Request application/x-ndjson stream. Default: true
   --execution-mode <mode>        default or openclaw-native. Default: openclaw-native
   --route-id <convrt_id>         Synthetic route id. Default: convrt_bench
+  --token <token>                Runtime bearer token. Default: BURBLE_RUNTIME_BENCH_TOKEN
+  --scheduled <true|false>       Exercise the scheduled OpenClaw agent. Default: false
 `);
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
