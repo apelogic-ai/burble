@@ -504,6 +504,7 @@ async function collectOpenAiTurnAttempt(
     let completedUsage: RunUsage | undefined;
     let outputItems: OpenAiInputItem[] = [];
     let toolCalls: OpenAiFunctionToolCall[] = [];
+    let completed = false;
     for await (const payload of readSseJsonPayloads(
       response.body,
       abortController.signal
@@ -519,6 +520,7 @@ async function collectOpenAiTurnAttempt(
         continue;
       }
       if (type === "response.completed") {
+        completed = true;
         const responsePayload = readRecord(payload, "response");
         completedText = extractOpenAiText(responsePayload) ?? completedText;
         completedUsage = normalizeOpenAiUsage(readRecord(responsePayload, "usage"));
@@ -529,6 +531,9 @@ async function collectOpenAiTurnAttempt(
 
     throwIfProviderTimedOut(abortController.signal);
     throwIfTurnTimedOut(turnDeadline);
+    if (!completed) {
+      throw new ProviderStreamIncompleteError();
+    }
     return {
       deltas,
       text: completedText,
@@ -742,11 +747,20 @@ class ProviderHttpError extends Error {
   }
 }
 
+class ProviderStreamIncompleteError extends Error {
+  constructor() {
+    super("OpenAI Responses API stream ended before response.completed");
+  }
+}
+
 function shouldRetryProviderError(error: unknown): boolean {
   if (error instanceof TurnTimeoutError) {
     return false;
   }
   if (error instanceof ProviderTimeoutError) {
+    return true;
+  }
+  if (error instanceof ProviderStreamIncompleteError) {
     return true;
   }
   const status =

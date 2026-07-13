@@ -401,6 +401,84 @@ describe("Burble Native runtime server", () => {
     });
   });
 
+  test("retries OpenAI streams that close before response.completed", async () => {
+    let requests = 0;
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("describe Burble"))
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_NATIVE_PROVIDER_RETRY_BASE_MS: "0"
+        },
+        fetch: async () => {
+          requests += 1;
+          if (requests === 1) {
+            return new Response(
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "Partial output that must not be delivered."
+              }),
+              { headers: { "content-type": "text/event-stream" } }
+            );
+          }
+          return new Response(
+            [
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "Recovered after reconnect."
+              }),
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output_text: "Recovered after reconnect.",
+                  usage: {
+                    input_tokens: 20,
+                    output_tokens: 4,
+                    total_tokens: 24
+                  }
+                }
+              })
+            ].join(""),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(requests).toBe(2);
+    expect(events).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      { type: "message_delta", text: "Recovered after reconnect." },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Recovered after reconnect.",
+          usage: {
+            inputTokens: 20,
+            outputTokens: 4,
+            totalTokens: 24,
+            usageSource: "provider-output"
+          }
+        }
+      }
+    ]);
+  });
+
   test("executes model-requested Burble tools and feeds results back to the model", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const response = await handleRuntimeRequest(
