@@ -205,6 +205,22 @@ describe("handleConversation", () => {
     });
   });
 
+  test("awaits an MCP-GW Google connect link", async () => {
+    const response = await handleConversation(
+      { ...baseRequest, text: "connect google" },
+      createDeps({
+        createGoogleOAuthUrl: async () =>
+          "https://accounts.google.com/o/oauth2/v2/auth?state=mcp-gw-state",
+      }),
+    );
+
+    expect(response).toMatchObject({
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: "<https://accounts.google.com/o/oauth2/v2/auth?state=mcp-gw-state|Connect your Google account>",
+    });
+  });
+
   test("asks the user to connect GitHub before GitHub data requests", async () => {
     const response = await handleConversation(
       baseRequest,

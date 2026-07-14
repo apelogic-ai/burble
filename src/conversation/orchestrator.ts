@@ -161,7 +161,7 @@ async function handleConversationInternal(
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: `<${deps.createGoogleOAuthUrl(request.user.slackUserId)}|Connect your Google account>`,
+      text: `<${await deps.createGoogleOAuthUrl(request.user.slackUserId)}|Connect your Google account>`,
     };
   }
 

@@ -122,7 +122,7 @@ export type ConversationDeps = {
   createGitHubOAuthUrl: (slackUserId: string) => string;
   createJiraOAuthUrl?: (slackUserId: string) => string;
   createSlackOAuthUrl?: (slackUserId: string) => string;
-  createGoogleOAuthUrl?: (slackUserId: string) => string;
+  createGoogleOAuthUrl?: (slackUserId: string) => string | Promise<string>;
   createHubSpotOAuthUrl?: (slackUserId: string) => string;
   getConnection: (
     provider: Provider,
