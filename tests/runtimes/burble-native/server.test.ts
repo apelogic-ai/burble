@@ -699,7 +699,8 @@ describe("Burble Native runtime server", () => {
       {
         type: "tool_call",
         toolName: "github.getAuthenticatedUser",
-        callId: "call_123"
+        callId: "call_123",
+        input: { user: { email: "person@example.com" } }
       },
       {
         type: "tool_result",
@@ -906,7 +907,11 @@ describe("Burble Native runtime server", () => {
     expect(events).toContainEqual({
       type: "tool_call",
       toolName: "github.searchIssues",
-      callId: "scheduled_call_1"
+      callId: "scheduled_call_1",
+      input: {
+        query: "org:apelogic-ai is:pr is:open",
+        jobId: "job-native-123"
+      }
     });
     const firstProviderBody = JSON.parse(
       String(
@@ -1167,7 +1172,8 @@ describe("Burble Native runtime server", () => {
     expect(events).toContainEqual({
       type: "tool_call",
       toolName: "conversation.getAttachment",
-      callId: "call_attachment"
+      callId: "call_attachment",
+      input: { attachmentId: "attcap_native_123" }
     });
     expect(events).toContainEqual({
       type: "tool_result",

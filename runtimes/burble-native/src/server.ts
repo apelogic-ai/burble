@@ -263,13 +263,21 @@ async function* runNativeTurn(
 
     const toolOutputs: OpenAiInputItem[] = [];
     for (const toolCall of result.toolCalls) {
+      const effectiveToolCall = {
+        ...toolCall,
+        input: withTrustedScheduledJobId(
+          toolCall.input,
+          request.input.scheduledJob
+        )
+      };
       yield {
         type: "tool_call",
-        toolName: toolCall.toolName,
-        callId: toolCall.callId
+        toolName: effectiveToolCall.toolName,
+        callId: effectiveToolCall.callId,
+        input: effectiveToolCall.input
       };
       const toolResult = await executeBurbleProviderToolForModel(
-        toolCall,
+        effectiveToolCall,
         request,
         context
       );
@@ -596,7 +604,7 @@ async function executeBurbleProviderTool(
   });
   return executeTool(
     toolCall.toolName,
-    withTrustedScheduledJobId(toolCall.input, request.input.scheduledJob)
+    toolCall.input
   );
 }
 
