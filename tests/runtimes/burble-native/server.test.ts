@@ -48,6 +48,41 @@ describe("Burble Native runtime server", () => {
     expect(response.status).toBe(401);
   });
 
+  test("accepts the runtime token header when a proxy consumes bearer auth", async () => {
+    const response = await handleRuntimeRequestRaw(
+      new Request("http://runtime/runs/validate", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-burble-runtime-token": runtimeToken
+        },
+        body: JSON.stringify({
+          runId: "run_proxy_auth",
+          principal: { workspaceId: "T1", slackUserId: "U1" },
+          runtime: { id: "rt_native", engine: "burble-native" },
+          input: {
+            text: "hello",
+            conversation: {
+              source: "slack",
+              workspaceId: "T1",
+              channelId: "D1",
+              rootId: "dm:D1",
+              isDirectMessage: true
+            },
+            connections: {}
+          }
+        })
+      }),
+      {
+        env: {
+          BURBLE_INTERNAL_TOKEN: runtimeToken
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   test("serves a runtime capability manifest", async () => {
     const response = await handleRuntimeRequest(new Request("http://runtime/capabilities"));
 

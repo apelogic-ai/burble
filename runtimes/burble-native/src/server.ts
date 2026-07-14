@@ -7,7 +7,7 @@ import {
   withTrustedScheduledJobId
 } from "@burble/runtime-sdk/scheduled-job-context";
 import {
-  authorizeRuntimeBearerToken,
+  authorizeRuntimeBearerOrHeaderToken,
   createRuntimeContractServer,
   type RuntimeEventWebSocket
 } from "@burble/runtime-sdk/server";
@@ -58,7 +58,7 @@ const runtimeContractServer = createRuntimeContractServer<
   RunResponse
 >({
   authorizeRequest: (request, context) =>
-    authorizeRuntimeBearerToken(
+    authorizeRuntimeBearerOrHeaderToken(
       request,
       readEnv(context.env, "BURBLE_INTERNAL_TOKEN")
     ),

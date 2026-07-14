@@ -849,39 +849,61 @@ describe("dev deploy config", () => {
     );
   });
 
-  test("runs both sandbox agents through real OpenShell in CI", () => {
-    expect(ciWorkflow).toContain("OpenShell runtime E2E");
-    expect(ciWorkflow).toContain("Start OpenShell testbed");
-    expect(ciWorkflow).toContain("bun run testbed:up");
-    expect(ciWorkflow).toContain("AGENT_RUNTIME_SANDBOX_TRANSPORT: cli");
-    expect(ciWorkflow).toContain("Verify app OpenShell CLI dependencies");
-    expect(ciWorkflow).toContain("command -v ssh >/dev/null");
-    expect(ciWorkflow).toContain(
+  test("runs every deployable sandbox agent through real OpenShell in CI", () => {
+    const openShellJob = ciWorkflow.slice(
+      ciWorkflow.indexOf("  openshell-runtime-e2e:")
+    );
+
+    expect(openShellJob).toContain("OpenShell runtime E2E");
+    expect(openShellJob).toContain("Start OpenShell testbed");
+    expect(openShellJob).toContain("bun run testbed:up");
+    expect(openShellJob).toContain("AGENT_RUNTIME_SANDBOX_TRANSPORT: cli");
+    expect(openShellJob).toContain("Verify app OpenShell CLI dependencies");
+    expect(openShellJob).toContain("command -v ssh >/dev/null");
+    expect(openShellJob).toContain(
       "/opt/openshell-cli/openshell --gateway-endpoint http://openshell:8080 sandbox list"
     );
-    expect(ciWorkflow).toContain("Run Hermes through OpenShell");
-    expect(ciWorkflow).toContain('BURBLE_E2E_OPENSHELL_RUN: "1"');
-    expect(ciWorkflow).toContain("BURBLE_E2E_RUNTIME_ENGINE: hermes");
-    expect(ciWorkflow).toContain(
+    expect(openShellJob).toContain("Run Hermes through OpenShell");
+    expect(openShellJob).toContain('BURBLE_E2E_OPENSHELL_RUN: "1"');
+    expect(openShellJob).toContain("BURBLE_E2E_RUNTIME_ENGINE: hermes");
+    expect(openShellJob).toContain(
       "AGENT_RUNTIME_SANDBOX_START_COMMAND: '[\"python\",\"/runtime/entrypoint.py\"]'"
     );
-    expect(ciWorkflow).toContain("Run OpenClaw through OpenShell");
-    expect(ciWorkflow).toContain("BURBLE_E2E_RUNTIME_ENGINE: openclaw");
-    expect(ciWorkflow).toContain(
+    expect(openShellJob).toContain("Run OpenClaw through OpenShell");
+    expect(openShellJob).toContain("BURBLE_E2E_RUNTIME_ENGINE: openclaw");
+    expect(openShellJob).toContain("Build Burble Native image for OpenShell");
+    expect(openShellJob).toContain("Run Burble Native through OpenShell");
+    expect(openShellJob).toContain("BURBLE_E2E_RUNTIME_ENGINE: burble-native");
+    expect(openShellJob).toContain(
+      "BURBLE_E2E_RUNTIME_IMAGE: burble-native-runtime:dev"
+    );
+    expect(openShellJob).toContain(
       "AGENT_RUNTIME_SANDBOX_START_COMMAND: '[\"sh\",\"-lc\",\"cd /runtime && exec bun src/index.ts\"]'"
     );
-    expect(ciWorkflow).toContain("tests/e2e/openshell-sandbox-runtime.test.ts");
-    expect(ciWorkflow).toContain('BURBLE_RUNTIME_CONTRACT_PROBE: "1"');
-    expect(ciWorkflow).toContain("Dump OpenShell testbed logs");
-    expect(ciWorkflow).toContain('docker ps -aq --filter "name=openshell-b-"');
-    expect(ciWorkflow).toContain("bun run testbed:down");
+    expect(openShellJob).toContain("tests/e2e/openshell-sandbox-runtime.test.ts");
+    expect(openShellJob).toContain('BURBLE_RUNTIME_CONTRACT_PROBE: "1"');
+    expect(openShellJob).toContain("Dump OpenShell testbed logs");
+    expect(openShellJob).toContain('docker ps -aq --filter "name=openshell-b-"');
+    expect(openShellJob).toContain("bun run testbed:down");
   });
 
   test("installs OpenShell network helper dependencies in runtime images", () => {
     expect(hermesDockerfile).toContain("iproute2");
-    expect(burbleNativeDockerfile).toContain("apk add --no-cache iproute2");
+    expect(burbleNativeDockerfile).toContain(
+      "apt-get install -y --no-install-recommends"
+    );
+    expect(burbleNativeDockerfile).toContain("iproute2");
     expect(openClawRuntimeDockerfile).toContain("apk add --no-cache iproute2");
     expect(openClawCliDockerfile).toContain("iproute2");
+  });
+
+  test("uses a glibc runtime for OpenShell's injected supervisor", () => {
+    expect(burbleNativeDockerfile).toContain("FROM oven/bun:1.2.21 AS bun");
+    expect(burbleNativeDockerfile).toContain("FROM debian:trixie-slim");
+    expect(burbleNativeDockerfile).toContain(
+      "COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun"
+    );
+    expect(burbleNativeDockerfile).not.toContain("oven/bun:1.2.21-alpine");
   });
 
   test("creates OpenShell-writable runtime data roots in runtime images", () => {
