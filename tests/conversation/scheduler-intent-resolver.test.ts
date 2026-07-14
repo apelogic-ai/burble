@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import {
+  DEFAULT_SCHEDULER_INTENT_TIMEOUT_MS,
   createLlmSchedulerIntentResolver,
   parseSchedulerIntentResponse,
 } from "../../src/conversation/scheduler-intent-resolver";
 
 describe("scheduler intent resolver", () => {
+  test("allows production scheduler intent calls to outlast normal provider latency", () => {
+    expect(DEFAULT_SCHEDULER_INTENT_TIMEOUT_MS).toBe(30_000);
+  });
+
   test("parses strict JSON scheduler intent responses", () => {
     expect(
       parseSchedulerIntentResponse(
@@ -242,7 +247,33 @@ describe("scheduler intent resolver", () => {
       intent: "none",
       confidence: 0,
       jobId: null,
+      failure: "timeout",
     });
     expect(warnings).toEqual(["Scheduler intent resolver timed out."]);
+  });
+
+  test("marks invalid resolver output as a resolution failure", async () => {
+    const resolver = createLlmSchedulerIntentResolver({
+      model: "openai:gpt-test",
+      resolveModel: () =>
+        ({
+          provider: "openai",
+          modelId: "gpt-test",
+        }) as never,
+      generateText: async () => ({ text: "not json" }),
+    });
+
+    await expect(
+      resolver({
+        text: "modify the heart job",
+        recentMessages: [],
+        jobs: [],
+      }),
+    ).resolves.toEqual({
+      intent: "none",
+      confidence: 0,
+      jobId: null,
+      failure: "invalid_response",
+    });
   });
 });

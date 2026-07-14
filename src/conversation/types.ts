@@ -105,6 +105,7 @@ export type SchedulerIntentResolverResult = {
   intent: Exclude<SchedulerControlIntent, null> | "none";
   confidence: number;
   jobId?: string | null;
+  failure?: "timeout" | "invalid_response";
   create?: SchedulerResolvedCreateJob | null;
   schedule?: unknown;
   prompt?: string | null;

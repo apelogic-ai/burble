@@ -23,13 +23,15 @@ export type LlmSchedulerIntentResolverDeps = {
   logWarn?: (message: string) => void;
 };
 
+export const DEFAULT_SCHEDULER_INTENT_TIMEOUT_MS = 30_000;
+
 export function createLlmSchedulerIntentResolver(
   deps: LlmSchedulerIntentResolverDeps,
 ): SchedulerIntentResolver {
   const resolveModel = deps.resolveModel ?? createDirectModelResolver();
   const model = resolveModel(deps.model);
   const generate = deps.generateText ?? generateText;
-  const timeoutMs = deps.timeoutMs ?? 2500;
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_SCHEDULER_INTENT_TIMEOUT_MS;
 
   return async (input) => {
     const response = await withTimeout(
@@ -47,12 +49,22 @@ export function createLlmSchedulerIntentResolver(
     );
     if (!response) {
       deps.logWarn?.("Scheduler intent resolver timed out.");
-      return { intent: "none", confidence: 0, jobId: null };
+      return {
+        intent: "none",
+        confidence: 0,
+        jobId: null,
+        failure: "timeout",
+      };
     }
     const parsed = parseSchedulerIntentResponse(response.text);
     if (!parsed) {
       deps.logWarn?.("Scheduler intent resolver returned invalid JSON.");
-      return { intent: "none", confidence: 0, jobId: null };
+      return {
+        intent: "none",
+        confidence: 0,
+        jobId: null,
+        failure: "invalid_response",
+      };
     }
     return parsed;
   };

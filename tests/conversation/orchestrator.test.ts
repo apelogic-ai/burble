@@ -2922,6 +2922,39 @@ describe("handleConversation", () => {
     expect(response.text).toBe("handled by agent");
   });
 
+  test("does not let the general agent claim a scheduler update after resolution fails", async () => {
+    let agentCalled = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "modify heart emoji job to output one heart",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerIntentResolver: async () => ({
+          intent: "none",
+          confidence: 0,
+          jobId: null,
+          failure: "timeout",
+        }),
+        schedulerControl: {
+          listJobs: () => [],
+        },
+        agentRunner: stubAgentRunner(() => {
+          agentCalled = true;
+          return {
+            classification: "public",
+            text: "Got it",
+          };
+        }),
+      }),
+    );
+
+    expect(agentCalled).toBe(false);
+    expect(response.text).toContain("No scheduled-job changes were made");
+    expect(response.text).toContain("retry");
+  });
+
   test("delegates Slack history task wording to the agent when resolver returns none", async () => {
     let calledWith = "";
     const text =

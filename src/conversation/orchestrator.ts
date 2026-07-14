@@ -91,6 +91,16 @@ async function handleConversationInternal(
     isAgentRuntimeEngine(schedulerResolution.runtimeType)
       ? schedulerResolution.runtimeType
       : null;
+  if (
+    schedulerResolution.failure &&
+    isExplicitSchedulerControlRequest(request.text)
+  ) {
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: "I couldn’t resolve that scheduled-job request. No scheduled-job changes were made; please retry.",
+    };
+  }
   const toolGroups = selectRuntimeToolGroups({
     text: request.text,
     attachmentCount: request.attachments?.length ?? 0,
@@ -620,6 +630,7 @@ async function resolveSchedulerControlIntent(
   schedule: unknown | null;
   prompt: string | null;
   runtimeType: AgentRuntimeEngine | null;
+  failure: SchedulerIntentResolverResult["failure"] | null;
 }> {
   if (deps.schedulerIntentResolver) {
     try {
@@ -634,6 +645,17 @@ async function resolveSchedulerControlIntent(
         recentMessages: recentConversationTexts(request),
         jobs,
       });
+      if (resolved.failure) {
+        return {
+          intent: null,
+          jobId: null,
+          create: null,
+          schedule: null,
+          prompt: null,
+          runtimeType: null,
+          failure: resolved.failure,
+        };
+      }
       const intent = normalizeResolvedSchedulerIntent(resolved);
       if (intent) {
         const create =
@@ -652,6 +674,7 @@ async function resolveSchedulerControlIntent(
             schedule: null,
             prompt: null,
             runtimeType: null,
+            failure: null,
           };
         }
         return {
@@ -675,6 +698,7 @@ async function resolveSchedulerControlIntent(
             isAgentRuntimeEngine(resolved.runtimeType)
               ? resolved.runtimeType
               : null,
+          failure: null,
         };
       }
     } catch {
@@ -689,7 +713,18 @@ async function resolveSchedulerControlIntent(
     schedule: null,
     prompt: null,
     runtimeType: null,
+    failure: null,
   };
+}
+
+function isExplicitSchedulerControlRequest(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  return (
+    /\b(cron|cronjob|scheduled job|scheduled task)\b/.test(normalized) ||
+    /\b(create|make|set|modify|update|change|pause|resume|delete|remove|run|trigger|show|list)\b.*\b(job|task|schedule)\b/.test(
+      normalized,
+    )
+  );
 }
 
 function hasExplicitSchedulerCreateLanguage(text: string): boolean {
