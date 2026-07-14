@@ -602,10 +602,7 @@ async function executeBurbleProviderTool(
     retryBaseDelayMs: readToolGatewayRetryBaseDelayMs(context.env),
     ...(context.fetch ? { fetch: context.fetch } : {})
   });
-  return executeTool(
-    toolCall.toolName,
-    toolCall.input
-  );
+  return executeTool(toolCall.toolName, { input: toolCall.input });
 }
 
 function sanitizeToolErrorMessage(error: unknown): string {

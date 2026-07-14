@@ -929,8 +929,10 @@ describe("Burble Native runtime server", () => {
       request.url.includes("/github.searchIssues/execute")
     );
     expect(JSON.parse(String(toolRequest?.init?.body))).toEqual({
-      query: "org:apelogic-ai is:pr is:open",
-      jobId: "job-native-123"
+      input: {
+        query: "org:apelogic-ai is:pr is:open",
+        jobId: "job-native-123"
+      }
     });
   });
 
@@ -1056,7 +1058,9 @@ describe("Burble Native runtime server", () => {
       request.url.includes("/github.search99/execute")
     );
     expect(JSON.parse(String(toolRequest?.init?.body))).toEqual({
-      jobId: "job-native-123"
+      input: {
+        jobId: "job-native-123"
+      }
     });
   });
 
@@ -1203,7 +1207,9 @@ describe("Burble Native runtime server", () => {
     );
     expect(toolRequest).toBeDefined();
     expect(JSON.parse(String(toolRequest?.init?.body))).toEqual({
-      attachmentId: "attcap_native_123"
+      input: {
+        attachmentId: "attcap_native_123"
+      }
     });
   });
 
