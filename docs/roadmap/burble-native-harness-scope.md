@@ -1,6 +1,7 @@
 # Scope: Evolve Burble Native into a thin turn-executor harness
 
-Status: incremental; Increment 1 is the current implementation target.
+Status: implemented through scheduled provider calls and current-turn
+attachments; deployment hardening and boundary verification are active.
 Companion to [[runtime-pluggability-next-targets]] and
 [[burble-direct-removal-scope]]. For the broader rationale that `burble-native`
 should be Burble's contract oracle / reference runtime, see
@@ -49,12 +50,15 @@ workload. Never flip a field ahead of the implementation.
 - **Increment 2 (done):** on a model-requested `burble_provider_call`, hit the
   tool gateway (`createRuntimeToolGatewayClient`, runtime auth), feed the result
   back, loop to final. → `toolCalls` is real.
-- **Increment 3 — scheduled provider calls:** execute a Burble-fired scheduled
+- **Increment 3 (done) — scheduled provider calls:** execute a Burble-fired scheduled
   turn (`scheduledJob` context, job-scoped auth). → flip
   `scheduledProviderCalls: true` → selectable for scheduled workloads. (Note:
   `nativeScheduler` still stays `false` — Burble fires the timer, the runtime just
   executes the turn.)
-- **Later, only if worth it:** `attachments`, `multimodalInput`. `memory: true`
+- **Attachment fetch (done):** current-turn opaque attachment references are
+  fetched through `conversation.getAttachment`; `attachments: true` is backed by
+  unit and contract-probe coverage.
+- **Later, only if worth it:** `multimodalInput`. `memory: true`
   would mean "surfaces Burble-injected memory context," never an in-runtime store.
   `durableWorkflowState` stays control-plane.
 

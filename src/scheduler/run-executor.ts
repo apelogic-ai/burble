@@ -45,6 +45,7 @@ import {
   type TaskWorkflowDriverHandlers,
 } from "../workflow/task-workflow-driver";
 import type { TaskWorkflowEventStore } from "../workflow/task-workflow-store";
+import { markdownToSlackMrkdwn } from "../slack-mrkdwn";
 import { validateScheduledTask } from "./task-validation";
 import { formatScheduledTaskValidationFailureReason } from "./task-validation-format";
 
@@ -476,7 +477,7 @@ async function postScheduledRunOutput(input: {
   }
   await input.slackClient.chat.postMessage({
     channel: input.destination.channelId,
-    text: input.text,
+    text: markdownToSlackMrkdwn(input.text),
     ...(input.destination.threadTs && !input.destination.isDirectMessage
       ? { thread_ts: input.destination.threadTs }
       : {}),

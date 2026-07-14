@@ -22,6 +22,7 @@ config:
   agentRuntime: burble-runtime
   agentRuntimeFactory: static
   agentRuntimeEngine: ""
+  agentRuntimeAllowedEngines: ""
   agentRuntimeImage: ""
   agentRuntimeDataRoot: /data/runtimes
   agentRuntimeDockerNetwork: ""

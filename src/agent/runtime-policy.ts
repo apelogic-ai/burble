@@ -369,7 +369,14 @@ function readAllowedRuntimeEngines(input: {
     .listWorkspacePolicy(input.workspaceId)
     .find((record) => record.key === "runtime.allowedEngines")?.value;
   const engines = normalizeRuntimeEngineList(explicit);
-  return engines.length > 0 ? engines : [input.config.agentRuntimeEngine];
+  const deploymentEngines = normalizeRuntimeEngineList(
+    input.config.agentRuntimeAllowedEngines,
+  );
+  return engines.length > 0
+    ? engines
+    : deploymentEngines.length > 0
+      ? deploymentEngines
+      : [input.config.agentRuntimeEngine];
 }
 
 function readUserRuntimeEnginePreference(input: {

@@ -1587,6 +1587,193 @@ describe("handleConversation", () => {
     expect(response.text).toContain("Post exactly this message: ❤️❤️");
   });
 
+  test("updates an existing scheduler task runtime from semantic resolver output", async () => {
+    let called = false;
+    const updates: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "move the hourly AI news task to Burble Native",
+      },
+      createDeps({
+        agentMode: "llm",
+        agentRuntimeEngine: "burble-native",
+        schedulerControl: {
+          listJobs: () => [
+            {
+              jobId: "job_ai_news",
+              title: "Hourly AI news summary",
+              prompt: "look for fresh AI-related news",
+              schedule: {
+                kind: "cron",
+                expression: "0 * * * *",
+                timezone: "UTC",
+              },
+              state: "scheduled",
+              runtimeType: "openclaw",
+              requiredTools: ["web_search"],
+              routeId: "convrt_news",
+              updatedAt: "2026-07-13T17:39:00.000Z",
+            },
+          ],
+          updateJobRuntime: (input) => {
+            updates.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job_ai_news",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Hourly AI news summary",
+                prompt: "look for fresh AI-related news",
+                schedule: {
+                  kind: "cron",
+                  expression: "0 * * * *",
+                  timezone: "UTC",
+                },
+                routeId: "convrt_news",
+                state: "scheduled",
+                runtimeType: input.runtimeType,
+                createdAt: "2026-07-13T17:39:00.000Z",
+                updatedAt: "2026-07-13T17:40:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "update_job_runtime",
+          confidence: 0.96,
+          jobId: "job_ai_news",
+          runtimeType: "burble-native",
+        }),
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(updates).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job_ai_news",
+        runtimeType: "burble-native",
+      },
+    ]);
+    expect(response.text).toBe(
+      [
+        "Updated scheduled job job_ai_news runtime.",
+        "- runtime: burble-native",
+      ].join("\n"),
+    );
+  });
+
+  test("atomically updates a scheduled task prompt, schedule, and runtime", async () => {
+    let agentCalled = false;
+    const updates: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: [
+          "modify heart emoji job to:",
+          "- output one heart instead of 2",
+          "- run every 15 min",
+          "- use burble-native runtime",
+        ].join("\n"),
+      },
+      createDeps({
+        agentMode: "llm",
+        agentRuntimeEngine: "burble-native",
+        schedulerControl: {
+          listJobs: () => [
+            {
+              jobId: "job_heart",
+              title: "Heart emoji every 30 min",
+              prompt: "Post exactly this message: :heart::heart:",
+              schedule: {
+                kind: "cron",
+                expression: "*/10 * * * *",
+                timezone: "UTC",
+              },
+              state: "scheduled",
+              runtimeType: "hermes",
+              requiredTools: [],
+              routeId: "convrt_heart",
+              updatedAt: "2026-07-13T15:30:59.503Z",
+            },
+          ],
+          updateJob: (input) => {
+            updates.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job_heart",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Heart emoji every 30 min",
+                prompt: input.prompt ?? "Post exactly this message: :heart::heart:",
+                schedule: input.schedule ?? {
+                  kind: "cron",
+                  expression: "*/10 * * * *",
+                  timezone: "UTC",
+                },
+                routeId: "convrt_heart",
+                state: "scheduled",
+                runtimeType: input.runtimeType ?? "hermes",
+                createdAt: "2026-07-13T15:30:59.503Z",
+                updatedAt: "2026-07-14T15:13:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "update_job",
+          confidence: 0.98,
+          jobId: "job_heart",
+          prompt: "Post exactly this message: :heart:",
+          schedule: {
+            kind: "cron",
+            expression: "*/15 * * * *",
+            timezone: "UTC",
+          },
+          runtimeType: "burble-native",
+        }),
+        agentRunner: stubAgentRunner(() => {
+          agentCalled = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(agentCalled).toBe(false);
+    expect(updates).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job_heart",
+        prompt: "Post exactly this message: :heart:",
+        schedule: {
+          kind: "cron",
+          expression: "*/15 * * * *",
+          timezone: "UTC",
+        },
+        runtimeType: "burble-native",
+      },
+    ]);
+    expect(response.text).toContain("Updated scheduled job job_heart.");
+    expect(response.text).toContain("Post exactly this message: :heart:");
+    expect(response.text).toContain("cron */15 * * * * (UTC)");
+    expect(response.text).toContain("runtime: burble-native");
+  });
+
   test("updates scheduled job delivery from scheduler resolver output", async () => {
     let called = false;
     const updates: unknown[] = [];
@@ -2733,6 +2920,39 @@ describe("handleConversation", () => {
     expect(schedulerCalled).toBe(false);
     expect(agentCalledWith).toBe("pause job job_ai_news_hourly");
     expect(response.text).toBe("handled by agent");
+  });
+
+  test("does not let the general agent claim a scheduler update after resolution fails", async () => {
+    let agentCalled = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "modify heart emoji job to output one heart",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerIntentResolver: async () => ({
+          intent: "none",
+          confidence: 0,
+          jobId: null,
+          failure: "timeout",
+        }),
+        schedulerControl: {
+          listJobs: () => [],
+        },
+        agentRunner: stubAgentRunner(() => {
+          agentCalled = true;
+          return {
+            classification: "public",
+            text: "Got it",
+          };
+        }),
+      }),
+    );
+
+    expect(agentCalled).toBe(false);
+    expect(response.text).toContain("No scheduled-job changes were made");
+    expect(response.text).toContain("retry");
   });
 
   test("delegates Slack history task wording to the agent when resolver returns none", async () => {

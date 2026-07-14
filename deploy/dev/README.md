@@ -84,6 +84,7 @@ AGENT_FAST_TRACK=false
 AGENT_RUNTIME=ai-sdk
 AGENT_RUNTIME_FACTORY=static
 AGENT_RUNTIME_ENGINE=
+AGENT_RUNTIME_ALLOWED_ENGINES=
 AGENT_RUNTIME_IMAGE=
 AGENT_RUNTIME_TOKEN_SECRET=
 AGENT_RUNTIME_MCP_GATEWAY_URL=
@@ -454,6 +455,65 @@ OpenClaw runtime image, or `AGENT_RUNTIME_ENGINE=burble-native` with
 For default Burble runtime images, the sandbox start command is selected from
 the engine automatically. Override `AGENT_RUNTIME_SANDBOX_START_COMMAND` only
 for custom runtime images.
+
+### Burble Native hand test
+
+This makes Burble Native the default while keeping existing OpenClaw Gateway
+scheduled jobs admissible. Scheduled jobs retain the runtime engine stored when
+they were created; new jobs use the user's effective runtime engine.
+
+Set these values in `deploy/dev/compose/.env`:
+
+```env
+AGENT_MODE=llm
+AGENT_RUNTIME=burble-runtime
+AGENT_RUNTIME_FACTORY=sandbox
+AGENT_RUNTIME_ENGINE=burble-native
+AGENT_RUNTIME_ALLOWED_ENGINES=openclaw,openclaw-gateway,burble-native
+AGENT_RUNTIME_IMAGE=burble-native-runtime:dev
+```
+
+Keep `LLM_GW_BASE_URL` pointed at the same-host LiteLLM endpoint, then deploy
+through the normal OpenShell path:
+
+```bash
+./deploy-personal-runtimes.sh --agentgateway --openshell
+```
+
+In Slack App Home, select `burble-native` if the user already has a different
+stored runtime preference. Run `/agent status` and confirm the effective engine
+is `burble-native`. Then exercise the packaged model path, one provider call,
+and attachment fetch with these messages:
+
+```text
+Reply exactly: Burble Native is running.
+Use GitHub tools and tell me my authenticated GitHub login.
+Summarize the attached text file in one sentence.
+```
+
+The first request must complete without a tool. The second must show one GitHub
+tool completion before the final answer. Attach a small text file to the third;
+it must show `conversation get Attachment` before the summary. On the host,
+confirm the runtime engine and image:
+
+```bash
+docker ps --filter name=openshell-b- --format '{{.Names}} {{.Image}}'
+docker compose logs --since=10m burble-app llm-gw
+```
+
+#### Rollback to OpenClaw
+
+Restore these `.env` values and run the same deployment helper:
+
+```env
+AGENT_RUNTIME_ENGINE=openclaw-gateway
+AGENT_RUNTIME_ALLOWED_ENGINES=openclaw,openclaw-gateway,burble-native
+AGENT_RUNTIME_IMAGE=burble-openclaw-nemoclaw:dev
+```
+
+```bash
+./deploy-personal-runtimes.sh --agentgateway --openshell
+```
 
 After connecting Jira, a hand-test for the upstream MCP path is:
 

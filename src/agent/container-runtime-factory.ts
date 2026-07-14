@@ -17,7 +17,10 @@ import {
   runtimeHealthCheckAttempts
 } from "./runtime-descriptors";
 import type { RuntimeManifest } from "./runtime-manifest";
-import { collectApprovedRuntimeEnv } from "./runtime-env";
+import {
+  collectApprovedRuntimeEnv,
+  runtimeInferenceProxyApiKey
+} from "./runtime-env";
 
 export type RuntimeCommandResult = {
   code: number;
@@ -48,6 +51,7 @@ export function createDockerRuntimeFactory(input: {
   dataRoot: string;
   dockerNetwork: string;
   toolGatewayUrl: string;
+  inferenceBaseUrl?: string | null;
   mcpGatewayUrl?: string | null;
   mcpAudience?: string | null;
   runtimeJwtIssuer?: RuntimeJwtIssuer | null;
@@ -126,6 +130,7 @@ export function createDockerRuntimeFactory(input: {
         dataRoot: input.dataRoot,
         dockerNetwork: input.dockerNetwork,
         toolGatewayUrl: input.toolGatewayUrl,
+        inferenceBaseUrl: input.inferenceBaseUrl ?? null,
         mcpGatewayUrl: input.mcpGatewayUrl ?? null,
         runtimeToken: token,
         runtimeId: runtime.id,
@@ -543,6 +548,7 @@ export function buildContainerRuntimeSpec(input: {
   dataRoot: string;
   dockerNetwork: string;
   toolGatewayUrl: string;
+  inferenceBaseUrl?: string | null;
   mcpGatewayUrl?: string | null;
   runtimeToken: string;
   runtimeId?: string;
@@ -591,6 +597,13 @@ export function buildContainerRuntimeSpec(input: {
   }
 
   Object.assign(env, collectApprovedRuntimeEnv(input.env ?? {}));
+
+  if (input.inferenceBaseUrl?.trim()) {
+    const baseUrl = input.inferenceBaseUrl.trim().replace(/\/+$/, "");
+    env.AGENT_RUNTIME_INFERENCE_BASE_URL = baseUrl;
+    env.OPENAI_BASE_URL = baseUrl;
+    env.OPENAI_API_KEY = runtimeInferenceProxyApiKey;
+  }
   if (input.manifest?.model) {
     const modelId = `${input.manifest.model.provider}:${input.manifest.model.model}`;
     env.AI_MODEL = modelId;

@@ -87,6 +87,9 @@ export type SchedulerControlPlane = {
   ):
     | Promise<SchedulerUpdateJobDeliveryResult>
     | SchedulerUpdateJobDeliveryResult;
+  updateJob?(
+    input: SchedulerUpdateJobInput,
+  ): Promise<SchedulerUpdateJobResult> | SchedulerUpdateJobResult;
   updateJobSchedule?(
     input: SchedulerUpdateJobScheduleInput,
   ):
@@ -95,6 +98,9 @@ export type SchedulerControlPlane = {
   updateJobPrompt?(
     input: SchedulerUpdateJobPromptInput,
   ): Promise<SchedulerUpdateJobPromptResult> | SchedulerUpdateJobPromptResult;
+  updateJobRuntime?(
+    input: SchedulerUpdateJobRuntimeInput,
+  ): Promise<SchedulerUpdateJobRuntimeResult> | SchedulerUpdateJobRuntimeResult;
   triggerJob?(input: {
     workspaceId: string;
     slackUserId: string;
@@ -221,6 +227,16 @@ export type SchedulerUpdateJobPromptInput = SchedulerJobMutationInput & {
   prompt: string;
 };
 
+export type SchedulerUpdateJobRuntimeInput = SchedulerJobMutationInput & {
+  runtimeType: AgentRuntimeEngine;
+};
+
+export type SchedulerUpdateJobInput = SchedulerJobMutationInput & {
+  prompt?: string;
+  schedule?: unknown;
+  runtimeType?: AgentRuntimeEngine;
+};
+
 export type SchedulerJobMutationResult =
   | {
       ok: true;
@@ -261,6 +277,30 @@ export type SchedulerUpdateJobScheduleResult =
       jobs: SchedulerJobSummary[];
     };
 export type SchedulerUpdateJobPromptResult = SchedulerJobMutationResult;
+export type SchedulerUpdateJobRuntimeResult =
+  | SchedulerJobMutationResult
+  | {
+      ok: false;
+      reason: "runtime_not_allowed";
+      runtimeType: AgentRuntimeEngine;
+      allowedRuntimeTypes: AgentRuntimeEngine[];
+      jobs: SchedulerJobSummary[];
+    };
+export type SchedulerUpdateJobResult =
+  | SchedulerJobMutationResult
+  | {
+      ok: false;
+      reason: "invalid_schedule";
+      message: string;
+      jobs: SchedulerJobSummary[];
+    }
+  | {
+      ok: false;
+      reason: "runtime_not_allowed";
+      runtimeType: AgentRuntimeEngine;
+      allowedRuntimeTypes: AgentRuntimeEngine[];
+      jobs: SchedulerJobSummary[];
+    };
 
 export type SchedulerJobDeleteResult =
   | {
@@ -308,6 +348,7 @@ type SchedulerControlPlaneOptions = {
   newRunId?: () => string;
   workflowAuthority?: "off" | "manual" | "timer";
   workflowShadowStore?: SchedulerWorkflowStore;
+  allowedRuntimeTypes?: AgentRuntimeEngine[];
   validateRuntimeAdmission?: (input: {
     workspaceId: string;
     slackUserId: string;
@@ -510,11 +551,27 @@ export function createSchedulerControlPlane(
         options.resolveSlackChannelIdByName,
       );
     },
+    updateJob(input) {
+      return updateScheduledJob(
+        store,
+        input,
+        now(),
+        options.allowedRuntimeTypes ?? [],
+      );
+    },
     updateJobSchedule(input) {
       return updateScheduledJobSchedule(store, input, now());
     },
     updateJobPrompt(input) {
       return updateScheduledJobPrompt(store, input, now());
+    },
+    updateJobRuntime(input) {
+      return updateScheduledJobRuntime(
+        store,
+        input,
+        now(),
+        options.allowedRuntimeTypes ?? [],
+      );
     },
     triggerJob(input) {
       const jobs = listJobs(input);
@@ -695,6 +752,69 @@ function updateScheduledJobSchedule(
   return { ok: true, job };
 }
 
+function updateScheduledJob(
+  store: Pick<
+    TokenStore,
+    | "listScheduledJobsForPrincipal"
+    | "upsertScheduledJob"
+    | "upsertAgentJobCapability"
+  >,
+  input: SchedulerUpdateJobInput,
+  now: Date,
+  allowedRuntimeTypes: AgentRuntimeEngine[],
+): SchedulerUpdateJobResult {
+  const records = store.listScheduledJobsForPrincipal(
+    input.workspaceId,
+    input.slackUserId,
+  );
+  const jobs = records.map(summarizeScheduledJob);
+  const selection = selectSchedulerJob(jobs, input.jobId);
+  if (!selection.ok) {
+    return selection;
+  }
+  if (input.schedule !== undefined) {
+    const scheduleValidation = validateScheduledJobSchedule(input.schedule);
+    if (!scheduleValidation.ok) {
+      return {
+        ok: false,
+        reason: "invalid_schedule",
+        message: scheduleValidation.message,
+        jobs,
+      };
+    }
+  }
+  if (
+    input.runtimeType !== undefined &&
+    !allowedRuntimeTypes.includes(input.runtimeType)
+  ) {
+    return {
+      ok: false,
+      reason: "runtime_not_allowed",
+      runtimeType: input.runtimeType,
+      allowedRuntimeTypes: [...allowedRuntimeTypes],
+      jobs,
+    };
+  }
+  const record = records.find((job) => job.jobId === selection.job.jobId);
+  if (!record) {
+    return { ok: false, reason: "not_found", jobs };
+  }
+  const job = store.upsertScheduledJob({
+    jobId: record.jobId,
+    workspaceId: record.workspaceId,
+    slackUserId: record.slackUserId,
+    title: record.title,
+    prompt: input.prompt ?? record.prompt,
+    schedule: input.schedule ?? record.schedule,
+    routeId: record.routeId,
+    runtimeType: input.runtimeType ?? record.runtimeType,
+    state: record.state,
+    now,
+  });
+  ensureScheduledJobCapability(store, job, now);
+  return { ok: true, job };
+}
+
 function updateScheduledJobPrompt(
   store: Pick<
     TokenStore,
@@ -727,6 +847,55 @@ function updateScheduledJobPrompt(
     schedule: record.schedule,
     routeId: record.routeId,
     runtimeType: record.runtimeType,
+    state: record.state,
+    now,
+  });
+  ensureScheduledJobCapability(store, job, now);
+  return { ok: true, job };
+}
+
+function updateScheduledJobRuntime(
+  store: Pick<
+    TokenStore,
+    | "listScheduledJobsForPrincipal"
+    | "upsertScheduledJob"
+    | "upsertAgentJobCapability"
+  >,
+  input: SchedulerUpdateJobRuntimeInput,
+  now: Date,
+  allowedRuntimeTypes: AgentRuntimeEngine[],
+): SchedulerUpdateJobRuntimeResult {
+  const records = store.listScheduledJobsForPrincipal(
+    input.workspaceId,
+    input.slackUserId,
+  );
+  const jobs = records.map(summarizeScheduledJob);
+  const selection = selectSchedulerJob(jobs, input.jobId);
+  if (!selection.ok) {
+    return selection;
+  }
+  if (!allowedRuntimeTypes.includes(input.runtimeType)) {
+    return {
+      ok: false,
+      reason: "runtime_not_allowed",
+      runtimeType: input.runtimeType,
+      allowedRuntimeTypes: [...allowedRuntimeTypes],
+      jobs,
+    };
+  }
+  const record = records.find((job) => job.jobId === selection.job.jobId);
+  if (!record) {
+    return { ok: false, reason: "not_found", jobs };
+  }
+  const job = store.upsertScheduledJob({
+    jobId: record.jobId,
+    workspaceId: record.workspaceId,
+    slackUserId: record.slackUserId,
+    title: record.title,
+    prompt: record.prompt,
+    schedule: record.schedule,
+    routeId: record.routeId,
+    runtimeType: input.runtimeType,
     state: record.state,
     now,
   });

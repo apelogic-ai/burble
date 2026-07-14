@@ -693,7 +693,7 @@ References:
 
 ## Capabilities
 
-Initial reference-runtime capability target:
+Current reference-runtime capability target:
 
 ```ts
 {
@@ -704,7 +704,7 @@ Initial reference-runtime capability target:
   nativeScheduler: false,
   memory: false,
   durableWorkflowState: false,
-  attachments: false
+  attachments: true
 }
 ```
 
@@ -716,6 +716,9 @@ Interpretation:
 - `memory: false` means no runtime-owned memory store. The runtime may consume
   Burble-injected memory snippets.
 - `durableWorkflowState: false` means retry/resume state belongs to Burble.
+- `attachments: true` means the runtime can fetch current-turn attachments by
+  opaque Burble capability through the tool gateway. It does not receive raw
+  Slack URLs or own durable file storage.
 
 ## Persistent Data
 

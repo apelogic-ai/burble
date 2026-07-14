@@ -105,6 +105,17 @@ jobs:
           BURBLE_RUNTIME_CONTRACT_PROBE: "1"
         run: bun test tests/e2e/runtime-readiness.test.ts
 
+      - name: Run Burble Native model and tool boundary E2E
+        env:
+          BURBLE_E2E_BURBLE_NATIVE_BOUNDARY_SMOKE: "1"
+          BURBLE_E2E_BURBLE_NATIVE_IMAGE: burble-native-runtime:dev
+          BURBLE_E2E_DOCKER_NETWORK: burble-runtime-e2e
+          BURBLE_E2E_RUNTIME_DATA_ROOT: /tmp/burble-runtime-e2e
+          BURBLE_E2E_HEALTH_ATTEMPTS: "60"
+          BURBLE_E2E_HEALTH_INTERVAL_MS: "1000"
+          BURBLE_E2E_TIMEOUT_MS: "120000"
+        run: bun test tests/e2e/runtime-readiness.test.ts
+
       - name: Clean up runtime containers
         if: always()
         run: |
@@ -140,6 +151,13 @@ jobs:
           docker build \
             -t burble-nemo-hermes:dev \
             -f runtimes/nemo-hermes/Dockerfile \
+            .
+
+      - name: Build Burble Native image for OpenShell
+        run: |
+          docker build \
+            -t burble-native-runtime:dev \
+            -f runtimes/burble-native/Dockerfile \
             .
 
       - name: Start OpenShell testbed
@@ -193,6 +211,25 @@ jobs:
           BURBLE_E2E_OPENSHELL_RUN: "1"
           BURBLE_E2E_RUNTIME_ENGINE: openclaw
           BURBLE_E2E_RUNTIME_IMAGE: burble-openclaw-nemoclaw-openclaw-cli:dev
+          BURBLE_E2E_HEALTH_ATTEMPTS: "180"
+          BURBLE_E2E_HEALTH_INTERVAL_MS: "1000"
+          BURBLE_E2E_TIMEOUT_MS: "240000"
+          AGENT_MODE: deterministic
+          AGENT_RUNTIME_FACTORY: sandbox
+          AGENT_RUNTIME_SANDBOX_URL: http://127.0.0.1:8080
+          AGENT_RUNTIME_SANDBOX_TRANSPORT: cli
+          AGENT_RUNTIME_OPENSHELL_CLI_BIN: ${{ github.workspace }}/deploy/testbed/.cache/openshell-linux
+          AGENT_RUNTIME_OPENSHELL_DIAL_HOST: 127.0.0.1:8080
+          AGENT_RUNTIME_SANDBOX_START_COMMAND: '["sh","-lc","cd /runtime && exec bun src/index.ts"]'
+          BURBLE_RUNTIME_CONTRACT_PROBE: "1"
+        run: bun test tests/e2e/openshell-sandbox-runtime.test.ts
+
+      - name: Run Burble Native through OpenShell
+        env:
+          BURBLE_E2E_OPENSHELL: "1"
+          BURBLE_E2E_OPENSHELL_RUN: "1"
+          BURBLE_E2E_RUNTIME_ENGINE: burble-native
+          BURBLE_E2E_RUNTIME_IMAGE: burble-native-runtime:dev
           BURBLE_E2E_HEALTH_ATTEMPTS: "180"
           BURBLE_E2E_HEALTH_INTERVAL_MS: "1000"
           BURBLE_E2E_TIMEOUT_MS: "240000"

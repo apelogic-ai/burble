@@ -151,6 +151,50 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     store.close();
   });
 
+  test("defaults interactive work to Burble Native while admitting pinned OpenClaw jobs", () => {
+    const store = createTokenStore(":memory:");
+    const dualEngineConfig: Config = {
+      ...config,
+      agentRuntimeEngine: "burble-native",
+      openClawNemoClawEngine: "burble-native",
+      agentRuntimeAllowedEngines: [
+        "openclaw",
+        "openclaw-gateway",
+        "burble-native",
+      ],
+      agentRuntimeImage: "burble-native-runtime:dev",
+    };
+    const principal = {
+      workspaceId: "T123",
+      slackUserId: "U123",
+    };
+
+    expect(
+      resolveRuntimeEngineForPrincipal({
+        config: dualEngineConfig,
+        store,
+        principal,
+      }).effectiveEngine,
+    ).toBe("burble-native");
+    expect(
+      resolveRuntimeEngineForPrincipal({
+        config: dualEngineConfig,
+        store,
+        principal,
+        requirements: { engine: "openclaw" },
+      }).effectiveEngine,
+    ).toBe("openclaw");
+    expect(
+      resolveRuntimeEngineForPrincipal({
+        config: dualEngineConfig,
+        store,
+        principal,
+        requirements: { engine: "openclaw-gateway" },
+      }).effectiveEngine,
+    ).toBe("openclaw-gateway");
+    store.close();
+  });
+
   test("uses a user runtime preference when the workspace allows it", () => {
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({

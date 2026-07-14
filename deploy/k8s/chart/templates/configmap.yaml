@@ -16,6 +16,7 @@ data:
   AGENT_RUNTIME_FACTORY: {{ .Values.config.agentRuntimeFactory | quote }}
   AGENT_RUNTIME_DATA_ROOT: {{ .Values.config.agentRuntimeDataRoot | quote }}
   AGENT_RUNTIME_ENGINE: {{ .Values.config.agentRuntimeEngine | quote }}
+  AGENT_RUNTIME_ALLOWED_ENGINES: {{ .Values.config.agentRuntimeAllowedEngines | quote }}
   AGENT_RUNTIME_IMAGE: {{ .Values.config.agentRuntimeImage | quote }}
   AGENT_RUNTIME_DOCKER_NETWORK: {{ .Values.config.agentRuntimeDockerNetwork | quote }}
   AGENT_RUNTIME_IDLE_TTL_MS: {{ .Values.config.agentRuntimeIdleTtlMs | quote }}

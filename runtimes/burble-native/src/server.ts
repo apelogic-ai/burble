@@ -7,7 +7,7 @@ import {
   withTrustedScheduledJobId
 } from "@burble/runtime-sdk/scheduled-job-context";
 import {
-  authorizeRuntimeBearerToken,
+  authorizeRuntimeBearerOrHeaderToken,
   createRuntimeContractServer,
   type RuntimeEventWebSocket
 } from "@burble/runtime-sdk/server";
@@ -58,7 +58,7 @@ const runtimeContractServer = createRuntimeContractServer<
   RunResponse
 >({
   authorizeRequest: (request, context) =>
-    authorizeRuntimeBearerToken(
+    authorizeRuntimeBearerOrHeaderToken(
       request,
       readEnv(context.env, "BURBLE_INTERNAL_TOKEN")
     ),
@@ -263,13 +263,21 @@ async function* runNativeTurn(
 
     const toolOutputs: OpenAiInputItem[] = [];
     for (const toolCall of result.toolCalls) {
+      const effectiveToolCall = {
+        ...toolCall,
+        input: withTrustedScheduledJobId(
+          toolCall.input,
+          request.input.scheduledJob
+        )
+      };
       yield {
         type: "tool_call",
-        toolName: toolCall.toolName,
-        callId: toolCall.callId
+        toolName: effectiveToolCall.toolName,
+        callId: effectiveToolCall.callId,
+        input: effectiveToolCall.input
       };
       const toolResult = await executeBurbleProviderToolForModel(
-        toolCall,
+        effectiveToolCall,
         request,
         context
       );
@@ -504,6 +512,7 @@ async function collectOpenAiTurnAttempt(
     let completedUsage: RunUsage | undefined;
     let outputItems: OpenAiInputItem[] = [];
     let toolCalls: OpenAiFunctionToolCall[] = [];
+    let completed = false;
     for await (const payload of readSseJsonPayloads(
       response.body,
       abortController.signal
@@ -519,6 +528,7 @@ async function collectOpenAiTurnAttempt(
         continue;
       }
       if (type === "response.completed") {
+        completed = true;
         const responsePayload = readRecord(payload, "response");
         completedText = extractOpenAiText(responsePayload) ?? completedText;
         completedUsage = normalizeOpenAiUsage(readRecord(responsePayload, "usage"));
@@ -529,6 +539,9 @@ async function collectOpenAiTurnAttempt(
 
     throwIfProviderTimedOut(abortController.signal);
     throwIfTurnTimedOut(turnDeadline);
+    if (!completed) {
+      throw new ProviderStreamIncompleteError();
+    }
     return {
       deltas,
       text: completedText,
@@ -589,10 +602,7 @@ async function executeBurbleProviderTool(
     retryBaseDelayMs: readToolGatewayRetryBaseDelayMs(context.env),
     ...(context.fetch ? { fetch: context.fetch } : {})
   });
-  return executeTool(
-    toolCall.toolName,
-    withTrustedScheduledJobId(toolCall.input, request.input.scheduledJob)
-  );
+  return executeTool(toolCall.toolName, { input: toolCall.input });
 }
 
 function sanitizeToolErrorMessage(error: unknown): string {
@@ -742,11 +752,20 @@ class ProviderHttpError extends Error {
   }
 }
 
+class ProviderStreamIncompleteError extends Error {
+  constructor() {
+    super("OpenAI Responses API stream ended before response.completed");
+  }
+}
+
 function shouldRetryProviderError(error: unknown): boolean {
   if (error instanceof TurnTimeoutError) {
     return false;
   }
   if (error instanceof ProviderTimeoutError) {
+    return true;
+  }
+  if (error instanceof ProviderStreamIncompleteError) {
     return true;
   }
   const status =
@@ -815,6 +834,7 @@ function buildOpenAiInput(request: RunRequest): OpenAiInputItem[] {
   const scheduledJobContext = formatScheduledJobContext(request);
   const text = [
     "You are Burble, a concise Slack-native work assistant.",
+    "Format answers as Slack mrkdwn, not standard Markdown: use *bold* instead of **bold** and <url|label> instead of [label](url).",
     attachmentContext,
     scheduledJobContext,
     toolCatalog

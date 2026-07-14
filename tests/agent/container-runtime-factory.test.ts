@@ -220,6 +220,32 @@ describe("buildContainerRuntimeSpec", () => {
     expect(spec.env.OPENCLAW_CONFIG_PATH).toBeUndefined();
   });
 
+  test("injects centralized inference credentials for Burble Native", () => {
+    const runtimeDataId = buildRuntimeDataId(principal, "burble-native");
+    const spec = buildContainerRuntimeSpec({
+      principal,
+      engine: "burble-native",
+      image: "burble-native-runtime:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      inferenceBaseUrl: "http://llm-gw:4000/v1/",
+      runtimeToken: "runtime-token",
+      runtimeDataId,
+      env: {
+        OPENAI_API_KEY: "raw-provider-key",
+        OPENAI_BASE_URL: "https://raw-provider.example/v1"
+      }
+    });
+
+    expect(spec.env).toMatchObject({
+      AGENT_RUNTIME_INFERENCE_BASE_URL: "http://llm-gw:4000/v1",
+      OPENAI_BASE_URL: "http://llm-gw:4000/v1",
+      OPENAI_API_KEY: "sk-BURBLE-INFERENCE-PROXY"
+    });
+    expect(spec.env.OPENAI_API_KEY).not.toBe("raw-provider-key");
+  });
+
   test("makes the manifest model authoritative for Hermes runtime config", () => {
     const runtimeDataId = buildRuntimeDataId(principal, "hermes");
     const spec = buildContainerRuntimeSpec({

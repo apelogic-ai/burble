@@ -88,8 +88,10 @@ export type SchedulerControlIntent =
   | "resume_job"
   | "delete_job"
   | "update_job_delivery"
+  | "update_job"
   | "update_job_schedule"
   | "update_job_prompt"
+  | "update_job_runtime"
   | "latest_run_status"
   | null;
 
@@ -103,9 +105,11 @@ export type SchedulerIntentResolverResult = {
   intent: Exclude<SchedulerControlIntent, null> | "none";
   confidence: number;
   jobId?: string | null;
+  failure?: "timeout" | "invalid_response";
   create?: SchedulerResolvedCreateJob | null;
   schedule?: unknown;
   prompt?: string | null;
+  runtimeType?: AgentRuntimeEngine | null;
 };
 
 export type SchedulerIntentResolver = (input: {

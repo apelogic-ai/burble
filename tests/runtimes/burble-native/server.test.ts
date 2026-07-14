@@ -48,6 +48,41 @@ describe("Burble Native runtime server", () => {
     expect(response.status).toBe(401);
   });
 
+  test("accepts the runtime token header when a proxy consumes bearer auth", async () => {
+    const response = await handleRuntimeRequestRaw(
+      new Request("http://runtime/runs/validate", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-burble-runtime-token": runtimeToken
+        },
+        body: JSON.stringify({
+          runId: "run_proxy_auth",
+          principal: { workspaceId: "T1", slackUserId: "U1" },
+          runtime: { id: "rt_native", engine: "burble-native" },
+          input: {
+            text: "hello",
+            conversation: {
+              source: "slack",
+              workspaceId: "T1",
+              channelId: "D1",
+              rootId: "dm:D1",
+              isDirectMessage: true
+            },
+            connections: {}
+          }
+        })
+      }),
+      {
+        env: {
+          BURBLE_INTERNAL_TOKEN: runtimeToken
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   test("serves a runtime capability manifest", async () => {
     const response = await handleRuntimeRequest(new Request("http://runtime/capabilities"));
 
@@ -401,6 +436,84 @@ describe("Burble Native runtime server", () => {
     });
   });
 
+  test("retries OpenAI streams that close before response.completed", async () => {
+    let requests = 0;
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("describe Burble"))
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_NATIVE_PROVIDER_RETRY_BASE_MS: "0"
+        },
+        fetch: async () => {
+          requests += 1;
+          if (requests === 1) {
+            return new Response(
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "Partial output that must not be delivered."
+              }),
+              { headers: { "content-type": "text/event-stream" } }
+            );
+          }
+          return new Response(
+            [
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "Recovered after reconnect."
+              }),
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output_text: "Recovered after reconnect.",
+                  usage: {
+                    input_tokens: 20,
+                    output_tokens: 4,
+                    total_tokens: 24
+                  }
+                }
+              })
+            ].join(""),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(requests).toBe(2);
+    expect(events).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      { type: "message_delta", text: "Recovered after reconnect." },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Recovered after reconnect.",
+          usage: {
+            inputTokens: 20,
+            outputTokens: 4,
+            totalTokens: 24,
+            usageSource: "provider-output"
+          }
+        }
+      }
+    ]);
+  });
+
   test("executes model-requested Burble tools and feeds results back to the model", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const response = await handleRuntimeRequest(
@@ -586,7 +699,8 @@ describe("Burble Native runtime server", () => {
       {
         type: "tool_call",
         toolName: "github.getAuthenticatedUser",
-        callId: "call_123"
+        callId: "call_123",
+        input: { user: { email: "person@example.com" } }
       },
       {
         type: "tool_result",
@@ -793,7 +907,11 @@ describe("Burble Native runtime server", () => {
     expect(events).toContainEqual({
       type: "tool_call",
       toolName: "github.searchIssues",
-      callId: "scheduled_call_1"
+      callId: "scheduled_call_1",
+      input: {
+        query: "org:apelogic-ai is:pr is:open",
+        jobId: "job-native-123"
+      }
     });
     const firstProviderBody = JSON.parse(
       String(
@@ -811,8 +929,10 @@ describe("Burble Native runtime server", () => {
       request.url.includes("/github.searchIssues/execute")
     );
     expect(JSON.parse(String(toolRequest?.init?.body))).toEqual({
-      query: "org:apelogic-ai is:pr is:open",
-      jobId: "job-native-123"
+      input: {
+        query: "org:apelogic-ai is:pr is:open",
+        jobId: "job-native-123"
+      }
     });
   });
 
@@ -938,7 +1058,9 @@ describe("Burble Native runtime server", () => {
       request.url.includes("/github.search99/execute")
     );
     expect(JSON.parse(String(toolRequest?.init?.body))).toEqual({
-      jobId: "job-native-123"
+      input: {
+        jobId: "job-native-123"
+      }
     });
   });
 
@@ -1054,7 +1176,8 @@ describe("Burble Native runtime server", () => {
     expect(events).toContainEqual({
       type: "tool_call",
       toolName: "conversation.getAttachment",
-      callId: "call_attachment"
+      callId: "call_attachment",
+      input: { attachmentId: "attcap_native_123" }
     });
     expect(events).toContainEqual({
       type: "tool_result",
@@ -1084,7 +1207,9 @@ describe("Burble Native runtime server", () => {
     );
     expect(toolRequest).toBeDefined();
     expect(JSON.parse(String(toolRequest?.init?.body))).toEqual({
-      attachmentId: "attcap_native_123"
+      input: {
+        attachmentId: "attcap_native_123"
+      }
     });
   });
 

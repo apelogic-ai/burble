@@ -18,6 +18,7 @@ import {
   type Config
 } from "./config";
 import type { SlackLogLevel } from "./config";
+import { markdownToSlackMrkdwn } from "./slack-mrkdwn";
 import {
   addGitHubIssueLabels,
   buildGitHubOAuthUrl,
@@ -552,6 +553,8 @@ export function createSlackRuntime(
   const schedulerControl = createSchedulerControlPlane(store, {
     workflowAuthority: config.taskWorkflowAuthority,
     workflowShadowStore,
+    allowedRuntimeTypes:
+      config.agentRuntimeAllowedEngines ?? [config.agentRuntimeEngine],
     validateRuntimeAdmission: createScheduledRuntimeAdmissionValidator({
       config,
       store,
@@ -2363,6 +2366,7 @@ export function createManagedRuntimeFactory(
             dataRoot: config.agentRuntimeDataRoot,
             dockerNetwork: config.agentRuntimeDockerNetwork,
             toolGatewayUrl: config.agentRuntimeToolGatewayUrl,
+            inferenceBaseUrl: config.agentRuntimeInferenceBaseUrl,
             mcpGatewayUrl: config.agentRuntimeMcpGatewayUrl,
             mcpAudience: config.agentRuntimeMcpAudience,
             runtimeJwtIssuer,
@@ -6771,8 +6775,8 @@ export async function postConversationResponse(
 }
 
 function renderConversationResponseText(response: ConversationResponse): string {
-  const responseText = sanitizeRuntimeFinalResponseText(
-    sanitizeRuntimeStreamText(response.text)
+  const responseText = markdownToSlackMrkdwn(
+    sanitizeRuntimeFinalResponseText(sanitizeRuntimeStreamText(response.text))
   );
   if (!response.attachments || response.attachments.length === 0) {
     return responseText;
