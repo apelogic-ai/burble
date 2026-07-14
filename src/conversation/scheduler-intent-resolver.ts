@@ -6,6 +6,8 @@ import type {
   SchedulerIntentResolverResult,
 } from "./types";
 
+import { isAgentRuntimeEngine } from "@burble/runtime-sdk/runtime-engines";
+
 type SchedulerIntentGenerateText = (request: {
   model: DirectLanguageModel;
   system: string;
@@ -81,7 +83,7 @@ function withTimeout<T>(
 const schedulerIntentSystemPrompt = [
   "You classify Slack messages for Burble's scheduled-job control plane.",
   "Return only one JSON object. Do not include markdown.",
-  "Valid intents: list_jobs, list_job_runs, show_task, validate_task, create_job, trigger_job, pause_job, resume_job, delete_job, update_job_delivery, update_job_schedule, update_job_prompt, latest_run_status, none.",
+  "Valid intents: list_jobs, list_job_runs, show_task, validate_task, create_job, trigger_job, pause_job, resume_job, delete_job, update_job_delivery, update_job_schedule, update_job_prompt, update_job_runtime, latest_run_status, none.",
   "Classify only scheduler/cron/background-job control requests.",
   "Task specs are configured scheduled tasks. Job runs are executions of task specs.",
   "Examples of scheduler control: list cron jobs, list tasks, list job runs, validate task job_123, inspect a task's grants, create an hourly news job, run the existing scheduled job, test-run this job, did the manual job finish, pause the cron job, modify a task to post in a different channel.",
@@ -90,6 +92,7 @@ const schedulerIntentSystemPrompt = [
   "create.prompt is the executable task only. Remove schedule and delivery clauses such as every 30 min, hourly, report back here, to this channel.",
   "For update_job_schedule, include schedule with the new cron schedule and include jobId when one current task/job clearly matches the user reference.",
   "For update_job_prompt, include prompt with the new executable task prompt and include jobId when one current task/job clearly matches the user reference.",
+  "For update_job_runtime, include runtimeType and jobId. Supported runtimeType values: deterministic, openclaw, openclaw-gateway, burble-native, hermes.",
   'Use cron schedules with UTC timezone. Examples: every 30 min => {"kind":"cron","expression":"*/30 * * * *","timezone":"UTC"}; hourly => {"kind":"cron","expression":"0 * * * *","timezone":"UTC"}; every weekday at 9 AM => {"kind":"cron","expression":"0 9 * * 1-5","timezone":"UTC"}.',
   "For simple emoji posting tasks, normalize the prompt to: Post exactly this message: <emoji>",
   "Use confidence from 0 to 1.",
@@ -129,6 +132,7 @@ function schedulerIntentPrompt(
     'For create_job use: {"intent":"create_job","confidence":0.94,"jobId":null,"create":{"title":"Heart emoji every 30 min","prompt":"Post exactly this message: ❤️","schedule":{"kind":"cron","expression":"*/30 * * * *","timezone":"UTC"}}}',
     'For update_job_schedule use: {"intent":"update_job_schedule","confidence":0.94,"jobId":"job_123","schedule":{"kind":"cron","expression":"*/45 * * * *","timezone":"UTC"}}',
     'For update_job_prompt use: {"intent":"update_job_prompt","confidence":0.94,"jobId":"job_123","prompt":"Post exactly this message: ❤️❤️"}',
+    'For update_job_runtime use: {"intent":"update_job_runtime","confidence":0.94,"jobId":"job_123","runtimeType":"burble-native"}',
   ].join("\n");
 }
 
@@ -164,6 +168,7 @@ export function parseSchedulerIntentResponse(
     intent !== "update_job_delivery" &&
     intent !== "update_job_schedule" &&
     intent !== "update_job_prompt" &&
+    intent !== "update_job_runtime" &&
     intent !== "latest_run_status" &&
     intent !== "none"
   ) {
@@ -186,6 +191,10 @@ export function parseSchedulerIntentResponse(
     intent === "update_job_prompt"
       ? parseSchedulerPromptPayload(parsed.prompt)
       : null;
+  const runtimeType =
+    intent === "update_job_runtime" && isAgentRuntimeEngine(parsed.runtimeType)
+      ? parsed.runtimeType
+      : null;
   return {
     intent,
     confidence,
@@ -193,6 +202,7 @@ export function parseSchedulerIntentResponse(
     ...(create ? { create } : {}),
     ...(schedule ? { schedule } : {}),
     ...(prompt ? { prompt } : {}),
+    ...(runtimeType ? { runtimeType } : {}),
   };
 }
 

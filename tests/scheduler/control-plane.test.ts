@@ -1152,6 +1152,109 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("updates one scheduled job runtime and refreshes its capability", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "Look for fresh AI news and summarize it",
+      schedule: {
+        kind: "cron",
+        expression: "0 * * * *",
+        timezone: "UTC",
+      },
+      routeId: "convrt_news",
+      runtimeType: "openclaw",
+      now: new Date("2026-07-13T17:39:00.000Z"),
+    });
+    store.upsertScheduledJob({
+      jobId: "job-heart",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Heart emoji",
+      prompt: "Post exactly this message: ❤️",
+      schedule: {
+        kind: "cron",
+        expression: "*/10 * * * *",
+        timezone: "UTC",
+      },
+      routeId: "convrt_heart",
+      runtimeType: "openclaw",
+      now: new Date("2026-07-13T17:39:00.000Z"),
+    });
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-07-13T17:40:00.000Z"),
+      allowedRuntimeTypes: ["openclaw", "burble-native"],
+    });
+
+    expect(
+      await scheduler.updateJobRuntime?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-ai-news",
+        runtimeType: "burble-native",
+      }),
+    ).toEqual({
+      ok: true,
+      job: expect.objectContaining({
+        jobId: "job-ai-news",
+        runtimeType: "burble-native",
+        updatedAt: "2026-07-13T17:40:00.000Z",
+      }),
+    });
+    expect(store.getAgentJobCapability("job-ai-news")).toMatchObject({
+      jobId: "job-ai-news",
+      runtimeType: "burble-native",
+    });
+    expect(store.getScheduledJob("job-heart")?.runtimeType).toBe("openclaw");
+
+    store.close();
+  });
+
+  test("rejects a scheduled job runtime outside the rollout allowlist", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "Look for fresh AI news and summarize it",
+      schedule: {
+        kind: "cron",
+        expression: "0 * * * *",
+        timezone: "UTC",
+      },
+      routeId: "convrt_news",
+      runtimeType: "openclaw",
+      now: new Date("2026-07-13T17:39:00.000Z"),
+    });
+    const scheduler = createSchedulerControlPlane(store, {
+      allowedRuntimeTypes: ["openclaw", "burble-native"],
+    });
+
+    expect(
+      await scheduler.updateJobRuntime?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-ai-news",
+        runtimeType: "hermes",
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "runtime_not_allowed",
+      runtimeType: "hermes",
+      allowedRuntimeTypes: ["openclaw", "burble-native"],
+      jobs: expect.any(Array),
+    });
+    expect(store.getScheduledJob("job-ai-news")?.runtimeType).toBe(
+      "openclaw",
+    );
+
+    store.close();
+  });
+
   test("updates scheduled job delivery to an existing Slack channel grant", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({

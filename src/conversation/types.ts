@@ -90,6 +90,7 @@ export type SchedulerControlIntent =
   | "update_job_delivery"
   | "update_job_schedule"
   | "update_job_prompt"
+  | "update_job_runtime"
   | "latest_run_status"
   | null;
 
@@ -106,6 +107,7 @@ export type SchedulerIntentResolverResult = {
   create?: SchedulerResolvedCreateJob | null;
   schedule?: unknown;
   prompt?: string | null;
+  runtimeType?: AgentRuntimeEngine | null;
 };
 
 export type SchedulerIntentResolver = (input: {

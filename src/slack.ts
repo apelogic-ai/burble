@@ -552,6 +552,8 @@ export function createSlackRuntime(
   const schedulerControl = createSchedulerControlPlane(store, {
     workflowAuthority: config.taskWorkflowAuthority,
     workflowShadowStore,
+    allowedRuntimeTypes:
+      config.agentRuntimeAllowedEngines ?? [config.agentRuntimeEngine],
     validateRuntimeAdmission: createScheduledRuntimeAdmissionValidator({
       config,
       store,

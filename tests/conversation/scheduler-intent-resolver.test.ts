@@ -104,6 +104,19 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses task runtime update intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"update_job_runtime","confidence":0.95,"jobId":"job_ai_news","runtimeType":"burble-native"}',
+      ),
+    ).toEqual({
+      intent: "update_job_runtime",
+      confidence: 0.95,
+      jobId: "job_ai_news",
+      runtimeType: "burble-native",
+    });
+  });
+
   test("parses task validation intents", () => {
     expect(
       parseSchedulerIntentResponse(

@@ -18,6 +18,7 @@ import type {
   SchedulerTriggerResult,
   SchedulerUpdateJobDeliveryResult,
   SchedulerUpdateJobPromptResult,
+  SchedulerUpdateJobRuntimeResult,
   SchedulerUpdateJobScheduleResult,
   SchedulerValidateTaskResult,
 } from "../scheduler/control-plane";
@@ -80,6 +81,11 @@ async function handleConversationInternal(
   const schedulerPromptUpdateRequest =
     schedulerControlIntent === "update_job_prompt"
       ? normalizeResolvedPrompt(schedulerResolution.prompt)
+      : null;
+  const schedulerRuntimeUpdateRequest =
+    schedulerControlIntent === "update_job_runtime" &&
+    isAgentRuntimeEngine(schedulerResolution.runtimeType)
+      ? schedulerResolution.runtimeType
       : null;
   const toolGroups = selectRuntimeToolGroups({
     text: request.text,
@@ -384,6 +390,30 @@ async function handleConversationInternal(
   }
 
   if (
+    schedulerControlIntent === "update_job_runtime" &&
+    deps.schedulerControl?.updateJobRuntime
+  ) {
+    if (!schedulerRuntimeUpdateRequest) {
+      return {
+        visibility: "ephemeral",
+        classification: "user_private",
+        text: "I can’t update that scheduled task yet because I could not resolve the new runtime.",
+      };
+    }
+    const result = await deps.schedulerControl.updateJobRuntime({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: schedulerJobIdHint,
+      runtimeType: schedulerRuntimeUpdateRequest,
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobRuntimeUpdateResult(result),
+    };
+  }
+
+  if (
     schedulerControlIntent === "latest_run_status" &&
     deps.schedulerControl?.getLatestRunStatus
   ) {
@@ -549,6 +579,7 @@ async function resolveSchedulerControlIntent(
   create: SchedulerResolvedCreateJob | null;
   schedule: unknown | null;
   prompt: string | null;
+  runtimeType: AgentRuntimeEngine | null;
 }> {
   if (deps.schedulerIntentResolver) {
     try {
@@ -580,6 +611,7 @@ async function resolveSchedulerControlIntent(
             create: null,
             schedule: null,
             prompt: null,
+            runtimeType: null,
           };
         }
         return {
@@ -598,6 +630,11 @@ async function resolveSchedulerControlIntent(
             intent === "update_job_prompt"
               ? normalizeResolvedPrompt(resolved.prompt)
               : null,
+          runtimeType:
+            intent === "update_job_runtime" &&
+            isAgentRuntimeEngine(resolved.runtimeType)
+              ? resolved.runtimeType
+              : null,
         };
       }
     } catch {
@@ -611,6 +648,7 @@ async function resolveSchedulerControlIntent(
     create: null,
     schedule: null,
     prompt: null,
+    runtimeType: null,
   };
 }
 
@@ -722,6 +760,7 @@ function normalizeResolvedSchedulerIntent(
     result.intent === "update_job_delivery" ||
     result.intent === "update_job_schedule" ||
     result.intent === "update_job_prompt" ||
+    result.intent === "update_job_runtime" ||
     result.intent === "show_task" ||
     result.intent === "validate_task" ||
     result.intent === "latest_run_status"
@@ -1194,12 +1233,36 @@ export function formatScheduledJobPromptUpdateResult(
   return formatScheduledJobSelectionFailure(result);
 }
 
+export function formatScheduledJobRuntimeUpdateResult(
+  result: SchedulerUpdateJobRuntimeResult,
+): string {
+  if (result.ok) {
+    return [
+      `Updated scheduled job ${result.job.jobId} runtime.`,
+      `- runtime: ${result.job.runtimeType}`,
+    ].join("\n");
+  }
+  if (result.reason === "runtime_not_allowed") {
+    return [
+      `I can’t move that scheduled task to ${result.runtimeType} because it is not enabled.`,
+      result.allowedRuntimeTypes.length
+        ? `- enabled runtimes: ${result.allowedRuntimeTypes.join(", ")}`
+        : "- enabled runtimes: none",
+    ].join("\n");
+  }
+  return formatScheduledJobSelectionFailure(result);
+}
+
 function formatScheduledJobSelectionFailure(
   result:
     | Extract<SchedulerJobMutationResult, { ok: false }>
     | Extract<SchedulerJobDeleteResult, { ok: false }>
     | Extract<SchedulerUpdateJobDeliveryResult, { ok: false }>
-    | Extract<SchedulerUpdateJobScheduleResult, { ok: false }>,
+    | Extract<SchedulerUpdateJobScheduleResult, { ok: false }>
+    | Extract<
+        SchedulerUpdateJobRuntimeResult,
+        { ok: false; reason: "no_jobs" | "not_found" | "ambiguous" }
+      >,
 ): string {
   if (result.reason === "no_jobs") {
     return "No scheduled tasks are configured.";
