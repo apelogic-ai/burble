@@ -891,6 +891,32 @@ describe("formatAgentProgressEvent", () => {
     }
   });
 
+  test("converts final Markdown responses to Slack mrkdwn", async () => {
+    const posts: string[] = [];
+    const client = {
+      chat: {
+        postMessage: async (input: { text: string }) => {
+          posts.push(input.text);
+          return {};
+        }
+      }
+    };
+
+    await postConversationResponse(client as never, {
+      response: {
+        visibility: "dm",
+        classification: "user_private",
+        text: "**New SDK** - [PR #2122](https://github.com/NVIDIA/OpenShell/pull/2122)"
+      },
+      channel: "D123",
+      user: "U123"
+    });
+
+    expect(posts).toEqual([
+      "*New SDK* - <https://github.com/NVIDIA/OpenShell/pull/2122|PR #2122>"
+    ]);
+  });
+
   test("does not preserve provider marker-only runtime text in progress finals", async () => {
     const updates: string[] = [];
     const posts: string[] = [];

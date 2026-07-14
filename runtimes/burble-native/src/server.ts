@@ -834,6 +834,7 @@ function buildOpenAiInput(request: RunRequest): OpenAiInputItem[] {
   const scheduledJobContext = formatScheduledJobContext(request);
   const text = [
     "You are Burble, a concise Slack-native work assistant.",
+    "Format answers as Slack mrkdwn, not standard Markdown: use *bold* instead of **bold** and <url|label> instead of [label](url).",
     attachmentContext,
     scheduledJobContext,
     toolCatalog

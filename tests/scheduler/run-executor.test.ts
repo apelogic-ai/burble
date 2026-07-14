@@ -66,7 +66,7 @@ describe("scheduler run executor", () => {
           type: "final",
           response: {
             classification: "public",
-            text: "AI news summary result.",
+            text: "**AI news** summary result.",
             usage: {
               inputTokens: 30,
               outputTokens: 12,
@@ -131,7 +131,7 @@ describe("scheduler run executor", () => {
     expect(posts).toEqual([
       {
         channel: "D123",
-        text: "AI news summary result.",
+        text: "*AI news* summary result.",
       },
     ]);
     expect(store.getAgentJobRun(run.runId)).toMatchObject({
@@ -147,7 +147,7 @@ describe("scheduler run executor", () => {
       runnerName: "test-runner",
       executionMode: "native-runtime",
       routeId: route.id,
-      outputBytes: 23,
+      outputBytes: 27,
       usage: {
         inputTokens: 30,
         outputTokens: 12,
