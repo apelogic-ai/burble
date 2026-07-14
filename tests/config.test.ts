@@ -410,6 +410,29 @@ describe("readConfig", () => {
     );
   });
 
+  test("requires the MCP-GW endpoint and audience when Google routing is enabled", () => {
+    expect(() =>
+      readConfig({
+        ...validEnv,
+        MCP_IDENTITY_PRIVATE_KEY_PATH: "/data/mcp-identity-private.pem",
+        GOOGLE_VIA_MCP_GW: "true"
+      })
+    ).toThrow(
+      "GOOGLE_VIA_MCP_GW requires MCP_GW_MCP_URL and MCP_GW_AUDIENCE"
+    );
+
+    expect(() =>
+      readConfig({
+        ...validEnv,
+        MCP_IDENTITY_PRIVATE_KEY_PATH: "/data/mcp-identity-private.pem",
+        MCP_GW_MCP_URL: "https://18.210.100.44.nip.io/mcp",
+        GOOGLE_VIA_MCP_GW: "true"
+      })
+    ).toThrow(
+      "GOOGLE_VIA_MCP_GW requires MCP_GW_MCP_URL and MCP_GW_AUDIENCE"
+    );
+  });
+
   test("allows OpenClaw gateway runtime engine override", () => {
     const config = readConfig({
       ...validEnv,
