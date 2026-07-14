@@ -88,6 +88,7 @@ export type SchedulerControlIntent =
   | "resume_job"
   | "delete_job"
   | "update_job_delivery"
+  | "update_job"
   | "update_job_schedule"
   | "update_job_prompt"
   | "update_job_runtime"

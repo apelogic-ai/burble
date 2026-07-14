@@ -83,7 +83,7 @@ function withTimeout<T>(
 const schedulerIntentSystemPrompt = [
   "You classify Slack messages for Burble's scheduled-job control plane.",
   "Return only one JSON object. Do not include markdown.",
-  "Valid intents: list_jobs, list_job_runs, show_task, validate_task, create_job, trigger_job, pause_job, resume_job, delete_job, update_job_delivery, update_job_schedule, update_job_prompt, update_job_runtime, latest_run_status, none.",
+  "Valid intents: list_jobs, list_job_runs, show_task, validate_task, create_job, trigger_job, pause_job, resume_job, delete_job, update_job_delivery, update_job, update_job_schedule, update_job_prompt, update_job_runtime, latest_run_status, none.",
   "Classify only scheduler/cron/background-job control requests.",
   "Task specs are configured scheduled tasks. Job runs are executions of task specs.",
   "Examples of scheduler control: list cron jobs, list tasks, list job runs, validate task job_123, inspect a task's grants, create an hourly news job, run the existing scheduled job, test-run this job, did the manual job finish, pause the cron job, modify a task to post in a different channel.",
@@ -93,6 +93,7 @@ const schedulerIntentSystemPrompt = [
   "For update_job_schedule, include schedule with the new cron schedule and include jobId when one current task/job clearly matches the user reference.",
   "For update_job_prompt, include prompt with the new executable task prompt and include jobId when one current task/job clearly matches the user reference.",
   "For update_job_runtime, include runtimeType and jobId. Supported runtimeType values: deterministic, openclaw, openclaw-gateway, burble-native, hermes.",
+  "For a request changing two or more of prompt, schedule, and runtime, use update_job and include every requested field plus jobId.",
   'Use cron schedules with UTC timezone. Examples: every 30 min => {"kind":"cron","expression":"*/30 * * * *","timezone":"UTC"}; hourly => {"kind":"cron","expression":"0 * * * *","timezone":"UTC"}; every weekday at 9 AM => {"kind":"cron","expression":"0 9 * * 1-5","timezone":"UTC"}.',
   "For simple emoji posting tasks, normalize the prompt to: Post exactly this message: <emoji>",
   "Use confidence from 0 to 1.",
@@ -133,6 +134,7 @@ function schedulerIntentPrompt(
     'For update_job_schedule use: {"intent":"update_job_schedule","confidence":0.94,"jobId":"job_123","schedule":{"kind":"cron","expression":"*/45 * * * *","timezone":"UTC"}}',
     'For update_job_prompt use: {"intent":"update_job_prompt","confidence":0.94,"jobId":"job_123","prompt":"Post exactly this message: ❤️❤️"}',
     'For update_job_runtime use: {"intent":"update_job_runtime","confidence":0.94,"jobId":"job_123","runtimeType":"burble-native"}',
+    'For a composite update use: {"intent":"update_job","confidence":0.97,"jobId":"job_123","prompt":"Post exactly this message: ❤️","schedule":{"kind":"cron","expression":"*/15 * * * *","timezone":"UTC"},"runtimeType":"burble-native"}',
   ].join("\n");
 }
 
@@ -166,6 +168,7 @@ export function parseSchedulerIntentResponse(
     intent !== "resume_job" &&
     intent !== "delete_job" &&
     intent !== "update_job_delivery" &&
+    intent !== "update_job" &&
     intent !== "update_job_schedule" &&
     intent !== "update_job_prompt" &&
     intent !== "update_job_runtime" &&
@@ -184,15 +187,16 @@ export function parseSchedulerIntentResponse(
   const create =
     intent === "create_job" ? parseSchedulerCreatePayload(parsed.create) : null;
   const schedule =
-    intent === "update_job_schedule"
+    intent === "update_job_schedule" || intent === "update_job"
       ? parseSchedulerSchedulePayload(parsed.schedule)
       : null;
   const prompt =
-    intent === "update_job_prompt"
+    intent === "update_job_prompt" || intent === "update_job"
       ? parseSchedulerPromptPayload(parsed.prompt)
       : null;
   const runtimeType =
-    intent === "update_job_runtime" && isAgentRuntimeEngine(parsed.runtimeType)
+    (intent === "update_job_runtime" || intent === "update_job") &&
+    isAgentRuntimeEngine(parsed.runtimeType)
       ? parsed.runtimeType
       : null;
   return {

@@ -1213,6 +1213,64 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("atomically updates scheduled job execution fields", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-heart",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Heart emoji every 30 min",
+      prompt: "Post exactly this message: :heart::heart:",
+      schedule: {
+        kind: "cron",
+        expression: "*/10 * * * *",
+        timezone: "UTC",
+      },
+      routeId: "convrt_heart",
+      runtimeType: "hermes",
+      now: new Date("2026-07-13T15:30:59.503Z"),
+    });
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-07-14T15:13:00.000Z"),
+      allowedRuntimeTypes: ["hermes", "burble-native"],
+    });
+
+    expect(
+      await scheduler.updateJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-heart",
+        prompt: "Post exactly this message: :heart:",
+        schedule: {
+          kind: "cron",
+          expression: "*/15 * * * *",
+          timezone: "UTC",
+        },
+        runtimeType: "burble-native",
+      }),
+    ).toEqual({
+      ok: true,
+      job: expect.objectContaining({
+        jobId: "job-heart",
+        prompt: "Post exactly this message: :heart:",
+        schedule: {
+          kind: "cron",
+          expression: "*/15 * * * *",
+          timezone: "UTC",
+        },
+        runtimeType: "burble-native",
+        updatedAt: "2026-07-14T15:13:00.000Z",
+      }),
+    });
+    expect(store.getAgentJobCapability("job-heart")).toMatchObject({
+      jobId: "job-heart",
+      runtimeType: "burble-native",
+      requiredTools: [],
+    });
+
+    store.close();
+  });
+
   test("rejects a scheduled job runtime outside the rollout allowlist", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({

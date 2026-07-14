@@ -17,6 +17,7 @@ import type {
   SchedulerShowTaskResult,
   SchedulerTriggerResult,
   SchedulerUpdateJobDeliveryResult,
+  SchedulerUpdateJobResult,
   SchedulerUpdateJobPromptResult,
   SchedulerUpdateJobRuntimeResult,
   SchedulerUpdateJobScheduleResult,
@@ -75,15 +76,18 @@ async function handleConversationInternal(
       ? parseSchedulerDeliveryUpdateRequest(request)
       : null;
   const schedulerScheduleUpdateRequest =
-    schedulerControlIntent === "update_job_schedule"
+    schedulerControlIntent === "update_job_schedule" ||
+    schedulerControlIntent === "update_job"
       ? normalizeResolvedSchedule(schedulerResolution.schedule)
       : null;
   const schedulerPromptUpdateRequest =
-    schedulerControlIntent === "update_job_prompt"
+    schedulerControlIntent === "update_job_prompt" ||
+    schedulerControlIntent === "update_job"
       ? normalizeResolvedPrompt(schedulerResolution.prompt)
       : null;
   const schedulerRuntimeUpdateRequest =
-    schedulerControlIntent === "update_job_runtime" &&
+    (schedulerControlIntent === "update_job_runtime" ||
+      schedulerControlIntent === "update_job") &&
     isAgentRuntimeEngine(schedulerResolution.runtimeType)
       ? schedulerResolution.runtimeType
       : null;
@@ -338,6 +342,42 @@ async function handleConversationInternal(
       visibility: "ephemeral",
       classification: "user_private",
       text: formatScheduledJobDeliveryUpdateResult(result),
+    };
+  }
+
+  if (
+    schedulerControlIntent === "update_job" &&
+    deps.schedulerControl?.updateJob
+  ) {
+    if (
+      !schedulerPromptUpdateRequest &&
+      !schedulerScheduleUpdateRequest &&
+      !schedulerRuntimeUpdateRequest
+    ) {
+      return {
+        visibility: "ephemeral",
+        classification: "user_private",
+        text: "I can’t update that scheduled task yet because I could not resolve any requested changes.",
+      };
+    }
+    const result = await deps.schedulerControl.updateJob({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: schedulerJobIdHint,
+      ...(schedulerPromptUpdateRequest
+        ? { prompt: schedulerPromptUpdateRequest }
+        : {}),
+      ...(schedulerScheduleUpdateRequest
+        ? { schedule: schedulerScheduleUpdateRequest }
+        : {}),
+      ...(schedulerRuntimeUpdateRequest
+        ? { runtimeType: schedulerRuntimeUpdateRequest }
+        : {}),
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobUpdateResult(result),
     };
   }
 
@@ -623,15 +663,15 @@ async function resolveSchedulerControlIntent(
           ),
           create,
           schedule:
-            intent === "update_job_schedule"
+            intent === "update_job_schedule" || intent === "update_job"
               ? normalizeResolvedSchedule(resolved.schedule)
               : null,
           prompt:
-            intent === "update_job_prompt"
+            intent === "update_job_prompt" || intent === "update_job"
               ? normalizeResolvedPrompt(resolved.prompt)
               : null,
           runtimeType:
-            intent === "update_job_runtime" &&
+            (intent === "update_job_runtime" || intent === "update_job") &&
             isAgentRuntimeEngine(resolved.runtimeType)
               ? resolved.runtimeType
               : null,
@@ -758,6 +798,7 @@ function normalizeResolvedSchedulerIntent(
     result.intent === "resume_job" ||
     result.intent === "delete_job" ||
     result.intent === "update_job_delivery" ||
+    result.intent === "update_job" ||
     result.intent === "update_job_schedule" ||
     result.intent === "update_job_prompt" ||
     result.intent === "update_job_runtime" ||
@@ -1221,6 +1262,31 @@ export function formatScheduledJobScheduleUpdateResult(
   return formatScheduledJobSelectionFailure(result);
 }
 
+export function formatScheduledJobUpdateResult(
+  result: SchedulerUpdateJobResult,
+): string {
+  if (result.ok) {
+    return [
+      `Updated scheduled job ${result.job.jobId}.`,
+      `- prompt: ${result.job.prompt}`,
+      `- schedule: ${formatScheduleForSlack(result.job.schedule)}`,
+      `- runtime: ${result.job.runtimeType}`,
+    ].join("\n");
+  }
+  if (result.reason === "invalid_schedule") {
+    return `I can’t update that scheduled task because its new schedule is unsupported: ${result.message}`;
+  }
+  if (result.reason === "runtime_not_allowed") {
+    return [
+      `I can’t move that scheduled task to ${result.runtimeType} because it is not enabled.`,
+      result.allowedRuntimeTypes.length
+        ? `- enabled runtimes: ${result.allowedRuntimeTypes.join(", ")}`
+        : "- enabled runtimes: none",
+    ].join("\n");
+  }
+  return formatScheduledJobSelectionFailure(result);
+}
+
 export function formatScheduledJobPromptUpdateResult(
   result: SchedulerUpdateJobPromptResult,
 ): string {
@@ -1258,6 +1324,10 @@ function formatScheduledJobSelectionFailure(
     | Extract<SchedulerJobMutationResult, { ok: false }>
     | Extract<SchedulerJobDeleteResult, { ok: false }>
     | Extract<SchedulerUpdateJobDeliveryResult, { ok: false }>
+    | Extract<
+        SchedulerUpdateJobResult,
+        { ok: false; reason: "no_jobs" | "not_found" | "ambiguous" }
+      >
     | Extract<SchedulerUpdateJobScheduleResult, { ok: false }>
     | Extract<
         SchedulerUpdateJobRuntimeResult,

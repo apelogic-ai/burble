@@ -117,6 +117,25 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses composite task update intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"update_job","confidence":0.97,"jobId":"job_heart","prompt":"Post exactly this message: :heart:","schedule":{"kind":"cron","expression":"*/15 * * * *","timezone":"UTC"},"runtimeType":"burble-native"}',
+      ),
+    ).toEqual({
+      intent: "update_job",
+      confidence: 0.97,
+      jobId: "job_heart",
+      prompt: "Post exactly this message: :heart:",
+      schedule: {
+        kind: "cron",
+        expression: "*/15 * * * *",
+        timezone: "UTC",
+      },
+      runtimeType: "burble-native",
+    });
+  });
+
   test("parses task validation intents", () => {
     expect(
       parseSchedulerIntentResponse(
