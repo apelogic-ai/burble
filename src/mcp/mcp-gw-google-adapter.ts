@@ -149,7 +149,8 @@ export function mcpGwGoogleToolResult(
       classification: "user_private",
       content: {
         error: "google_not_connected",
-        message: result.message,
+        message: actionableGoogleReconnectMessage(result.message),
+        authCommand: "/auth google",
         ...(result.connectUrl ? { connectUrl: result.connectUrl } : {})
       }
     };
@@ -164,6 +165,14 @@ export function mcpGwGoogleToolResult(
       result: result.result
     }
   };
+}
+
+function actionableGoogleReconnectMessage(message: string): string {
+  const trimmed = message.trim().replace(/[.!?]+$/, "");
+  if (trimmed.includes("/auth google")) {
+    return `${trimmed}.`;
+  }
+  return `${trimmed || "Google Workspace authorization required"}. Reconnect with \`/auth google\`.`;
 }
 
 function adaptMcpGwDriveFilesListArgs(

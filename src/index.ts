@@ -45,14 +45,15 @@ const slack = createSlackRuntime(
   config.agentRuntimeFactory === "sandbox"
     ? {
         ...(config.testbed ? { testbed: true } : {}),
+        mcpIdentityIssuer,
         sandboxProvider: createConfiguredSandboxProvider(config),
         ...(config.agentRuntimeSandboxStartCommand
           ? { sandboxStartCommand: config.agentRuntimeSandboxStartCommand }
           : {})
       }
     : config.testbed
-      ? { testbed: true }
-      : {}
+      ? { testbed: true, mcpIdentityIssuer }
+      : { mcpIdentityIssuer }
 );
 const slackTestbed = config.testbed ? installSlackTestbed(slack) : undefined;
 const server = startOAuthServer(

@@ -179,6 +179,12 @@ import {
   type ObservabilitySink
 } from "./observability";
 import type { RuntimeJwtIssuer } from "./runtime-jwt";
+import type { McpIdentityIssuer } from "./mcp-identity";
+import {
+  createMcpGwGoogleAuthService,
+  type McpGwGoogleAuthService,
+} from "./mcp/mcp-gw-google-auth-service";
+import type { McpGwGoogleAuthStatus } from "./mcp/mcp-gw-google-auth-client";
 
 export {
   formatConnectGitHubMessage,
@@ -201,6 +207,8 @@ export type SlackRuntimeOptions = {
   sandboxModelProviderUrls?: string[];
   sandboxFetch?: SandboxRuntimeFetch;
   schedulerIntentResolver?: SchedulerIntentResolver;
+  mcpIdentityIssuer?: McpIdentityIssuer;
+  mcpGwGoogleAuthService?: McpGwGoogleAuthService;
   testbed?: boolean;
 };
 
@@ -354,6 +362,32 @@ export function createSlackRuntime(
     }
     return email;
   }
+
+  const mcpGwGoogleAuthService =
+    options.mcpGwGoogleAuthService ??
+    (config.googleViaMcpGw &&
+    config.mcpGwMcpUrl &&
+    config.mcpGwAudience &&
+    options.mcpIdentityIssuer
+      ? createMcpGwGoogleAuthService({
+          mcpUrl: config.mcpGwMcpUrl,
+          audience: config.mcpGwAudience,
+          issuer: options.mcpIdentityIssuer,
+          getSlackEmail,
+        })
+      : undefined);
+
+  const createGoogleConnectUrl =
+    mcpGwGoogleAuthService
+      ? async (principal: { workspaceId: string; slackUserId: string }) =>
+          (await mcpGwGoogleAuthService.start(principal)).authorizationUrl
+      : config.googleClientId && config.googleClientSecret
+        ? async (principal: { workspaceId: string; slackUserId: string }) =>
+            buildGoogleOAuthUrl(
+              config,
+              store.createOAuthState(principal.slackUserId),
+            )
+        : undefined;
 
   const githubTools = createGitHubTools({
     getGitHubUser,
@@ -634,15 +668,29 @@ export function createSlackRuntime(
       workspaceId: input.workspaceId,
       slackUserId: input.slackUserId
     });
+    const googleAuth = await resolveGoogleAuthView({
+      service: mcpGwGoogleAuthService,
+      principal: {
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId
+      },
+      legacyUrl: mcpGwGoogleAuthService
+        ? null
+        : tryBuildGoogleOAuthUrl(
+            config,
+            store.createOAuthState(input.slackUserId)
+          ),
+      logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+    });
     return buildAppHomeView({
       githubUrl: buildGitHubOAuthUrl(
         config,
         store.createOAuthState(input.slackUserId)
       ),
-      googleUrl: tryBuildGoogleOAuthUrl(
-        config,
-        store.createOAuthState(input.slackUserId)
-      ),
+      googleUrl: googleAuth.googleUrl,
+      ...(googleAuth.googleMcpGw
+        ? { googleMcpGw: googleAuth.googleMcpGw }
+        : {}),
       jiraUrl: tryBuildJiraOAuthUrl(
         config,
         store.createOAuthState(input.slackUserId)
@@ -988,7 +1036,14 @@ export function createSlackRuntime(
     }
 
     try {
-      store.deleteConnectionForSlackUser(provider, context.slackUserId);
+      if (provider === "google" && mcpGwGoogleAuthService) {
+        await mcpGwGoogleAuthService.disconnect({
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId
+        });
+      } else {
+        store.deleteConnectionForSlackUser(provider, context.slackUserId);
+      }
       await publishHomeViewForUser({
         client,
         workspaceId: context.workspaceId,
@@ -1184,10 +1239,13 @@ export function createSlackRuntime(
         {
           createGitHubOAuthUrl: (slackUserId) =>
             buildGitHubOAuthUrl(config, store.createOAuthState(slackUserId)),
-          ...(config.googleClientId && config.googleClientSecret
+          ...(createGoogleConnectUrl
             ? {
                 createGoogleOAuthUrl: (slackUserId: string) =>
-                  buildGoogleOAuthUrl(config, store.createOAuthState(slackUserId))
+                  createGoogleConnectUrl({
+                    workspaceId: body.team_id ?? "",
+                    slackUserId
+                  })
               }
             : {}),
           ...(config.jiraClientId && config.jiraClientSecret
@@ -1384,10 +1442,13 @@ export function createSlackRuntime(
         {
           createGitHubOAuthUrl: (slackUserId) =>
             buildGitHubOAuthUrl(config, store.createOAuthState(slackUserId)),
-          ...(config.googleClientId && config.googleClientSecret
+          ...(createGoogleConnectUrl
             ? {
                 createGoogleOAuthUrl: (slackUserId: string) =>
-                  buildGoogleOAuthUrl(config, store.createOAuthState(slackUserId))
+                  createGoogleConnectUrl({
+                    workspaceId: body.team_id ?? "",
+                    slackUserId
+                  })
               }
             : {}),
           ...(config.jiraClientId && config.jiraClientSecret
@@ -1506,10 +1567,22 @@ export function createSlackRuntime(
         config,
         store.createOAuthState(body.user_id)
       );
-      const googleUrl = tryBuildGoogleOAuthUrl(
-        config,
-        store.createOAuthState(body.user_id)
-      );
+      const googleAuth = await resolveGoogleAuthView({
+        service: mcpGwGoogleAuthService,
+        principal: {
+          workspaceId: body.team_id ?? "",
+          slackUserId: body.user_id
+        },
+        legacyUrl: mcpGwGoogleAuthService
+          ? null
+          : tryBuildGoogleOAuthUrl(
+              config,
+              store.createOAuthState(body.user_id)
+            ),
+        includeStatus: action.kind === "connections",
+        logWarn: (message) => logger.warn(withUtcTimestamp(message))
+      });
+      const googleUrl = googleAuth.googleUrl;
       const hubspotUrl = tryBuildHubSpotOAuthUrl(
         config,
         store.createOAuthState(body.user_id)
@@ -1543,7 +1616,9 @@ export function createSlackRuntime(
                   }
                 : {
                     response_type: "ephemeral",
-                    text: "Google OAuth is not configured."
+                    text: mcpGwGoogleAuthService
+                      ? "MCP-GW Google authorization is temporarily unavailable."
+                      : "Google OAuth is not configured."
                   }
             : action.kind === "hubspot"
               ? hubspotUrl
@@ -1571,7 +1646,10 @@ export function createSlackRuntime(
                   hubspotUrl,
                   jiraUrl,
                   slackUrl,
-                  connections: providerConnectionsForUser(store, body.user_id)
+                  connections: providerConnectionsForUser(store, body.user_id),
+                  ...(googleAuth.googleMcpGw
+                    ? { googleMcpGw: googleAuth.googleMcpGw }
+                    : {})
                 })
       );
     } catch (error) {
@@ -3183,6 +3261,9 @@ type ProviderConnectionViewInput = {
   hubspotUrl: string | null;
   jiraUrl: string | null;
   slackUrl: string | null;
+  googleMcpGw?: {
+    status: McpGwGoogleAuthStatus | null;
+  };
   connections?: {
     [provider in Provider]?: ProviderConnection | null;
   };
@@ -3328,7 +3409,11 @@ export function buildAppHomeView(input: ProviderConnectionViewInput): View {
 }
 
 function buildAppHomeIntroText(input: ProviderConnectionViewInput): string {
-  const connectedCount = Object.values(input.connections ?? {}).filter(Boolean).length;
+  const connectedCount = connectedProviderIds.filter((provider) =>
+    provider === "google" && input.googleMcpGw
+      ? input.googleMcpGw.status?.connected === true
+      : Boolean(input.connections?.[provider])
+  ).length;
   if (connectedCount === 0 && !input.agentSettings?.runtime.id) {
     return [
       "Start by connecting the provider accounts you want Burble to use.",
@@ -3707,6 +3792,22 @@ function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
     .map((descriptor) => {
       const url = input[descriptor.authUrlInputKey];
       const connection = input.connections?.[descriptor.id] ?? null;
+      if (descriptor.id === "google" && input.googleMcpGw) {
+        const status = input.googleMcpGw.status;
+        const accountPresent = Boolean(status?.connected || status?.email);
+        return buildProviderConnectionBlock({
+          provider: descriptor.id,
+          title: descriptor.connectionTitle,
+          status: formatMcpGwGoogleConnectionStatus(status),
+          configured: true,
+          url,
+          connected: status?.connected === true,
+          reconnect: accountPresent || Boolean(status?.missingScopes.length),
+          disconnectable: accountPresent,
+          actionId: `connect_${descriptor.authCommand}`,
+          usage: descriptor.usage
+        });
+      }
       return buildProviderConnectionBlock({
         provider: descriptor.id,
         title: descriptor.connectionTitle,
@@ -4301,6 +4402,8 @@ function buildProviderConnectionBlock(input: {
   configured: boolean;
   url: string | null;
   connected: boolean;
+  reconnect?: boolean;
+  disconnectable?: boolean;
   actionId: string;
   usage: string;
 }) {
@@ -4310,13 +4413,13 @@ function buildProviderConnectionBlock(input: {
       type: "button",
       text: {
         type: "plain_text",
-        text: input.connected ? "Reconnect" : "Connect"
+        text: input.connected || input.reconnect ? "Reconnect" : "Connect"
       },
       url: input.url,
       action_id: input.actionId
     });
   }
-  if (input.connected) {
+  if (input.disconnectable ?? input.connected) {
     actions.push({
       type: "button",
       text: {
@@ -6407,6 +6510,63 @@ function formatConnectionStatus(
   }
 
   return `Connected as \`${connection.providerLogin}\`.`;
+}
+
+function formatMcpGwGoogleConnectionStatus(
+  status: McpGwGoogleAuthStatus | null
+): string {
+  if (!status) {
+    return "MCP-GW connection status unavailable.";
+  }
+  if (status.connected) {
+    return status.email
+      ? `Connected through MCP-GW as \`${status.email}\`.`
+      : "Connected through MCP-GW.";
+  }
+  if (status.email || status.missingScopes.length > 0) {
+    const account = status.email ? ` for \`${status.email}\`` : "";
+    const missing = status.missingScopes.length
+      ? ` Missing ${status.missingScopes.length} required Google Workspace scope${status.missingScopes.length === 1 ? "" : "s"}.`
+      : "";
+    return `Reconnect required through MCP-GW${account}.${missing}`;
+  }
+  return "Not connected through MCP-GW.";
+}
+
+async function resolveGoogleAuthView(input: {
+  service?: McpGwGoogleAuthService;
+  principal: { workspaceId: string; slackUserId: string };
+  legacyUrl: string | null;
+  includeStatus?: boolean;
+  logWarn?: (message: string) => void;
+}): Promise<{
+  googleUrl: string | null;
+  googleMcpGw?: { status: McpGwGoogleAuthStatus | null };
+}> {
+  if (!input.service) {
+    return { googleUrl: input.legacyUrl };
+  }
+
+  let googleUrl: string | null = null;
+  let status: McpGwGoogleAuthStatus | null = null;
+  try {
+    googleUrl = (await input.service.start(input.principal)).authorizationUrl;
+  } catch (error) {
+    input.logWarn?.(
+      `Could not start MCP-GW Google auth: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  if (input.includeStatus !== false) {
+    try {
+      status = await input.service.status(input.principal);
+    } catch (error) {
+      input.logWarn?.(
+        `Could not read MCP-GW Google auth status: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  return { googleUrl, googleMcpGw: { status } };
 }
 
 function toBoltLogLevel(level: SlackLogLevel): LogLevel {

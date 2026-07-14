@@ -497,6 +497,11 @@ export function readConfig(env: Env): Config {
       "GOOGLE_VIA_MCP_GW requires MCP_IDENTITY_PRIVATE_KEY_PATH to use a persistent MCP identity signing key"
     );
   }
+  if (googleViaMcpGw && (!mcpGwMcpUrl || !mcpGwAudience)) {
+    throw new Error(
+      "GOOGLE_VIA_MCP_GW requires MCP_GW_MCP_URL and MCP_GW_AUDIENCE"
+    );
+  }
 
   return {
     slackBotToken: requiredEnv(env, "SLACK_BOT_TOKEN"),

@@ -3,6 +3,7 @@ import { readConfig } from "../src/config";
 import { createTokenStore } from "../src/db";
 import { createRuntimeJwtIssuer } from "../src/runtime-jwt";
 import { createSlackRuntime } from "../src/slack";
+import type { McpGwGoogleAuthService } from "../src/mcp/mcp-gw-google-auth-service";
 import { startOAuthServer } from "../src/server";
 import {
   installSlackTestbed,
@@ -14,6 +15,166 @@ import {
 const slackTestbedTimeoutMs = 15_000;
 
 describe("local Slack testbed", () => {
+  test("uses MCP-GW as the authoritative Google auth control plane", async () => {
+    const config = readConfig({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SLACK_APP_TOKEN: "xapp-test",
+      GITHUB_CLIENT_ID: "github-client-id",
+      GITHUB_CLIENT_SECRET: "github-client-secret",
+      BASE_URL: "http://127.0.0.1:3000",
+      PORT: "39190",
+      DATABASE_PATH: ":memory:",
+      BURBLE_TESTBED: "1",
+      AGENT_MODE: "deterministic",
+      GOOGLE_VIA_MCP_GW: "on",
+      MCP_IDENTITY_PRIVATE_KEY_PATH: "/tmp/burble-test-mcp-identity.pem",
+      MCP_GW_AUDIENCE: "https://mcp-gw.example.test/mcp",
+      MCP_GW_MCP_URL: "https://mcp-gw.example.test/mcp",
+    });
+    const store = createTokenStore(":memory:");
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "testbed@example.test",
+      slackUserId: testbedUserId,
+      providerLogin: "stale-legacy@example.test",
+      accessToken: "legacy-access-token",
+      refreshToken: "legacy-refresh-token",
+    });
+    let connected = true;
+    let disconnectCalls = 0;
+    const mcpGwGoogleAuthService: McpGwGoogleAuthService = {
+      start: async (principal) => {
+        expect(principal).toEqual({
+          workspaceId: testbedWorkspaceId,
+          slackUserId: testbedUserId,
+        });
+        return {
+          authorizationUrl:
+            "https://accounts.google.com/o/oauth2/v2/auth?state=mcp-gw-state",
+        };
+      },
+      status: async () => ({
+        connected,
+        ...(connected ? { email: "mcp-gw-user@example.test" } : {}),
+        scopesRequired: connected ? ["drive", "gmail"] : [],
+        scopesGranted: connected ? ["drive", "gmail"] : [],
+        missingScopes: [],
+      }),
+      disconnect: async () => {
+        disconnectCalls += 1;
+        connected = false;
+      },
+    };
+    const runtimeJwtIssuer = createRuntimeJwtIssuer({
+      issuer: config.runtimeJwtIssuer,
+    });
+    const slack = createSlackRuntime(
+      config,
+      store,
+      runtimeJwtIssuer,
+      undefined,
+      { testbed: true, mcpGwGoogleAuthService },
+    );
+    const testbed = installSlackTestbed(slack);
+    const slashResponses: unknown[] = [];
+
+    try {
+      await slack.app.processEvent({
+        body: {
+          type: "slash_command",
+          command: "/auth",
+          text: "google",
+          team_id: testbedWorkspaceId,
+          user_id: testbedUserId,
+          channel_id: testbedDirectChannelId,
+        },
+        ack: async (response) => {
+          slashResponses.push(response);
+        },
+      });
+      expect(JSON.stringify(slashResponses)).toContain(
+        "https://accounts.google.com/o/oauth2/v2/auth?state=mcp-gw-state",
+      );
+
+      await testbed.processAppHomeOpened();
+      const connectedHome = JSON.stringify(
+        testbed.state.homes[testbedUserId],
+      );
+      expect(connectedHome).toContain("mcp-gw-user@example.test");
+      expect(connectedHome).not.toContain("stale-legacy@example.test");
+
+      await testbed.processBlockAction({
+        actionId: "provider_disconnect",
+        value: "google",
+      });
+      expect(disconnectCalls).toBe(1);
+      expect(
+        JSON.stringify(testbed.state.homes[testbedUserId]),
+      ).toContain("Not connected through MCP-GW");
+      expect(
+        store.getConnectionForSlackUser("google", testbedUserId)?.providerLogin,
+      ).toBe("stale-legacy@example.test");
+    } finally {
+      slack.close();
+      store.close();
+    }
+  }, slackTestbedTimeoutMs);
+
+  test("keeps Burble-owned Google OAuth when MCP-GW routing is disabled", async () => {
+    const config = readConfig({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SLACK_APP_TOKEN: "xapp-test",
+      GITHUB_CLIENT_ID: "github-client-id",
+      GITHUB_CLIENT_SECRET: "github-client-secret",
+      GOOGLE_CLIENT_ID: "google-client-id",
+      GOOGLE_CLIENT_SECRET: "google-client-secret",
+      BASE_URL: "https://burble.example.test",
+      PORT: "39190",
+      DATABASE_PATH: ":memory:",
+      BURBLE_TESTBED: "1",
+      AGENT_MODE: "deterministic",
+    });
+    const store = createTokenStore(":memory:");
+    const runtimeJwtIssuer = createRuntimeJwtIssuer({
+      issuer: config.runtimeJwtIssuer,
+    });
+    const slack = createSlackRuntime(
+      config,
+      store,
+      runtimeJwtIssuer,
+      undefined,
+      { testbed: true },
+    );
+    installSlackTestbed(slack);
+    const slashResponses: unknown[] = [];
+
+    try {
+      await slack.app.processEvent({
+        body: {
+          type: "slash_command",
+          command: "/auth",
+          text: "google",
+          team_id: testbedWorkspaceId,
+          user_id: testbedUserId,
+          channel_id: testbedDirectChannelId,
+        },
+        ack: async (response) => {
+          slashResponses.push(response);
+        },
+      });
+
+      const response = JSON.stringify(slashResponses);
+      expect(response).toContain("accounts.google.com/o/oauth2/v2/auth");
+      expect(response).toContain("client_id=google-client-id");
+      expect(response).toContain(
+        "redirect_uri=https%3A%2F%2Fburble.example.test%2Foauth%2Fgoogle%2Fcallback",
+      );
+    } finally {
+      slack.close();
+      store.close();
+    }
+  }, slackTestbedTimeoutMs);
+
   test("injects Slack-shaped App Home and DM events through Bolt", async () => {
     const config = readConfig({
       SLACK_BOT_TOKEN: "xoxb-test",
