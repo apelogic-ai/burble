@@ -157,7 +157,11 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       ...config,
       agentRuntimeEngine: "burble-native",
       openClawNemoClawEngine: "burble-native",
-      agentRuntimeAllowedEngines: ["openclaw-gateway", "burble-native"],
+      agentRuntimeAllowedEngines: [
+        "openclaw",
+        "openclaw-gateway",
+        "burble-native",
+      ],
       agentRuntimeImage: "burble-native-runtime:dev",
     };
     const principal = {
@@ -172,6 +176,14 @@ describe("resolveRuntimeEngineForPrincipal", () => {
         principal,
       }).effectiveEngine,
     ).toBe("burble-native");
+    expect(
+      resolveRuntimeEngineForPrincipal({
+        config: dualEngineConfig,
+        store,
+        principal,
+        requirements: { engine: "openclaw" },
+      }).effectiveEngine,
+    ).toBe("openclaw");
     expect(
       resolveRuntimeEngineForPrincipal({
         config: dualEngineConfig,

@@ -469,7 +469,7 @@ AGENT_MODE=llm
 AGENT_RUNTIME=burble-runtime
 AGENT_RUNTIME_FACTORY=sandbox
 AGENT_RUNTIME_ENGINE=burble-native
-AGENT_RUNTIME_ALLOWED_ENGINES=openclaw-gateway,burble-native
+AGENT_RUNTIME_ALLOWED_ENGINES=openclaw,openclaw-gateway,burble-native
 AGENT_RUNTIME_IMAGE=burble-native-runtime:dev
 ```
 
@@ -507,7 +507,7 @@ Restore these `.env` values and run the same deployment helper:
 
 ```env
 AGENT_RUNTIME_ENGINE=openclaw-gateway
-AGENT_RUNTIME_ALLOWED_ENGINES=openclaw-gateway,burble-native
+AGENT_RUNTIME_ALLOWED_ENGINES=openclaw,openclaw-gateway,burble-native
 AGENT_RUNTIME_IMAGE=burble-openclaw-nemoclaw:dev
 ```
 

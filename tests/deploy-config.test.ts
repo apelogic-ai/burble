@@ -816,7 +816,7 @@ describe("dev deploy config", () => {
     expect(deployReadme).toContain("### Burble Native hand test");
     expect(deployReadme).toContain("AGENT_RUNTIME_ENGINE=burble-native");
     expect(deployReadme).toContain(
-      "AGENT_RUNTIME_ALLOWED_ENGINES=openclaw-gateway,burble-native"
+      "AGENT_RUNTIME_ALLOWED_ENGINES=openclaw,openclaw-gateway,burble-native"
     );
     expect(deployReadme).toContain(
       "Use GitHub tools and tell me my authenticated GitHub login."
