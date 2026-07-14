@@ -130,6 +130,42 @@ describe("GitHub search helpers", () => {
     );
   });
 
+  test("searchIssues preserves actionable GitHub validation details", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL) =>
+      Response.json(
+        {
+          message: "Validation Failed",
+          errors: [
+            {
+              message:
+                "The listed users and repositories cannot be searched because they do not exist or are inaccessible.",
+              resource: "Search",
+              field: "q",
+              code: "invalid"
+            }
+          ]
+        },
+        { status: 422 }
+      )) as typeof fetch;
+
+    let error: unknown;
+    try {
+      await searchIssues("secret-token", "repo:wrong/repo is:pr");
+    } catch (caught) {
+      error = caught;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(
+      "Validation Failed: The listed users and repositories cannot be searched because they do not exist or are inaccessible."
+    );
+    expect((error as Error).message).not.toContain("repo:wrong/repo");
+    expect((error as Error).message).not.toContain("secret-token");
+  });
+
   test("listMyPullRequests searches open pull requests authored by the user", async () => {
     const urls: string[] = [];
     const originalFetch = globalThis.fetch;

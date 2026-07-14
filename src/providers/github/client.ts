@@ -122,6 +122,7 @@ export type ListMyPullRequestsOptions = {
 type GitHubSearchResponse = {
   items?: GitHubIssue[];
   message?: string;
+  errors?: Array<string | { message?: string }>;
 };
 
 type GitHubApiErrorBody = {
@@ -140,6 +141,23 @@ function githubHeaders(token?: string): HeadersInit {
     "X-GitHub-Api-Version": "2022-11-28",
     ...(token ? { Authorization: `Bearer ${token}` } : {})
   };
+}
+
+function formatGitHubSearchError(
+  body: GitHubSearchResponse,
+  status: number
+): string {
+  const summary = body.message?.trim() || `GitHub issue search failed with ${status}`;
+  const details = (body.errors ?? [])
+    .map((error) => (typeof error === "string" ? error : error.message))
+    .filter((message): message is string => Boolean(message?.trim()))
+    .map((message) => message.replace(/\s+/g, " ").trim().slice(0, 300))
+    .filter((message, index, messages) =>
+      message !== summary && messages.indexOf(message) === index
+    )
+    .slice(0, 2);
+
+  return details.length > 0 ? `${summary}: ${details.join("; ")}` : summary;
 }
 
 export function buildGitHubOAuthUrl(config: Config, state: string): string {
@@ -227,7 +245,7 @@ export async function searchIssues(
 
   const body = (await response.json()) as GitHubSearchResponse;
   if (!response.ok) {
-    throw new Error(body.message ?? `GitHub issue search failed with ${response.status}`);
+    throw new Error(formatGitHubSearchError(body, response.status));
   }
 
   return body.items ?? [];
