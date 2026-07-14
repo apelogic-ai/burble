@@ -957,7 +957,9 @@ describe("handleToolGatewayRequest", () => {
       classification: "user_private",
       content: {
         error: "google_not_connected",
-        message: "Google Workspace reauthorization required",
+        message:
+          "Google Workspace reauthorization required. Reconnect with `/auth google`.",
+        authCommand: "/auth google",
         connectUrl: "https://18.210.100.44.nip.io/connect/google"
       }
     });

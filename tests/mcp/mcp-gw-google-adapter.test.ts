@@ -1,10 +1,36 @@
 import { describe, expect, test } from "bun:test";
 import {
   adaptMcpGwGoogleToolCall,
-  canAdaptMcpGwGoogleToolCall
+  canAdaptMcpGwGoogleToolCall,
+  mcpGwGoogleToolResult
 } from "../../src/mcp/mcp-gw-google-adapter";
 
 describe("adaptMcpGwGoogleToolCall", () => {
+  test("makes MCP-GW Google reauthorization actionable without an upstream URL", () => {
+    const result = mcpGwGoogleToolResult(
+      {
+        ok: true,
+        burbleToolName: "google_search_drive_files",
+        name: "google_drive_files_list",
+        arguments: {}
+      },
+      {
+        status: "needs_google_connect",
+        message: "Google Workspace reauthorization required"
+      }
+    );
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        error: "google_not_connected",
+        message:
+          "Google Workspace reauthorization required. Reconnect with `/auth google`.",
+        authCommand: "/auth google"
+      }
+    });
+  });
+
   test("adapts Drive file content reads to MCP-GW Drive export", () => {
     expect(
       adaptMcpGwGoogleToolCall("google_get_drive_file", {
