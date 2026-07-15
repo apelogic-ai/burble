@@ -26,7 +26,10 @@ export function applyMcpGwGoogleStateRefHints(
   const tool = findProviderToolSpec(toolName);
   const burbleToolName = tool?.provider === "google" ? tool.name : toolName;
   if (
-    burbleToolName !== "google_append_to_drive_text_file" ||
+    ![
+      "google_append_to_drive_text_file",
+      "google_get_drive_file",
+    ].includes(burbleToolName) ||
     !isOptionalObject(input) ||
     stringInput(input, "mimeType")
   ) {
@@ -189,15 +192,94 @@ export function mcpGwGoogleToolResult(
     };
   }
 
+  if (result.result.isError) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "google_tool_failed",
+        message: readMcpToolResultText(result.result) || "Google tool failed.",
+        toolName: tool.name,
+        burbleToolName: tool.burbleToolName,
+      },
+    };
+  }
+
+  const normalizedResult = normalizeMcpGwGoogleResult(tool, result.result);
+
   return {
     classification: "user_private",
     content: {
       mcpGw: true,
       toolName: tool.name,
       burbleToolName: tool.burbleToolName,
-      result: result.result
+      result: normalizedResult
     }
   };
+}
+
+function normalizeMcpGwGoogleResult(
+  tool: McpGwGoogleAdaptedToolCall,
+  result: { content?: unknown[]; isError?: boolean },
+): { content?: unknown[]; isError?: boolean } {
+  if (tool.name !== "google_docs_get") {
+    return result;
+  }
+
+  const document = readMcpJsonObject(result);
+  if (!document) {
+    return result;
+  }
+  const documentId = stringInput(document, "documentId");
+  const title = stringInput(document, "title");
+  const content = collectGoogleDocsText(document).join("");
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ documentId, title, content }),
+      },
+    ],
+  };
+}
+
+function readMcpJsonObject(result: { content?: unknown[] }): Record<string, unknown> | null {
+  for (const item of result.content ?? []) {
+    if (!isOptionalObject(item) || typeof item.text !== "string") {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(item.text) as unknown;
+      if (isOptionalObject(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // Preserve the upstream result when it is not JSON.
+    }
+  }
+  return null;
+}
+
+function collectGoogleDocsText(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(collectGoogleDocsText);
+  }
+  if (!isOptionalObject(value)) {
+    return [];
+  }
+  if (isOptionalObject(value.textRun) && typeof value.textRun.content === "string") {
+    return [value.textRun.content];
+  }
+  return Object.values(value).flatMap(collectGoogleDocsText);
+}
+
+function readMcpToolResultText(result: { content?: unknown[] }): string {
+  return (result.content ?? [])
+    .flatMap((item) =>
+      isOptionalObject(item) && typeof item.text === "string" ? [item.text] : [],
+    )
+    .join("\n")
+    .trim()
+    .slice(0, 2_000);
 }
 
 function actionableGoogleReconnectMessage(message: string): string {
@@ -245,6 +327,16 @@ function adaptMcpGwDriveFilesReadArgs(
   }
 
   const mimeType = stringInput(input, "mimeType");
+  if (mimeType === "application/vnd.google-apps.document") {
+    return {
+      ok: true,
+      burbleToolName,
+      name: "google_docs_get",
+      arguments: {
+        documentId: stringInput(input, "fileId"),
+      },
+    };
+  }
   if (!mimeType || isGoogleWorkspaceMimeType(mimeType)) {
     return {
       ok: true,
@@ -323,17 +415,21 @@ function adaptMcpGwDriveTextAppendArgs(
   return {
     ok: true,
     burbleToolName,
-    name: "google_docs_batch_update",
+    name: "gws_docs_documents_batch_update",
     arguments: {
-      documentId: stringInput(input, "fileId"),
-      requests: JSON.stringify([
-        {
-          insertText: {
-            endOfSegmentLocation: {},
-            text,
+      params: {
+        documentId: stringInput(input, "fileId"),
+      },
+      json: {
+        requests: [
+          {
+            insertText: {
+              endOfSegmentLocation: {},
+              text,
+            },
           },
-        },
-      ]),
+        ],
+      },
     },
   };
 }

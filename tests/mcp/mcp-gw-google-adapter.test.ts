@@ -33,17 +33,19 @@ describe("adaptMcpGwGoogleToolCall", () => {
     ).toEqual({
       ok: true,
       burbleToolName: "google_append_to_drive_text_file",
-      name: "google_docs_batch_update",
+      name: "gws_docs_documents_batch_update",
       arguments: {
-        documentId: "doc-123",
-        requests: JSON.stringify([
-          {
-            insertText: {
-              endOfSegmentLocation: {},
-              text: "\nNew topic",
+        params: { documentId: "doc-123" },
+        json: {
+          requests: [
+            {
+              insertText: {
+                endOfSegmentLocation: {},
+                text: "\nNew topic",
+              },
             },
-          },
-        ]),
+          ],
+        },
       },
     });
   });
@@ -73,6 +75,92 @@ describe("adaptMcpGwGoogleToolCall", () => {
     });
   });
 
+  test("surfaces upstream Google tool errors instead of reporting success", () => {
+    expect(
+      mcpGwGoogleToolResult(
+        {
+          ok: true,
+          burbleToolName: "google_append_to_drive_text_file",
+          name: "gws_docs_documents_batch_update",
+          arguments: {},
+        },
+        {
+          status: "ok",
+          result: {
+            isError: true,
+            content: [{ type: "text", text: "Google API rejected the update" }],
+          },
+        },
+      ),
+    ).toEqual({
+      classification: "user_private",
+      content: {
+        error: "google_tool_failed",
+        message: "Google API rejected the update",
+        toolName: "gws_docs_documents_batch_update",
+        burbleToolName: "google_append_to_drive_text_file",
+      },
+    });
+  });
+
+  test("reduces Google Docs reads to usable document text", () => {
+    expect(
+      mcpGwGoogleToolResult(
+        {
+          ok: true,
+          burbleToolName: "google_get_drive_file",
+          name: "google_docs_get",
+          arguments: {},
+        },
+        {
+          status: "ok",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  documentId: "doc-123",
+                  title: "Dedup state",
+                  body: {
+                    content: [
+                      {
+                        paragraph: {
+                          elements: [
+                            { textRun: { content: "First topic\n" } },
+                            { textRun: { content: "Second topic\n" } },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                }),
+              },
+            ],
+          },
+        },
+      ),
+    ).toEqual({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "google_docs_get",
+        burbleToolName: "google_get_drive_file",
+        result: {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                documentId: "doc-123",
+                title: "Dedup state",
+                content: "First topic\nSecond topic\n",
+              }),
+            },
+          ],
+        },
+      },
+    });
+  });
+
   test("adapts Drive file content reads to MCP-GW Drive export", () => {
     expect(
       adaptMcpGwGoogleToolCall("google_get_drive_file", {
@@ -92,22 +180,30 @@ describe("adaptMcpGwGoogleToolCall", () => {
     });
   });
 
-  test("does not force CSV export for non-spreadsheet Drive content reads", () => {
-    expect(
-      adaptMcpGwGoogleToolCall("google_get_drive_file", {
+  test("reads prepared Google Docs through the Docs API", () => {
+    const input = applyMcpGwGoogleStateRefHints(
+      "google_get_drive_file",
+      {
         fileId: "doc-123",
-        mimeType: "application/vnd.google-apps.document"
-      })
-    ).toEqual({
+      },
+      [
+        {
+          provider: "google",
+          kind: "google_docs_create_document",
+          id: "doc-123",
+        },
+      ],
+    );
+
+    expect(input).toEqual({
+      fileId: "doc-123",
+      mimeType: "application/vnd.google-apps.document",
+    });
+    expect(adaptMcpGwGoogleToolCall("google_get_drive_file", input)).toEqual({
       ok: true,
       burbleToolName: "google_get_drive_file",
-      name: "gws_drive_files_export",
-      arguments: {
-        params: {
-          fileId: "doc-123",
-          mimeType: "text/plain"
-        }
-      }
+      name: "google_docs_get",
+      arguments: { documentId: "doc-123" },
     });
   });
 

@@ -883,17 +883,19 @@ describe("handleToolGatewayRequest", () => {
         callMcpGwTool: async (_clientConfig, input) => {
           calls.push(input);
           expect(input).toEqual({
-            name: "google_docs_batch_update",
+            name: "gws_docs_documents_batch_update",
             arguments: {
-              documentId: "doc-123",
-              requests: JSON.stringify([
-                {
-                  insertText: {
-                    endOfSegmentLocation: {},
-                    text: "\nNew topic"
+              params: { documentId: "doc-123" },
+              json: {
+                requests: [
+                  {
+                    insertText: {
+                      endOfSegmentLocation: {},
+                      text: "\nNew topic"
+                    }
                   }
-                }
-              ])
+                ]
+              }
             }
           });
           return {
@@ -909,7 +911,7 @@ describe("handleToolGatewayRequest", () => {
       classification: "user_private",
       content: {
         mcpGw: true,
-        toolName: "google_docs_batch_update",
+        toolName: "gws_docs_documents_batch_update",
         burbleToolName: "google_append_to_drive_text_file"
       }
     });
