@@ -16,6 +16,7 @@ import type {
   SchedulerControlPlane,
   SchedulerJobSummary,
 } from "../scheduler/control-plane";
+import type { ScheduledTaskPreparationToolExecutor } from "../scheduler/task-preparation";
 
 export type ResponseVisibility = "public" | "ephemeral" | "dm";
 export type ToolClassification = "public" | "user_private" | "restricted";
@@ -157,6 +158,7 @@ export type ConversationDeps = {
   agentExecutionMode?: "default" | "native-runtime";
   schedulerControl?: SchedulerControlPlane;
   schedulerIntentResolver?: SchedulerIntentResolver;
+  scheduledTaskPreparationExecutor?: ScheduledTaskPreparationToolExecutor;
   onSchedulerRunQueued?: (run: AgentJobRunRecord) => void | Promise<void>;
   onAgentEvent?: AgentRunEventHandler;
   observability?: ObservabilitySink;
