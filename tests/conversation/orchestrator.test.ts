@@ -1079,6 +1079,47 @@ describe("handleConversation", () => {
     expect(response.text).toBe("Agent handled the one-shot report.");
   });
 
+  test("does not mutate a scheduled job for an ordinary conversational follow-up", async () => {
+    let agentCalled = false;
+    let updateCalled = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Summarize news on that topic for the past 7 days",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [aiNewsJob()],
+          updateJobPrompt: () => {
+            updateCalled = true;
+            throw new Error("unexpected scheduled-job update");
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "update_job_prompt",
+          confidence: 0.99,
+          jobId: "job_ai_news",
+          prompt: "Summarize news on that topic for the past 7 days",
+        }),
+        agentRunner: stubAgentRunner((input) => {
+          agentCalled = true;
+          expect(input.text).toBe(
+            "Summarize news on that topic for the past 7 days",
+          );
+          return {
+            classification: "user_private",
+            text: "Here is the seven-day summary.",
+          };
+        }),
+      }),
+    );
+
+    expect(updateCalled).toBe(false);
+    expect(agentCalled).toBe(true);
+    expect(response.text).toBe("Here is the seven-day summary.");
+  });
+
   test("normalizes scheduled job runtime for scheduler resolver output", async () => {
     const cases = [
       {

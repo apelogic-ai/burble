@@ -100,6 +100,7 @@ const schedulerIntentSystemPrompt = [
   "Return only one JSON object. Do not include markdown.",
   "Valid intents: list_jobs, list_job_runs, show_task, validate_task, create_job, trigger_job, pause_job, resume_job, delete_job, update_job_delivery, update_job, update_job_schedule, update_job_prompt, update_job_runtime, latest_run_status, none.",
   "Classify only scheduler/cron/background-job control requests.",
+  "Never mutate a scheduled task from an ordinary conversational follow-up, even when a current task has a similar topic. The current message must explicitly refer to a job, task, schedule, cron, or other scheduler control action.",
   "Task specs are configured scheduled tasks. Job runs are executions of task specs.",
   "Examples of scheduler control: list cron jobs, list tasks, list job runs, validate task job_123, inspect a task's grants, create an hourly news job, run the existing scheduled job, test-run this job, did the manual job finish, pause the cron job, modify a task to post in a different channel.",
   "Examples of none: what is my job title, help me find a job, explain what cron jobs are, write code for a scheduler.",

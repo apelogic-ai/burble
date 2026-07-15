@@ -706,6 +706,12 @@ async function resolveSchedulerControlIntent(
       }
       const intent = normalizeResolvedSchedulerIntent(resolved);
       if (intent) {
+        if (
+          isSchedulerMutationIntent(intent) &&
+          !isExplicitSchedulerControlRequest(request.text)
+        ) {
+          return emptySchedulerResolution();
+        }
         const create =
           intent === "create_job"
             ? normalizeResolverCreateJob(resolved.create)
@@ -759,6 +765,28 @@ async function resolveSchedulerControlIntent(
     }
   }
 
+  return {
+    intent: null,
+    jobId: null,
+    create: null,
+    schedule: null,
+    prompt: null,
+    runtimeType: null,
+    taskPlan: null,
+    failure: null,
+  };
+}
+
+function emptySchedulerResolution(): {
+  intent: null;
+  jobId: null;
+  create: null;
+  schedule: null;
+  prompt: null;
+  runtimeType: null;
+  taskPlan: null;
+  failure: null;
+} {
   return {
     intent: null,
     jobId: null,
@@ -857,9 +885,24 @@ function isExplicitSchedulerControlRequest(text: string): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
   return (
     /\b(cron|cronjob|scheduled job|scheduled task)\b/.test(normalized) ||
-    /\b(create|make|set|modify|update|change|pause|resume|delete|remove|run|trigger|show|list)\b.*\b(job|task|schedule)\b/.test(
+    /\b(create|add|make|set|modify|update|change|move|switch|pause|resume|delete|remove|run|trigger|show|list)\b.*\b(job|task|schedule)\b/.test(
       normalized,
     )
+  );
+}
+
+function isSchedulerMutationIntent(
+  intent: Exclude<SchedulerControlIntent, null>,
+): boolean {
+  return (
+    intent === "pause_job" ||
+    intent === "resume_job" ||
+    intent === "delete_job" ||
+    intent === "update_job_delivery" ||
+    intent === "update_job" ||
+    intent === "update_job_schedule" ||
+    intent === "update_job_prompt" ||
+    intent === "update_job_runtime"
   );
 }
 
