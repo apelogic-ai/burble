@@ -114,6 +114,7 @@ import {
   McpGwUnauthorizedError
 } from "./mcp/mcp-gw-client";
 import {
+  applyMcpGwGoogleStateRefHints,
   adaptMcpGwGoogleToolCall,
   canAdaptMcpGwGoogleToolCall,
   mcpGwGoogleToolResult
@@ -2396,7 +2397,11 @@ function validateAndStripScheduledJobToolGatewayInput(
   return {
     body: {
       ...body,
-      input: stripScheduledJobIds(body.input)
+      input: applyMcpGwGoogleStateRefHints(
+        toolName,
+        stripScheduledJobIds(body.input),
+        buildScheduledJobContext(capability).stateRefs,
+      )
     },
     response: null
   };

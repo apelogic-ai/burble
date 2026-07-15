@@ -1,4 +1,5 @@
 import { findProviderToolSpec } from "../providers/catalog";
+import type { ScheduledJobStateRef } from "../agent/scheduled-job-context";
 import type { ToolResult } from "../tools/types";
 import type { McpGwToolCallResult } from "./mcp-gw-client";
 
@@ -16,6 +17,35 @@ export type McpGwGoogleToolCallAdaptation =
       burbleToolName: string;
       message: string;
     };
+
+export function applyMcpGwGoogleStateRefHints(
+  toolName: string,
+  input: unknown,
+  stateRefs: ScheduledJobStateRef[],
+): unknown {
+  const tool = findProviderToolSpec(toolName);
+  const burbleToolName = tool?.provider === "google" ? tool.name : toolName;
+  if (
+    burbleToolName !== "google_append_to_drive_text_file" ||
+    !isOptionalObject(input) ||
+    stringInput(input, "mimeType")
+  ) {
+    return input;
+  }
+  const fileId = stringInput(input, "fileId");
+  const preparedDocument = stateRefs.some(
+    (stateRef) =>
+      stateRef.provider === "google" &&
+      stateRef.kind === "google_docs_create_document" &&
+      stateRef.id === fileId,
+  );
+  return preparedDocument
+    ? {
+        ...input,
+        mimeType: "application/vnd.google-apps.document",
+      }
+    : input;
+}
 
 export function canAdaptMcpGwGoogleToolCall(
   toolName: string,
@@ -46,6 +76,9 @@ export function adaptMcpGwGoogleToolCall(
 
     case "google_create_drive_text_file":
       return adaptMcpGwDriveFilesCreateTextArgs(burbleToolName, args);
+
+    case "google_append_to_drive_text_file":
+      return adaptMcpGwDriveTextAppendArgs(burbleToolName, args);
 
     case "google_create_drive_folder":
       return adaptMcpGwDriveFolderCreateArgs(burbleToolName, args);
@@ -268,6 +301,40 @@ function adaptMcpGwDriveFilesCreateTextArgs(
       name: stringInput(input, "name"),
       mimeType: stringInput(input, "mimeType", "text/plain")
     }
+  };
+}
+
+function adaptMcpGwDriveTextAppendArgs(
+  burbleToolName: string,
+  input: Record<string, unknown>,
+): McpGwGoogleToolCallAdaptation {
+  if (
+    stringInput(input, "mimeType") !==
+    "application/vnd.google-apps.document"
+  ) {
+    return {
+      ok: false,
+      burbleToolName,
+      message:
+        "Google Drive append is MCP-GW adapted only for Google Docs resources.",
+    };
+  }
+  const text = `${typeof input.separator === "string" ? input.separator : "\n"}${stringInput(input, "text")}`;
+  return {
+    ok: true,
+    burbleToolName,
+    name: "google_docs_batch_update",
+    arguments: {
+      documentId: stringInput(input, "fileId"),
+      requests: JSON.stringify([
+        {
+          insertText: {
+            endOfSegmentLocation: {},
+            text,
+          },
+        },
+      ]),
+    },
   };
 }
 

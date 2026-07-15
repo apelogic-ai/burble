@@ -1,11 +1,53 @@
 import { describe, expect, test } from "bun:test";
 import {
+  applyMcpGwGoogleStateRefHints,
   adaptMcpGwGoogleToolCall,
   canAdaptMcpGwGoogleToolCall,
   mcpGwGoogleToolResult
 } from "../../src/mcp/mcp-gw-google-adapter";
 
 describe("adaptMcpGwGoogleToolCall", () => {
+  test("appends to prepared Google Docs through Docs batch update", () => {
+    const input = applyMcpGwGoogleStateRefHints(
+      "google_append_to_drive_text_file",
+      {
+        fileId: "doc-123",
+        text: "New topic",
+      },
+      [
+        {
+          provider: "google",
+          kind: "google_docs_create_document",
+          id: "doc-123",
+        },
+      ],
+    );
+
+    expect(input).toEqual({
+      fileId: "doc-123",
+      text: "New topic",
+      mimeType: "application/vnd.google-apps.document",
+    });
+    expect(
+      adaptMcpGwGoogleToolCall("google_append_to_drive_text_file", input),
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_append_to_drive_text_file",
+      name: "google_docs_batch_update",
+      arguments: {
+        documentId: "doc-123",
+        requests: JSON.stringify([
+          {
+            insertText: {
+              endOfSegmentLocation: {},
+              text: "\nNew topic",
+            },
+          },
+        ]),
+      },
+    });
+  });
+
   test("makes MCP-GW Google reauthorization actionable without an upstream URL", () => {
     const result = mcpGwGoogleToolResult(
       {

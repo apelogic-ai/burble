@@ -808,6 +808,93 @@ describe("handleToolGatewayRequest", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test("uses prepared Google Doc state to route scheduled appends through MCP-GW", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_append_to_drive_text_file"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "google_docs_create_document",
+          id: "doc-123"
+        }
+      ],
+      visibilityPolicy: {},
+      createdAt: "2026-07-15T15:00:00.000Z",
+      updatedAt: "2026-07-15T15:00:00.000Z"
+    };
+    const calls: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime, [], null, [], { found: capability }),
+      "google.appendToDriveTextFile",
+      request(
+        "google.appendToDriveTextFile",
+        {
+          scheduledJob: { jobId: "ai-news-hourly" },
+          input: {
+            jobId: "ai-news-hourly",
+            fileId: "doc-123",
+            text: "New topic"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        callMcpGwTool: async (_clientConfig, input) => {
+          calls.push(input);
+          expect(input).toEqual({
+            name: "google_docs_batch_update",
+            arguments: {
+              documentId: "doc-123",
+              requests: JSON.stringify([
+                {
+                  insertText: {
+                    endOfSegmentLocation: {},
+                    text: "\nNew topic"
+                  }
+                }
+              ])
+            }
+          });
+          return {
+            status: "ok",
+            result: { content: [{ type: "text", text: "updated" }] }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "google_docs_batch_update",
+        burbleToolName: "google_append_to_drive_text_file"
+      }
+    });
+    expect(calls).toHaveLength(1);
+  });
+
   test("adapts Gmail search inputs for MCP-GW", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity"
