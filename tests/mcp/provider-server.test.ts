@@ -1070,7 +1070,7 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
-  test("routes Google Drive file reads through MCP-GW from provider MCP", async () => {
+  test("routes Google Drive metadata reads through MCP-GW from provider MCP", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const identityIssuer = createMcpIdentityIssuer({
       issuer: config.mcpIdentityIssuer
@@ -1110,7 +1110,7 @@ describe("handleProviderMcpRequest", () => {
             name: "google_get_drive_file",
             arguments: {
               fileId: "sheet-123",
-              mimeType: "application/vnd.google-apps.spreadsheet"
+              includeContent: false
             }
           }
         },
@@ -1121,12 +1121,13 @@ describe("handleProviderMcpRequest", () => {
         getSlackEmail: async () => "person@example.com",
         callMcpGwTool: async (_clientConfig, input) => {
           expect(input).toEqual({
-            name: "gws_drive_files_export",
+            name: "gws_drive_files_get",
             arguments: {
               params: {
                 fileId: "sheet-123",
-                mimeType: "text/csv"
-              }
+                fields: "id,name,mimeType,webViewLink,modifiedTime"
+              },
+              format: "json"
             }
           });
           return {
@@ -1152,7 +1153,7 @@ describe("handleProviderMcpRequest", () => {
       classification: "user_private",
       content: {
         mcpGw: true,
-        toolName: "gws_drive_files_export",
+        toolName: "gws_drive_files_get",
         burbleToolName: "google_get_drive_file",
         result: {
           content: [

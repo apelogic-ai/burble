@@ -1104,6 +1104,78 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("preserves explicit grants and durable state during schedule updates", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "Find current AI news and use doc-123 to deduplicate it.",
+      schedule: {
+        kind: "cron",
+        expression: "0 * * * *",
+        timezone: "UTC",
+      },
+      routeId: "convrt_news",
+      runtimeType: "burble-native",
+      now: new Date("2026-07-15T17:10:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [
+        "google_append_to_drive_text_file",
+        "google_get_drive_file",
+        "web_search",
+      ],
+      routeId: "convrt_news",
+      runtimeType: "burble-native",
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "document",
+          id: "doc-123",
+          purpose: "Track previously reported topics",
+        },
+      ],
+      now: new Date("2026-07-15T17:10:00.000Z"),
+    });
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-07-15T17:20:00.000Z"),
+    });
+
+    await scheduler.updateJobSchedule?.({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job-ai-news",
+      schedule: {
+        kind: "cron",
+        expression: "*/20 * * * *",
+        timezone: "UTC",
+      },
+    });
+
+    expect(store.getAgentJobCapability("job-ai-news")).toMatchObject({
+      requiredTools: [
+        "google_append_to_drive_text_file",
+        "google_get_drive_file",
+        "web_search",
+      ],
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "document",
+          id: "doc-123",
+          purpose: "Track previously reported topics",
+        },
+      ],
+    });
+
+    store.close();
+  });
+
   test("updates scheduled job prompt and refreshes inferred capabilities", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({
@@ -1148,6 +1220,134 @@ describe("scheduler control plane", () => {
       requiredTools: [],
       runtimeType: "hermes",
     });
+
+    store.close();
+  });
+
+  test("atomically stores a resolved task prompt with exact grants and durable state", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "Look for current AI news.",
+      schedule: {
+        kind: "cron",
+        expression: "0 * * * *",
+        timezone: "UTC",
+      },
+      routeId: "convrt_news",
+      runtimeType: "burble-native",
+      now: new Date("2026-07-15T14:00:00.000Z"),
+    });
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-07-15T14:01:00.000Z"),
+    });
+
+    const result = await scheduler.updateJobPrompt?.({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job-ai-news",
+      prompt: "1. Find news.\n2. Deduplicate using document doc-123.",
+      capability: {
+        requiredTools: [
+          "web_search",
+          "google_get_drive_file",
+          "google_append_to_drive_text_file",
+        ],
+        stateRefs: [
+          {
+            provider: "google",
+            kind: "document",
+            id: "doc-123",
+            name: "AI news topic history",
+            purpose: "Track previously reported topics",
+          },
+        ],
+      },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      job: expect.objectContaining({
+        jobId: "job-ai-news",
+        prompt: "1. Find news.\n2. Deduplicate using document doc-123.",
+      }),
+    });
+    expect(store.getAgentJobCapability("job-ai-news")).toMatchObject({
+      requiredTools: [
+        "google_append_to_drive_text_file",
+        "google_get_drive_file",
+        "web_search",
+      ],
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "document",
+          id: "doc-123",
+          name: "AI news topic history",
+          purpose: "Track previously reported topics",
+        },
+      ],
+    });
+
+    store.close();
+  });
+
+  test("preserves durable state references during ordinary prompt edits", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-report",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Report",
+      prompt: "Read a Google Drive report.",
+      schedule: {
+        kind: "cron",
+        expression: "0 9 * * *",
+        timezone: "UTC",
+      },
+      routeId: "convrt_report",
+      runtimeType: "burble-native",
+      now: new Date("2026-07-15T14:00:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "job-report",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_get_drive_file"],
+      routeId: "convrt_report",
+      runtimeType: "burble-native",
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "document",
+          id: "doc-existing",
+          purpose: "Report source",
+        },
+      ],
+      now: new Date("2026-07-15T14:00:00.000Z"),
+    });
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-07-15T14:01:00.000Z"),
+    });
+
+    await scheduler.updateJobPrompt?.({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job-report",
+      prompt: "Read the current Google Drive report and summarize it.",
+    });
+
+    expect(store.getAgentJobCapability("job-report")?.stateRefs).toEqual([
+      {
+        provider: "google",
+        kind: "document",
+        id: "doc-existing",
+        purpose: "Report source",
+      },
+    ]);
 
     store.close();
   });

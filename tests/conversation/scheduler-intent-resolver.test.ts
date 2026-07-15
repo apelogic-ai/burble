@@ -109,6 +109,98 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses generic recurring and preparation plans without flattening setup into the prompt", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        JSON.stringify({
+          intent: "update_job_prompt",
+          confidence: 0.98,
+          jobId: "job_ai_news",
+          taskPlan: {
+            preparation: [
+              {
+                id: "create_state",
+                tool: "google_docs_create_document",
+                input: { name: "AI news topic history" },
+                saveAs: "dedupe_document",
+                purpose: "Track previously reported topics",
+              },
+            ],
+            steps: [
+              {
+                id: "collect",
+                instruction: "Find current AI news and select the top five.",
+                tools: ["web_search"],
+              },
+              {
+                id: "deduplicate",
+                instruction:
+                  "Read {{resources.dedupe_document.id}}, exclude known topics, and record new topics.",
+                tools: [
+                  "google_get_drive_file",
+                  "google_append_to_drive_text_file",
+                ],
+              },
+              {
+                id: "report",
+                instruction: "Return only net-new results.",
+                tools: [],
+              },
+            ],
+          },
+        }),
+      ),
+    ).toEqual({
+      intent: "update_job_prompt",
+      confidence: 0.98,
+      jobId: "job_ai_news",
+      taskPlan: {
+        preparation: [
+          {
+            id: "create_state",
+            tool: "google_docs_create_document",
+            input: { name: "AI news topic history" },
+            saveAs: "dedupe_document",
+            purpose: "Track previously reported topics",
+          },
+        ],
+        steps: [
+          {
+            id: "collect",
+            instruction: "Find current AI news and select the top five.",
+            tools: ["web_search"],
+          },
+          {
+            id: "deduplicate",
+            instruction:
+              "Read {{resources.dedupe_document.id}}, exclude known topics, and record new topics.",
+            tools: [
+              "google_get_drive_file",
+              "google_append_to_drive_text_file",
+            ],
+          },
+          {
+            id: "report",
+            instruction: "Return only net-new results.",
+            tools: [],
+          },
+        ],
+      },
+    });
+  });
+
+  test("rejects malformed preparation plans instead of accepting unsafe partial plans", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"update_job_prompt","confidence":0.98,"jobId":"job_any","taskPlan":{"preparation":[{"id":"setup","tool":"google_docs_create_document","input":{},"saveAs":"resource"},{"id":"setup","tool":"google_create_drive_folder","input":{},"saveAs":"resource"}],"steps":[{"id":"run","instruction":"Use it.","tools":[]}]}}',
+      ),
+    ).toEqual({
+      intent: "update_job_prompt",
+      confidence: 0.98,
+      jobId: "job_any",
+    });
+  });
+
   test("parses task runtime update intents", () => {
     expect(
       parseSchedulerIntentResponse(

@@ -521,6 +521,81 @@ describe("scheduler timer", () => {
     store.close();
   });
 
+  test("preserves explicit grants and durable state when queuing a due job", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: [
+        "1. Look for the latest news on AI and select the top 5 topics.",
+        "2. Use 1d0ziFr3x-RbvTDzv1IUitgpxIvnPPK6SkwJYFT7sDaw to deduplicate topics against previously reported items, then record the newly reported topics there.",
+        "3. Report only the net results.",
+      ].join("\n"),
+      schedule: {
+        kind: "cron",
+        expression: "0 * * * *",
+        timezone: "UTC",
+      },
+      routeId: "convrt_news",
+      runtimeType: "burble-native",
+      state: "scheduled",
+      now: new Date("2026-07-15T17:10:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [
+        "google_append_to_drive_text_file",
+        "google_get_drive_file",
+        "web_search",
+      ],
+      routeId: "convrt_news",
+      runtimeType: "burble-native",
+      capabilityProfile: "scheduled_job",
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "document",
+          id: "doc-123",
+          purpose: "Track previously reported topics",
+        },
+      ],
+      visibilityPolicy: {},
+      now: new Date("2026-07-15T17:10:00.000Z"),
+    });
+    const timer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-07-15T18:00:00.000Z"),
+      newRunId: () => "jobrun-ai-news",
+      executeRun: async () => {},
+    });
+
+    expect(await timer.tick()).toEqual({
+      queuedRunIds: ["jobrun-ai-news"],
+    });
+    expect(store.getAgentJobCapability("job-ai-news")).toMatchObject({
+      requiredTools: [
+        "google_append_to_drive_text_file",
+        "google_get_drive_file",
+        "web_search",
+      ],
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "document",
+          id: "doc-123",
+          purpose: "Track previously reported topics",
+        },
+      ],
+      updatedAt: "2026-07-15T17:10:00.000Z",
+    });
+
+    store.close();
+  });
+
   test("timer workflow authority queues invalid persisted grants for driver validation", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();

@@ -124,7 +124,7 @@ export function createSchedulerTimer(input: {
             continue;
           }
         }
-        if (!workflowTimerAuthority || !existingCapability) {
+        if (!existingCapability) {
           input.store.upsertAgentJobCapability({
             jobId: job.jobId,
             workspaceId: job.workspaceId,

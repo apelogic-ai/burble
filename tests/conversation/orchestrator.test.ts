@@ -3,6 +3,7 @@ import { handleConversation } from "../../src/conversation/orchestrator";
 import type {
   ConversationDeps,
   ConversationRequest,
+  SchedulerTaskPlan,
 } from "../../src/conversation/types";
 import type {
   AgentInput,
@@ -1078,6 +1079,47 @@ describe("handleConversation", () => {
     expect(response.text).toBe("Agent handled the one-shot report.");
   });
 
+  test("does not mutate a scheduled job for an ordinary conversational follow-up", async () => {
+    let agentCalled = false;
+    let updateCalled = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Summarize news on that topic for the past 7 days",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [aiNewsJob()],
+          updateJobPrompt: () => {
+            updateCalled = true;
+            throw new Error("unexpected scheduled-job update");
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "update_job_prompt",
+          confidence: 0.99,
+          jobId: "job_ai_news",
+          prompt: "Summarize news on that topic for the past 7 days",
+        }),
+        agentRunner: stubAgentRunner((input) => {
+          agentCalled = true;
+          expect(input.text).toBe(
+            "Summarize news on that topic for the past 7 days",
+          );
+          return {
+            classification: "user_private",
+            text: "Here is the seven-day summary.",
+          };
+        }),
+      }),
+    );
+
+    expect(updateCalled).toBe(false);
+    expect(agentCalled).toBe(true);
+    expect(response.text).toBe("Here is the seven-day summary.");
+  });
+
   test("normalizes scheduled job runtime for scheduler resolver output", async () => {
     const cases = [
       {
@@ -1601,6 +1643,140 @@ describe("handleConversation", () => {
     ]);
     expect(response.text).toContain("Updated scheduled job job_heart task.");
     expect(response.text).toContain("Post exactly this message: ❤️❤️");
+  });
+
+  test("executes preparation before storing a resolved multi-step task plan", async () => {
+    const events: string[] = [];
+    const updates: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: [
+          "Modify ai news job, make it 3 step:",
+          "Look for the latest news on AI, select top 5",
+          "Use google drive document to deduplicate topics (create document now, store its link and use it)",
+          "Report net results to the target channel",
+        ].join("\n"),
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [aiNewsJob()],
+          updateJobPrompt: (input) => {
+            events.push("update");
+            updates.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job_ai_news",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Hourly AI news summary",
+                prompt: input.prompt,
+                schedule: {
+                  kind: "cron",
+                  expression: "0 * * * *",
+                  timezone: "UTC",
+                },
+                routeId: "convrt_news",
+                state: "scheduled",
+                runtimeType: "burble-native",
+                createdAt: "2026-07-15T14:00:00.000Z",
+                updatedAt: "2026-07-15T14:01:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "update_job_prompt",
+          confidence: 0.99,
+          jobId: "job_ai_news",
+          taskPlan: aiNewsTaskPlan(),
+        }),
+        scheduledTaskPreparationExecutor: async (input) => {
+          events.push("prepare");
+          expect(input.tool).toBe("google_docs_create_document");
+          return {
+            value: {
+              id: "doc-123",
+              name: "AI news topic history",
+              webViewLink: "https://docs.google.com/document/d/doc-123/edit",
+            },
+            stateRef: {
+              provider: "google",
+              kind: "document",
+              id: "doc-123",
+              name: "AI news topic history",
+            },
+          };
+        },
+      }),
+    );
+
+    expect(events).toEqual(["prepare", "update"]);
+    expect(updates).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job_ai_news",
+        prompt: [
+          "1. Find the latest AI news and select the top five.",
+          "2. Read doc-123, remove previously reported topics, and record newly reported topics.",
+          "3. Return only net-new results.",
+        ].join("\n"),
+        capability: {
+          requiredTools: [
+            "google_append_to_drive_text_file",
+            "google_get_drive_file",
+            "web_search",
+          ],
+          stateRefs: [
+            {
+              provider: "google",
+              kind: "document",
+              id: "doc-123",
+              name: "AI news topic history",
+              purpose: "Track previously reported topics",
+            },
+          ],
+        },
+      },
+    ]);
+    expect(response.text).toContain("Updated scheduled job job_ai_news task.");
+    expect(response.text).toContain(
+      "<https://docs.google.com/document/d/doc-123/edit|AI news topic history>",
+    );
+  });
+
+  test("leaves the scheduled job unchanged when generic preparation fails", async () => {
+    let updated = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Modify the report job and create its storage folder now.",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [aiNewsJob()],
+          updateJobPrompt: () => {
+            updated = true;
+            throw new Error("unexpected update");
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "update_job_prompt",
+          confidence: 0.99,
+          jobId: "job_ai_news",
+          taskPlan: aiNewsTaskPlan(),
+        }),
+        scheduledTaskPreparationExecutor: async () => {
+          throw new Error("Google authorization required");
+        },
+      }),
+    );
+
+    expect(updated).toBe(false);
+    expect(response.text).toContain("No scheduled-job changes were made");
+    expect(response.text).toContain("Google authorization required");
   });
 
   test("updates an existing scheduler task runtime from semantic resolver output", async () => {
@@ -3035,3 +3211,56 @@ describe("handleConversation", () => {
     }
   });
 });
+
+function aiNewsJob(): SchedulerJobSummary {
+  return {
+    jobId: "job_ai_news",
+    title: "Hourly AI news summary",
+    prompt: "Look for current AI news.",
+    schedule: {
+      kind: "cron",
+      expression: "0 * * * *",
+      timezone: "UTC",
+    },
+    state: "scheduled",
+    runtimeType: "burble-native",
+    requiredTools: ["web_search"],
+    routeId: "convrt_news",
+    updatedAt: "2026-07-15T14:00:00.000Z",
+  };
+}
+
+function aiNewsTaskPlan(): SchedulerTaskPlan {
+  return {
+    preparation: [
+      {
+        id: "create_state",
+        tool: "google_docs_create_document",
+        input: { name: "AI news topic history" },
+        saveAs: "dedupe_document",
+        purpose: "Track previously reported topics",
+      },
+    ],
+    steps: [
+      {
+        id: "collect",
+        instruction: "Find the latest AI news and select the top five.",
+        tools: ["web_search"],
+      },
+      {
+        id: "deduplicate",
+        instruction:
+          "Read {{resources.dedupe_document.id}}, remove previously reported topics, and record newly reported topics.",
+        tools: [
+          "google_get_drive_file",
+          "google_append_to_drive_text_file",
+        ],
+      },
+      {
+        id: "report",
+        instruction: "Return only net-new results.",
+        tools: [],
+      },
+    ],
+  };
+}

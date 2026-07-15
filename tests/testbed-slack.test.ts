@@ -15,6 +15,119 @@ import {
 const slackTestbedTimeoutMs = 15_000;
 
 describe("local Slack testbed", () => {
+  test("executes and persists resolved task preparation through Slack wiring", async () => {
+    const config = readConfig({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SLACK_APP_TOKEN: "xapp-test",
+      GITHUB_CLIENT_ID: "github-client-id",
+      GITHUB_CLIENT_SECRET: "github-client-secret",
+      BASE_URL: "http://127.0.0.1:3000",
+      PORT: "39191",
+      DATABASE_PATH: ":memory:",
+      BURBLE_TESTBED: "1",
+      AGENT_MODE: "llm",
+      AGENT_RUNTIME: "burble-runtime",
+      AGENT_RUNTIME_URL: "http://127.0.0.1:9",
+      AGENT_RUNTIME_ENGINE: "burble-native",
+    });
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-report",
+      workspaceId: testbedWorkspaceId,
+      slackUserId: testbedUserId,
+      title: "Daily report",
+      prompt: "Produce the daily report.",
+      schedule: { kind: "cron", expression: "0 9 * * *", timezone: "UTC" },
+      runtimeType: "burble-native",
+      state: "scheduled",
+    });
+    const runtimeJwtIssuer = createRuntimeJwtIssuer({
+      issuer: config.runtimeJwtIssuer,
+    });
+    const slack = createSlackRuntime(
+      config,
+      store,
+      runtimeJwtIssuer,
+      undefined,
+      {
+        schedulerIntentResolver: async () => ({
+          intent: "update_job_prompt",
+          confidence: 0.99,
+          jobId: "job-report",
+          taskPlan: {
+            preparation: [
+              {
+                id: "create_folder",
+                tool: "google_create_drive_folder",
+                input: { name: "Daily reports" },
+                saveAs: "report_folder",
+                purpose: "Store generated reports",
+              },
+            ],
+            steps: [
+              {
+                id: "write_report",
+                instruction:
+                  "Create the report in {{resources.report_folder.id}}.",
+                tools: ["google_create_drive_text_file"],
+              },
+            ],
+          },
+        }),
+        scheduledTaskPreparationExecutor: async (input) => {
+          expect(input).toMatchObject({
+            workspaceId: testbedWorkspaceId,
+            slackUserId: testbedUserId,
+            tool: "google_create_drive_folder",
+          });
+          return {
+            value: {
+              id: "folder-123",
+              name: "Daily reports",
+              webViewLink: "https://drive.google.com/drive/folders/folder-123",
+            },
+            stateRef: {
+              provider: "google",
+              kind: "folder",
+              id: "folder-123",
+              name: "Daily reports",
+            },
+          };
+        },
+        testbed: true,
+      },
+    );
+    const testbed = installSlackTestbed(slack);
+
+    try {
+      await testbed.processMessage({
+        text: "Modify the daily report job and create its storage folder now.",
+      });
+
+      expect(store.getScheduledJob("job-report")?.prompt).toBe(
+        "1. Create the report in folder-123.",
+      );
+      expect(store.getAgentJobCapability("job-report")).toMatchObject({
+        requiredTools: ["google_create_drive_text_file"],
+        stateRefs: [
+          {
+            provider: "google",
+            kind: "folder",
+            id: "folder-123",
+            name: "Daily reports",
+            purpose: "Store generated reports",
+          },
+        ],
+      });
+      expect(testbed.state.messages.at(-1)?.text).toContain(
+        "https://drive.google.com/drive/folders/folder-123",
+      );
+    } finally {
+      slack.close();
+      store.close();
+    }
+  });
+
   test("uses MCP-GW as the authoritative Google auth control plane", async () => {
     const config = readConfig({
       SLACK_BOT_TOKEN: "xoxb-test",

@@ -9,6 +9,7 @@ import type {
   TokenStore
 } from "../src/db";
 import { JiraApiError } from "../src/providers/jira/client";
+import { providerToolCatalog } from "../src/providers/catalog";
 import { handleToolGatewayRequest } from "../src/tool-gateway";
 import type { ObservabilityEventInput } from "../src/observability";
 import { createConversationAttachmentCapability } from "../src/conversation/attachment-capabilities";
@@ -587,6 +588,26 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("recognizes every provider tool alias declared in the catalog", async () => {
+    for (const tool of providerToolCatalog) {
+      for (const toolName of [tool.alias, ...(tool.aliases ?? [])]) {
+        const response = await handleToolGatewayRequest(
+          config,
+          createStore(null, runtime),
+          toolName,
+          request(
+            toolName,
+            { input: {} },
+            "runtime-token-u123",
+            "rt_u123"
+          )
+        );
+
+        expect(response.status, `${toolName} must be recognized`).not.toBe(404);
+      }
+    }
+  });
+
   test("passes Google Analytics report inputs to the provider tool", async () => {
     const response = await handleToolGatewayRequest(
       config,
@@ -748,7 +769,7 @@ describe("handleToolGatewayRequest", () => {
     expect(calls).toHaveLength(1);
   });
 
-  test("uses the shared MCP-GW Google adapter for Drive file reads through the tool gateway", async () => {
+  test("uses the shared MCP-GW Google adapter for Drive metadata reads through the tool gateway", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity"
     });
@@ -768,7 +789,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             fileId: "sheet-123",
-            mimeType: "application/vnd.google-apps.spreadsheet"
+            includeContent: false
           }
         },
         "runtime-token-u123",
@@ -780,12 +801,13 @@ describe("handleToolGatewayRequest", () => {
         callMcpGwTool: async (_clientConfig, input) => {
           calls.push(input);
           expect(input).toEqual({
-            name: "gws_drive_files_export",
+            name: "gws_drive_files_get",
             arguments: {
               params: {
                 fileId: "sheet-123",
-                mimeType: "text/csv"
-              }
+                fields: "id,name,mimeType,webViewLink,modifiedTime"
+              },
+              format: "json"
             }
           });
           return {
@@ -801,8 +823,97 @@ describe("handleToolGatewayRequest", () => {
       classification: "user_private",
       content: {
         mcpGw: true,
-        toolName: "gws_drive_files_export",
+        toolName: "gws_drive_files_get",
         burbleToolName: "google_get_drive_file"
+      }
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("uses prepared Google Doc state to route scheduled appends through MCP-GW", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_append_to_drive_text_file"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "google_docs_create_document",
+          id: "doc-123"
+        }
+      ],
+      visibilityPolicy: {},
+      createdAt: "2026-07-15T15:00:00.000Z",
+      updatedAt: "2026-07-15T15:00:00.000Z"
+    };
+    const calls: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime, [], null, [], { found: capability }),
+      "google.appendDriveTextFile",
+      request(
+        "google.appendDriveTextFile",
+        {
+          scheduledJob: { jobId: "ai-news-hourly" },
+          input: {
+            jobId: "ai-news-hourly",
+            fileId: "doc-123",
+            text: "New topic"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        callMcpGwTool: async (_clientConfig, input) => {
+          calls.push(input);
+          expect(input).toEqual({
+            name: "gws_docs_documents_batch_update",
+            arguments: {
+              params: { documentId: "doc-123" },
+              json: {
+                requests: [
+                  {
+                    insertText: {
+                      endOfSegmentLocation: {},
+                      text: "\nNew topic"
+                    }
+                  }
+                ]
+              }
+            }
+          });
+          return {
+            status: "ok",
+            result: { content: [{ type: "text", text: "updated" }] }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "gws_docs_documents_batch_update",
+        burbleToolName: "google_append_to_drive_text_file"
       }
     });
     expect(calls).toHaveLength(1);

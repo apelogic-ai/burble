@@ -16,6 +16,7 @@ import type {
   SchedulerControlPlane,
   SchedulerJobSummary,
 } from "../scheduler/control-plane";
+import type { ScheduledTaskPreparationToolExecutor } from "../scheduler/task-preparation";
 
 export type ResponseVisibility = "public" | "ephemeral" | "dm";
 export type ToolClassification = "public" | "user_private" | "restricted";
@@ -101,6 +102,25 @@ export type SchedulerResolvedCreateJob = {
   schedule: unknown;
 };
 
+export type SchedulerTaskPlanStep = {
+  id: string;
+  instruction: string;
+  tools: string[];
+};
+
+export type SchedulerTaskPreparationStep = {
+  id: string;
+  tool: string;
+  input: Record<string, unknown>;
+  saveAs: string;
+  purpose?: string;
+};
+
+export type SchedulerTaskPlan = {
+  steps: SchedulerTaskPlanStep[];
+  preparation: SchedulerTaskPreparationStep[];
+};
+
 export type SchedulerIntentResolverResult = {
   intent: Exclude<SchedulerControlIntent, null> | "none";
   confidence: number;
@@ -110,6 +130,7 @@ export type SchedulerIntentResolverResult = {
   schedule?: unknown;
   prompt?: string | null;
   runtimeType?: AgentRuntimeEngine | null;
+  taskPlan?: SchedulerTaskPlan | null;
 };
 
 export type SchedulerIntentResolver = (input: {
@@ -137,6 +158,7 @@ export type ConversationDeps = {
   agentExecutionMode?: "default" | "native-runtime";
   schedulerControl?: SchedulerControlPlane;
   schedulerIntentResolver?: SchedulerIntentResolver;
+  scheduledTaskPreparationExecutor?: ScheduledTaskPreparationToolExecutor;
   onSchedulerRunQueued?: (run: AgentJobRunRecord) => void | Promise<void>;
   onAgentEvent?: AgentRunEventHandler;
   observability?: ObservabilitySink;

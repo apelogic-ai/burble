@@ -1,4 +1,5 @@
 import { findProviderToolSpec } from "../providers/catalog";
+import type { ScheduledJobStateRef } from "../agent/scheduled-job-context";
 import type { ToolResult } from "../tools/types";
 import type { McpGwToolCallResult } from "./mcp-gw-client";
 
@@ -16,6 +17,38 @@ export type McpGwGoogleToolCallAdaptation =
       burbleToolName: string;
       message: string;
     };
+
+export function applyMcpGwGoogleStateRefHints(
+  toolName: string,
+  input: unknown,
+  stateRefs: ScheduledJobStateRef[],
+): unknown {
+  const tool = findProviderToolSpec(toolName);
+  const burbleToolName = tool?.provider === "google" ? tool.name : toolName;
+  if (
+    ![
+      "google_append_to_drive_text_file",
+      "google_get_drive_file",
+    ].includes(burbleToolName) ||
+    !isOptionalObject(input) ||
+    stringInput(input, "mimeType")
+  ) {
+    return input;
+  }
+  const fileId = stringInput(input, "fileId");
+  const preparedDocument = stateRefs.some(
+    (stateRef) =>
+      stateRef.provider === "google" &&
+      stateRef.kind === "google_docs_create_document" &&
+      stateRef.id === fileId,
+  );
+  return preparedDocument
+    ? {
+        ...input,
+        mimeType: "application/vnd.google-apps.document",
+      }
+    : input;
+}
 
 export function canAdaptMcpGwGoogleToolCall(
   toolName: string,
@@ -47,6 +80,9 @@ export function adaptMcpGwGoogleToolCall(
     case "google_create_drive_text_file":
       return adaptMcpGwDriveFilesCreateTextArgs(burbleToolName, args);
 
+    case "google_append_to_drive_text_file":
+      return adaptMcpGwDriveTextAppendArgs(burbleToolName, args);
+
     case "google_create_drive_folder":
       return adaptMcpGwDriveFolderCreateArgs(burbleToolName, args);
 
@@ -73,7 +109,7 @@ export function adaptMcpGwGoogleToolCall(
       return {
         ok: true,
         burbleToolName,
-        name: "google_calendar_events_insert",
+        name: "gws_calendar_events_insert",
         arguments: adaptMcpGwCalendarEventWriteArgs(args)
       };
 
@@ -81,7 +117,7 @@ export function adaptMcpGwGoogleToolCall(
       return {
         ok: true,
         burbleToolName,
-        name: "google_calendar_events_update",
+        name: "gws_calendar_events_patch",
         arguments: adaptMcpGwCalendarEventUpdateArgs(args)
       };
 
@@ -156,15 +192,94 @@ export function mcpGwGoogleToolResult(
     };
   }
 
+  if (result.result.isError) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "google_tool_failed",
+        message: readMcpToolResultText(result.result) || "Google tool failed.",
+        toolName: tool.name,
+        burbleToolName: tool.burbleToolName,
+      },
+    };
+  }
+
+  const normalizedResult = normalizeMcpGwGoogleResult(tool, result.result);
+
   return {
     classification: "user_private",
     content: {
       mcpGw: true,
       toolName: tool.name,
       burbleToolName: tool.burbleToolName,
-      result: result.result
+      result: normalizedResult
     }
   };
+}
+
+function normalizeMcpGwGoogleResult(
+  tool: McpGwGoogleAdaptedToolCall,
+  result: { content?: unknown[]; isError?: boolean },
+): { content?: unknown[]; isError?: boolean } {
+  if (tool.name !== "google_docs_get") {
+    return result;
+  }
+
+  const document = readMcpJsonObject(result);
+  if (!document) {
+    return result;
+  }
+  const documentId = stringInput(document, "documentId");
+  const title = stringInput(document, "title");
+  const content = collectGoogleDocsText(document).join("");
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ documentId, title, content }),
+      },
+    ],
+  };
+}
+
+function readMcpJsonObject(result: { content?: unknown[] }): Record<string, unknown> | null {
+  for (const item of result.content ?? []) {
+    if (!isOptionalObject(item) || typeof item.text !== "string") {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(item.text) as unknown;
+      if (isOptionalObject(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // Preserve the upstream result when it is not JSON.
+    }
+  }
+  return null;
+}
+
+function collectGoogleDocsText(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(collectGoogleDocsText);
+  }
+  if (!isOptionalObject(value)) {
+    return [];
+  }
+  if (isOptionalObject(value.textRun) && typeof value.textRun.content === "string") {
+    return [value.textRun.content];
+  }
+  return Object.values(value).flatMap(collectGoogleDocsText);
+}
+
+function readMcpToolResultText(result: { content?: unknown[] }): string {
+  return (result.content ?? [])
+    .flatMap((item) =>
+      isOptionalObject(item) && typeof item.text === "string" ? [item.text] : [],
+    )
+    .join("\n")
+    .trim()
+    .slice(0, 2_000);
 }
 
 function actionableGoogleReconnectMessage(message: string): string {
@@ -212,36 +327,21 @@ function adaptMcpGwDriveFilesReadArgs(
   }
 
   const mimeType = stringInput(input, "mimeType");
-  if (!mimeType || isGoogleWorkspaceMimeType(mimeType)) {
+  if (mimeType === "application/vnd.google-apps.document") {
     return {
       ok: true,
       burbleToolName,
-      name: "gws_drive_files_export",
-      arguments: adaptMcpGwDriveFilesExportArgs(input)
+      name: "google_docs_get",
+      arguments: {
+        documentId: stringInput(input, "fileId"),
+      },
     };
   }
-
   return {
-    ok: true,
+    ok: false,
     burbleToolName,
-    name: "gws_drive_files_download",
-    arguments: {
-      params: {
-        fileId: stringInput(input, "fileId")
-      },
-      format: "text"
-    }
-  };
-}
-
-function adaptMcpGwDriveFilesExportArgs(
-  input: Record<string, unknown>
-): Record<string, unknown> {
-  return {
-    params: {
-      fileId: stringInput(input, "fileId"),
-      mimeType: googleDriveExportMimeType(input)
-    }
+    message:
+      "MCP-GW Drive export/download does not return file content to Burble; use the direct Google fallback.",
   };
 }
 
@@ -262,12 +362,56 @@ function adaptMcpGwDriveFilesCreateTextArgs(
   return {
     ok: true,
     burbleToolName,
-    name: "google_drive_files_create",
+    name: "gws_drive_files_create",
     arguments: {
-      fields: "id,name,mimeType,webViewLink",
-      name: stringInput(input, "name"),
-      mimeType: stringInput(input, "mimeType", "text/plain")
+      params: {
+        fields: "id,name,mimeType,webViewLink",
+        supportsAllDrives: true,
+      },
+      json: {
+        name: stringInput(input, "name"),
+        mimeType: stringInput(input, "mimeType", "text/plain"),
+      },
+      format: "json",
     }
+  };
+}
+
+function adaptMcpGwDriveTextAppendArgs(
+  burbleToolName: string,
+  input: Record<string, unknown>,
+): McpGwGoogleToolCallAdaptation {
+  if (
+    stringInput(input, "mimeType") !==
+    "application/vnd.google-apps.document"
+  ) {
+    return {
+      ok: false,
+      burbleToolName,
+      message:
+        "Google Drive append is MCP-GW adapted only for Google Docs resources.",
+    };
+  }
+  const text = `${typeof input.separator === "string" ? input.separator : "\n"}${stringInput(input, "text")}`;
+  return {
+    ok: true,
+    burbleToolName,
+    name: "gws_docs_documents_batch_update",
+    arguments: {
+      params: {
+        documentId: stringInput(input, "fileId"),
+      },
+      json: {
+        requests: [
+          {
+            insertText: {
+              endOfSegmentLocation: {},
+              text,
+            },
+          },
+        ],
+      },
+    },
   };
 }
 
@@ -278,14 +422,20 @@ function adaptMcpGwDriveFolderCreateArgs(
   return {
     ok: true,
     burbleToolName,
-    name: "google_drive_files_create",
+    name: "gws_drive_files_create",
     arguments: {
-      fields: "id,name,mimeType,webViewLink",
-      name: stringInput(input, "name"),
-      mimeType: "application/vnd.google-apps.folder",
-      ...(typeof input.parentId === "string" && input.parentId.trim()
-        ? { parents: JSON.stringify([input.parentId.trim()]) }
-        : {})
+      params: {
+        fields: "id,name,mimeType,webViewLink",
+        supportsAllDrives: true,
+      },
+      json: {
+        name: stringInput(input, "name"),
+        mimeType: "application/vnd.google-apps.folder",
+        ...(typeof input.parentId === "string" && input.parentId.trim()
+          ? { parents: [input.parentId.trim()] }
+          : {}),
+      },
+      format: "json",
     }
   };
 }
@@ -323,17 +473,6 @@ function adaptMcpGwDriveFileMoveArgs(
       format: "json"
     }
   };
-}
-
-function googleDriveExportMimeType(input: Record<string, unknown>): string {
-  const explicit = stringInput(input, "exportMimeType");
-  if (explicit) {
-    return explicit;
-  }
-  const mimeType = stringInput(input, "mimeType");
-  return mimeType === "application/vnd.google-apps.spreadsheet"
-    ? "text/csv"
-    : "text/plain";
 }
 
 function adaptMcpGwSharedDrivesListArgs(
@@ -386,14 +525,19 @@ function adaptMcpGwCalendarEventWriteArgs(
   input: Record<string, unknown>
 ): Record<string, unknown> {
   return {
-    calendarId: stringInput(input, "calendarId", "primary"),
-    summary: stringInput(input, "summary"),
-    start: JSON.stringify(calendarTimeInput(input, "start", input.timeZone)),
-    end: JSON.stringify(calendarTimeInput(input, "end", input.timeZone)),
-    ...(typeof input.description === "string"
-      ? { description: input.description }
-      : {}),
-    ...(typeof input.location === "string" ? { location: input.location } : {})
+    params: {
+      calendarId: stringInput(input, "calendarId", "primary"),
+    },
+    json: {
+      summary: stringInput(input, "summary"),
+      start: calendarTimeInput(input, "start", input.timeZone),
+      end: calendarTimeInput(input, "end", input.timeZone),
+      ...(typeof input.description === "string"
+        ? { description: input.description }
+        : {}),
+      ...(typeof input.location === "string" ? { location: input.location } : {}),
+    },
+    format: "json",
   };
 }
 
@@ -401,18 +545,24 @@ function adaptMcpGwCalendarEventUpdateArgs(
   input: Record<string, unknown>
 ): Record<string, unknown> {
   return {
-    calendarId: stringInput(input, "calendarId", "primary"),
-    eventId: stringInput(input, "eventId"),
-    ...(typeof input.summary === "string" ? { summary: input.summary } : {}),
-    ...(typeof input.start === "string"
-      ? { start: JSON.stringify(calendarTimeInput(input, "start", input.timeZone)) }
-      : {}),
-    ...(typeof input.end === "string"
-      ? { end: JSON.stringify(calendarTimeInput(input, "end", input.timeZone)) }
-      : {}),
-    ...(typeof input.description === "string"
-      ? { description: input.description }
-      : {})
+    params: {
+      calendarId: stringInput(input, "calendarId", "primary"),
+      eventId: stringInput(input, "eventId"),
+    },
+    json: {
+      ...(typeof input.summary === "string" ? { summary: input.summary } : {}),
+      ...(typeof input.start === "string"
+        ? { start: calendarTimeInput(input, "start", input.timeZone) }
+        : {}),
+      ...(typeof input.end === "string"
+        ? { end: calendarTimeInput(input, "end", input.timeZone) }
+        : {}),
+      ...(typeof input.description === "string"
+        ? { description: input.description }
+        : {}),
+      ...(typeof input.location === "string" ? { location: input.location } : {}),
+    },
+    format: "json",
   };
 }
 
@@ -577,10 +727,6 @@ function adaptMcpGwDocsCreateArgs(
     name: "google_docs_create",
     arguments: { title: input.name.trim() }
   };
-}
-
-function isGoogleWorkspaceMimeType(mimeType: string): boolean {
-  return mimeType.startsWith("application/vnd.google-apps.");
 }
 
 function stringArrayInput(

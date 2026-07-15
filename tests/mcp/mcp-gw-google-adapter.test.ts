@@ -1,11 +1,96 @@
 import { describe, expect, test } from "bun:test";
 import {
+  applyMcpGwGoogleStateRefHints,
   adaptMcpGwGoogleToolCall,
   canAdaptMcpGwGoogleToolCall,
   mcpGwGoogleToolResult
 } from "../../src/mcp/mcp-gw-google-adapter";
 
 describe("adaptMcpGwGoogleToolCall", () => {
+  test("adapts Drive and Gmail searches to their scalar curated contracts", () => {
+    expect(
+      adaptMcpGwGoogleToolCall("google_search_drive_files", {
+        query: "QBR's",
+        mimeType: "application/pdf",
+        parentId: "folder-1",
+        limit: 4,
+      }),
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_search_drive_files",
+      name: "google_drive_files_list",
+      arguments: {
+        q: [
+          "trashed = false",
+          "name contains 'QBR\\'s'",
+          "mimeType = 'application/pdf'",
+          "'folder-1' in parents",
+        ].join(" and "),
+        pageSize: 4,
+        orderBy: "modifiedTime desc",
+      },
+    });
+
+    expect(
+      adaptMcpGwGoogleToolCall("google_search_mail_messages", {
+        query: "from:me",
+        limit: 5,
+      }),
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_search_mail_messages",
+      name: "google_gmail_messages_list",
+      arguments: {
+        userId: "me",
+        q: "from:me",
+        maxResults: 5,
+      },
+    });
+  });
+
+  test("appends to prepared Google Docs through Docs batch update", () => {
+    const input = applyMcpGwGoogleStateRefHints(
+      "google_append_to_drive_text_file",
+      {
+        fileId: "doc-123",
+        text: "New topic",
+      },
+      [
+        {
+          provider: "google",
+          kind: "google_docs_create_document",
+          id: "doc-123",
+        },
+      ],
+    );
+
+    expect(input).toEqual({
+      fileId: "doc-123",
+      text: "New topic",
+      mimeType: "application/vnd.google-apps.document",
+    });
+    expect(
+      adaptMcpGwGoogleToolCall("google_append_to_drive_text_file", input),
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_append_to_drive_text_file",
+      name: "gws_docs_documents_batch_update",
+      arguments: {
+        params: { documentId: "doc-123" },
+        json: {
+          requests: [
+            {
+              insertText: {
+                endOfSegmentLocation: {},
+                text: "\nNew topic",
+              },
+            },
+          ],
+        },
+      },
+    });
+  });
+
   test("makes MCP-GW Google reauthorization actionable without an upstream URL", () => {
     const result = mcpGwGoogleToolResult(
       {
@@ -31,60 +116,142 @@ describe("adaptMcpGwGoogleToolCall", () => {
     });
   });
 
-  test("adapts Drive file content reads to MCP-GW Drive export", () => {
+  test("surfaces upstream Google tool errors instead of reporting success", () => {
+    expect(
+      mcpGwGoogleToolResult(
+        {
+          ok: true,
+          burbleToolName: "google_append_to_drive_text_file",
+          name: "gws_docs_documents_batch_update",
+          arguments: {},
+        },
+        {
+          status: "ok",
+          result: {
+            isError: true,
+            content: [{ type: "text", text: "Google API rejected the update" }],
+          },
+        },
+      ),
+    ).toEqual({
+      classification: "user_private",
+      content: {
+        error: "google_tool_failed",
+        message: "Google API rejected the update",
+        toolName: "gws_docs_documents_batch_update",
+        burbleToolName: "google_append_to_drive_text_file",
+      },
+    });
+  });
+
+  test("reduces Google Docs reads to usable document text", () => {
+    expect(
+      mcpGwGoogleToolResult(
+        {
+          ok: true,
+          burbleToolName: "google_get_drive_file",
+          name: "google_docs_get",
+          arguments: {},
+        },
+        {
+          status: "ok",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  documentId: "doc-123",
+                  title: "Dedup state",
+                  body: {
+                    content: [
+                      {
+                        paragraph: {
+                          elements: [
+                            { textRun: { content: "First topic\n" } },
+                            { textRun: { content: "Second topic\n" } },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                }),
+              },
+            ],
+          },
+        },
+      ),
+    ).toEqual({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "google_docs_get",
+        burbleToolName: "google_get_drive_file",
+        result: {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                documentId: "doc-123",
+                title: "Dedup state",
+                content: "First topic\nSecond topic\n",
+              }),
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  test("falls back for Drive exports whose bytes stay inside MCP-GW", () => {
     expect(
       adaptMcpGwGoogleToolCall("google_get_drive_file", {
         fileId: "sheet-123",
         mimeType: "application/vnd.google-apps.spreadsheet"
       })
-    ).toEqual({
-      ok: true,
+    ).toMatchObject({
+      ok: false,
       burbleToolName: "google_get_drive_file",
-      name: "gws_drive_files_export",
-      arguments: {
-        params: {
-          fileId: "sheet-123",
-          mimeType: "text/csv"
-        }
-      }
+      message: expect.stringContaining("does not return file content")
     });
   });
 
-  test("does not force CSV export for non-spreadsheet Drive content reads", () => {
-    expect(
-      adaptMcpGwGoogleToolCall("google_get_drive_file", {
+  test("reads prepared Google Docs through the Docs API", () => {
+    const input = applyMcpGwGoogleStateRefHints(
+      "google_get_drive_file",
+      {
         fileId: "doc-123",
-        mimeType: "application/vnd.google-apps.document"
-      })
-    ).toEqual({
+      },
+      [
+        {
+          provider: "google",
+          kind: "google_docs_create_document",
+          id: "doc-123",
+        },
+      ],
+    );
+
+    expect(input).toEqual({
+      fileId: "doc-123",
+      mimeType: "application/vnd.google-apps.document",
+    });
+    expect(adaptMcpGwGoogleToolCall("google_get_drive_file", input)).toEqual({
       ok: true,
       burbleToolName: "google_get_drive_file",
-      name: "gws_drive_files_export",
-      arguments: {
-        params: {
-          fileId: "doc-123",
-          mimeType: "text/plain"
-        }
-      }
+      name: "google_docs_get",
+      arguments: { documentId: "doc-123" },
     });
   });
 
-  test("downloads non-Google-native Drive content instead of exporting it", () => {
+  test("falls back for Drive downloads whose bytes stay inside MCP-GW", () => {
     expect(
       adaptMcpGwGoogleToolCall("google_get_drive_file", {
         fileId: "pdf-123",
         mimeType: "application/pdf"
       })
-    ).toEqual({
-      ok: true,
+    ).toMatchObject({
+      ok: false,
       burbleToolName: "google_get_drive_file",
-      name: "gws_drive_files_download",
-      arguments: {
-        params: {
-          fileId: "pdf-123"
-        },
-        format: "text"
-      }
+      message: expect.stringContaining("does not return file content")
     });
   });
 
@@ -136,11 +303,17 @@ describe("adaptMcpGwGoogleToolCall", () => {
     ).toEqual({
       ok: true,
       burbleToolName: "google_create_drive_text_file",
-      name: "google_drive_files_create",
+      name: "gws_drive_files_create",
       arguments: {
-        fields: "id,name,mimeType,webViewLink",
-        name: "Blank",
-        mimeType: "text/plain"
+        params: {
+          fields: "id,name,mimeType,webViewLink",
+          supportsAllDrives: true
+        },
+        json: {
+          name: "Blank",
+          mimeType: "text/plain"
+        },
+        format: "json"
       }
     });
 
@@ -162,12 +335,18 @@ describe("adaptMcpGwGoogleToolCall", () => {
     ).toEqual({
       ok: true,
       burbleToolName: "google_create_drive_folder",
-      name: "google_drive_files_create",
+      name: "gws_drive_files_create",
       arguments: {
-        fields: "id,name,mimeType,webViewLink",
-        name: "QBR",
-        mimeType: "application/vnd.google-apps.folder",
-        parents: JSON.stringify(["parent-1"])
+        params: {
+          fields: "id,name,mimeType,webViewLink",
+          supportsAllDrives: true
+        },
+        json: {
+          name: "QBR",
+          mimeType: "application/vnd.google-apps.folder",
+          parents: ["parent-1"]
+        },
+        format: "json"
       }
     });
 
@@ -221,6 +400,68 @@ describe("adaptMcpGwGoogleToolCall", () => {
         timeMin: "2026-07-07T00:00:00Z",
         maxResults: 3,
         singleEvents: true
+      }
+    });
+  });
+
+  test("adapts calendar writes with structured Google API bodies", () => {
+    expect(
+      adaptMcpGwGoogleToolCall("google_create_calendar_event", {
+        calendarId: "primary",
+        summary: "Planning",
+        start: "2026-07-16T09:00:00-07:00",
+        end: "2026-07-16T09:30:00-07:00",
+        timeZone: "America/Los_Angeles",
+        description: "Weekly planning",
+        location: "Zoom"
+      })
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_create_calendar_event",
+      name: "gws_calendar_events_insert",
+      arguments: {
+        params: {
+          calendarId: "primary"
+        },
+        json: {
+          summary: "Planning",
+          start: {
+            dateTime: "2026-07-16T09:00:00-07:00",
+            timeZone: "America/Los_Angeles"
+          },
+          end: {
+            dateTime: "2026-07-16T09:30:00-07:00",
+            timeZone: "America/Los_Angeles"
+          },
+          description: "Weekly planning",
+          location: "Zoom"
+        },
+        format: "json"
+      }
+    });
+
+    expect(
+      adaptMcpGwGoogleToolCall("google_update_calendar_event", {
+        eventId: "event-123",
+        summary: "Updated planning",
+        start: "2026-07-16T10:00:00Z"
+      })
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_update_calendar_event",
+      name: "gws_calendar_events_patch",
+      arguments: {
+        params: {
+          calendarId: "primary",
+          eventId: "event-123"
+        },
+        json: {
+          summary: "Updated planning",
+          start: {
+            dateTime: "2026-07-16T10:00:00Z"
+          }
+        },
+        format: "json"
       }
     });
   });
@@ -351,6 +592,17 @@ describe("adaptMcpGwGoogleToolCall", () => {
   });
 
   test("keeps Docs imports on fallback until MCP-GW has content import support", () => {
+    expect(
+      adaptMcpGwGoogleToolCall("google_docs_create_document", {
+        name: "Empty document",
+      }),
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_docs_create_document",
+      name: "google_docs_create",
+      arguments: { title: "Empty document" },
+    });
+
     expect(
       adaptMcpGwGoogleToolCall("google_docs_create_document", {
         name: "Doc",

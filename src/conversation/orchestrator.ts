@@ -30,9 +30,14 @@ import type {
   SchedulerControlIntent,
   SchedulerIntentResolverResult,
   SchedulerResolvedCreateJob,
+  SchedulerTaskPlan,
 } from "./types";
 import type { AgentRuntimeEngine } from "../db";
 import { isAgentRuntimeEngine } from "@burble/runtime-sdk/runtime-engines";
+import {
+  executeScheduledTaskPreparation,
+  type ScheduledTaskPreparationResult,
+} from "../scheduler/task-preparation";
 
 export async function handleConversation(
   request: ConversationRequest,
@@ -91,6 +96,7 @@ async function handleConversationInternal(
     isAgentRuntimeEngine(schedulerResolution.runtimeType)
       ? schedulerResolution.runtimeType
       : null;
+  const schedulerTaskPlan = schedulerResolution.taskPlan;
   if (
     schedulerResolution.failure &&
     isExplicitSchedulerControlRequest(request.text)
@@ -359,8 +365,17 @@ async function handleConversationInternal(
     schedulerControlIntent === "update_job" &&
     deps.schedulerControl?.updateJob
   ) {
+    const preparation = await prepareResolvedScheduledTask(
+      request,
+      deps,
+      schedulerTaskPlan,
+    );
+    if (!preparation.ok) {
+      return preparation.response;
+    }
+    const prompt = preparation.result?.prompt ?? schedulerPromptUpdateRequest;
     if (
-      !schedulerPromptUpdateRequest &&
+      !prompt &&
       !schedulerScheduleUpdateRequest &&
       !schedulerRuntimeUpdateRequest
     ) {
@@ -374,8 +389,8 @@ async function handleConversationInternal(
       workspaceId: request.workspaceId,
       slackUserId: request.user.slackUserId,
       jobId: schedulerJobIdHint,
-      ...(schedulerPromptUpdateRequest
-        ? { prompt: schedulerPromptUpdateRequest }
+      ...(prompt
+        ? { prompt }
         : {}),
       ...(schedulerScheduleUpdateRequest
         ? { schedule: schedulerScheduleUpdateRequest }
@@ -383,11 +398,22 @@ async function handleConversationInternal(
       ...(schedulerRuntimeUpdateRequest
         ? { runtimeType: schedulerRuntimeUpdateRequest }
         : {}),
+      ...(preparation.result
+        ? {
+            capability: {
+              requiredTools: preparation.result.requiredTools,
+              stateRefs: preparation.result.stateRefs,
+            },
+          }
+        : {}),
     });
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: formatScheduledJobUpdateResult(result),
+      text: appendPreparedResourceSummary(
+        formatScheduledJobUpdateResult(result),
+        result.ok ? preparation.result : null,
+      ),
     };
   }
 
@@ -419,7 +445,16 @@ async function handleConversationInternal(
     schedulerControlIntent === "update_job_prompt" &&
     deps.schedulerControl?.updateJobPrompt
   ) {
-    if (!schedulerPromptUpdateRequest) {
+    const preparation = await prepareResolvedScheduledTask(
+      request,
+      deps,
+      schedulerTaskPlan,
+    );
+    if (!preparation.ok) {
+      return preparation.response;
+    }
+    const prompt = preparation.result?.prompt ?? schedulerPromptUpdateRequest;
+    if (!prompt) {
       return {
         visibility: "ephemeral",
         classification: "user_private",
@@ -430,12 +465,23 @@ async function handleConversationInternal(
       workspaceId: request.workspaceId,
       slackUserId: request.user.slackUserId,
       jobId: schedulerJobIdHint,
-      prompt: schedulerPromptUpdateRequest,
+      prompt,
+      ...(preparation.result
+        ? {
+            capability: {
+              requiredTools: preparation.result.requiredTools,
+              stateRefs: preparation.result.stateRefs,
+            },
+          }
+        : {}),
     });
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: formatScheduledJobPromptUpdateResult(result),
+      text: appendPreparedResourceSummary(
+        formatScheduledJobPromptUpdateResult(result),
+        result.ok ? preparation.result : null,
+      ),
     };
   }
 
@@ -630,6 +676,7 @@ async function resolveSchedulerControlIntent(
   schedule: unknown | null;
   prompt: string | null;
   runtimeType: AgentRuntimeEngine | null;
+  taskPlan: SchedulerTaskPlan | null;
   failure: SchedulerIntentResolverResult["failure"] | null;
 }> {
   if (deps.schedulerIntentResolver) {
@@ -653,11 +700,18 @@ async function resolveSchedulerControlIntent(
           schedule: null,
           prompt: null,
           runtimeType: null,
+          taskPlan: null,
           failure: resolved.failure,
         };
       }
       const intent = normalizeResolvedSchedulerIntent(resolved);
       if (intent) {
+        if (
+          isSchedulerMutationIntent(intent) &&
+          !isExplicitSchedulerControlRequest(request.text)
+        ) {
+          return emptySchedulerResolution();
+        }
         const create =
           intent === "create_job"
             ? normalizeResolverCreateJob(resolved.create)
@@ -674,6 +728,7 @@ async function resolveSchedulerControlIntent(
             schedule: null,
             prompt: null,
             runtimeType: null,
+            taskPlan: null,
             failure: null,
           };
         }
@@ -698,6 +753,10 @@ async function resolveSchedulerControlIntent(
             isAgentRuntimeEngine(resolved.runtimeType)
               ? resolved.runtimeType
               : null,
+          taskPlan:
+            intent === "update_job_prompt" || intent === "update_job"
+              ? resolved.taskPlan ?? null
+              : null,
           failure: null,
         };
       }
@@ -713,17 +772,137 @@ async function resolveSchedulerControlIntent(
     schedule: null,
     prompt: null,
     runtimeType: null,
+    taskPlan: null,
     failure: null,
   };
+}
+
+function emptySchedulerResolution(): {
+  intent: null;
+  jobId: null;
+  create: null;
+  schedule: null;
+  prompt: null;
+  runtimeType: null;
+  taskPlan: null;
+  failure: null;
+} {
+  return {
+    intent: null,
+    jobId: null,
+    create: null,
+    schedule: null,
+    prompt: null,
+    runtimeType: null,
+    taskPlan: null,
+    failure: null,
+  };
+}
+
+async function prepareResolvedScheduledTask(
+  request: ConversationRequest,
+  deps: ConversationDeps,
+  plan: SchedulerTaskPlan | null,
+): Promise<
+  | { ok: true; result: ScheduledTaskPreparationResult | null }
+  | { ok: false; response: ConversationResponse }
+> {
+  if (!plan) {
+    return { ok: true, result: null };
+  }
+  if (plan.preparation.length > 0 && !deps.scheduledTaskPreparationExecutor) {
+    return {
+      ok: false,
+      response: {
+        visibility: "ephemeral",
+        classification: "user_private",
+        text: "I couldn’t prepare the resources required by that task. No scheduled-job changes were made because provider preparation is unavailable.",
+      },
+    };
+  }
+  try {
+    return {
+      ok: true,
+      result: await executeScheduledTaskPreparation({
+        workspaceId: request.workspaceId,
+        slackUserId: request.user.slackUserId,
+        plan,
+        executeTool:
+          deps.scheduledTaskPreparationExecutor ??
+          (async () => {
+            throw new Error("Provider preparation is unavailable");
+          }),
+      }),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      response: {
+        visibility: "ephemeral",
+        classification: "user_private",
+        text: `I couldn’t prepare the resources required by that task. No scheduled-job changes were made. ${error instanceof Error ? error.message : String(error)}`,
+      },
+    };
+  }
+}
+
+function appendPreparedResourceSummary(
+  text: string,
+  preparation: ScheduledTaskPreparationResult | null,
+): string {
+  if (!preparation || Object.keys(preparation.resources).length === 0) {
+    return text;
+  }
+  return [
+    text,
+    "Prepared resources:",
+    ...Object.entries(preparation.resources).map(([binding, value]) =>
+      formatPreparedResource(binding, value),
+    ),
+  ].join("\n");
+}
+
+function formatPreparedResource(binding: string, value: unknown): string {
+  if (!isRecord(value)) {
+    return `- ${binding}`;
+  }
+  const name =
+    typeof value.name === "string" && value.name.trim()
+      ? value.name.trim()
+      : binding;
+  const link =
+    typeof value.webViewLink === "string" && value.webViewLink.trim()
+      ? value.webViewLink.trim()
+      : null;
+  const id =
+    typeof value.id === "string" && value.id.trim() ? value.id.trim() : null;
+  return link
+    ? `- <${link}|${name}>${id ? ` (id: \`${id}\`)` : ""}`
+    : `- ${name}${id ? ` (id: \`${id}\`)` : ""}`;
 }
 
 function isExplicitSchedulerControlRequest(text: string): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
   return (
     /\b(cron|cronjob|scheduled job|scheduled task)\b/.test(normalized) ||
-    /\b(create|make|set|modify|update|change|pause|resume|delete|remove|run|trigger|show|list)\b.*\b(job|task|schedule)\b/.test(
+    /\b(create|add|make|set|modify|update|change|move|switch|pause|resume|delete|remove|run|trigger|show|list)\b.*\b(job|task|schedule)\b/.test(
       normalized,
     )
+  );
+}
+
+function isSchedulerMutationIntent(
+  intent: Exclude<SchedulerControlIntent, null>,
+): boolean {
+  return (
+    intent === "pause_job" ||
+    intent === "resume_job" ||
+    intent === "delete_job" ||
+    intent === "update_job_delivery" ||
+    intent === "update_job" ||
+    intent === "update_job_schedule" ||
+    intent === "update_job_prompt" ||
+    intent === "update_job_runtime"
   );
 }
 
