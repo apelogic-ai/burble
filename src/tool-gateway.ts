@@ -923,7 +923,7 @@ export async function handleToolGatewayRequest(
     });
   }
 
-  if (toolName === "web.search" || toolName === "web_search") {
+  if (isWebSearchTool(toolName)) {
     const inputCoercion = coerceProviderToolGatewayInput(toolName, body.input);
     if (!inputCoercion.ok) {
       return new Response(`Invalid tool input: ${inputCoercion.error}`, {
@@ -2063,80 +2063,16 @@ function isRuntimeTokenValid(token: string, tokenHash: string): boolean {
 }
 
 function isKnownTool(toolName: string): boolean {
+  const providerTool = findProviderToolSpec(toolName);
+  if (
+    providerTool &&
+    (providerTool.alias === toolName ||
+      (providerTool.aliases ?? []).includes(toolName))
+  ) {
+    return true;
+  }
+
   return (
-    toolName === "github.getAuthenticatedUser" ||
-    toolName === "github.listAssignedIssues" ||
-    toolName === "github.searchIssues" ||
-    toolName === "github.listMyPullRequests" ||
-    toolName === "github.getIssue" ||
-    toolName === "github.getPullRequest" ||
-    toolName === "github.createIssue" ||
-    toolName === "github.updateIssue" ||
-    toolName === "github.closeIssue" ||
-    toolName === "github.reopenIssue" ||
-    toolName === "github.commentOnIssueOrPullRequest" ||
-    toolName === "github.createPullRequest" ||
-    toolName === "github.updatePullRequest" ||
-    toolName === "github.addLabels" ||
-    toolName === "github.removeLabels" ||
-    toolName === "github.requestReview" ||
-    toolName === "github.getFile" ||
-    toolName === "github.createOrUpdateFile" ||
-    toolName === "github.createBranch" ||
-    toolName === "google.getAuthenticatedUser" ||
-    toolName === "google.searchDriveFiles" ||
-    toolName === "google.listSharedDrives" ||
-    toolName === "google.getDriveFile" ||
-    toolName === "google.createDriveTextFile" ||
-    toolName === "google.docsCreateDocument" ||
-    toolName === "google.createGoogleDoc" ||
-    toolName === "google.createDocsDocument" ||
-    toolName === "google.updateDriveTextFile" ||
-    toolName === "google.appendDriveTextFile" ||
-    toolName === "google.appendToDriveTextFile" ||
-    toolName === "google.createDriveFolder" ||
-    toolName === "google.moveDriveFile" ||
-    toolName === "google.searchCalendarEvents" ||
-    toolName === "google.createCalendarEvent" ||
-    toolName === "google.updateCalendarEvent" ||
-    toolName === "google.searchMailMessages" ||
-    toolName === "google.slidesSearchPresentations" ||
-    toolName === "google.slidesGetPresentation" ||
-    toolName === "google.slidesProbeTemplate" ||
-    toolName === "google.slidesCopyPresentation" ||
-    toolName === "google.slidesCreateSlide" ||
-    toolName === "google.slidesFillPlaceholders" ||
-    toolName === "google.analyticsListProperties" ||
-    toolName === "google.analyticsGetMetadata" ||
-    toolName === "google.analyticsRunReport" ||
-    toolName === "gmail.createDraft" ||
-    toolName === "hubspot.getAuthenticatedUser" ||
-    toolName === "hubspot.searchContacts" ||
-    toolName === "hubspot.searchCompanies" ||
-    toolName === "hubspot.searchDeals" ||
-    toolName === "hubspot.searchCrmObjects" ||
-    toolName === "hubspot.listOwners" ||
-    toolName === "hubspot.listUsers" ||
-    toolName === "hubspot.readApiResource" ||
-    toolName === "jira.getAuthenticatedUser" ||
-    toolName === "jira.listAccessibleResources" ||
-    toolName === "jira.listVisibleProjects" ||
-    toolName === "jira.searchUsers" ||
-    toolName === "jira.createIssue" ||
-    toolName === "jira.editIssue" ||
-    toolName === "jira.getIssue" ||
-    toolName === "jira.updateIssue" ||
-    toolName === "jira.addComment" ||
-    toolName === "jira.transitionIssue" ||
-    toolName === "jira.addLabels" ||
-    toolName === "jira.removeLabels" ||
-    toolName === "jira.linkIssues" ||
-    toolName === "jira.createSubtask" ||
-    toolName === "jira.listAssignedIssues" ||
-    toolName === "jira.searchIssues" ||
-    toolName === "slack.searchUsers" ||
-    toolName === "slack.searchMessages" ||
-    toolName === "web.search" ||
     toolName === "web_search" ||
     toolName === "conversation.sendMessage" ||
     toolName === "conversation.getAttachment" ||
@@ -2151,10 +2087,13 @@ function isKnownTool(toolName: string): boolean {
     toolName === "scheduledJob.show" ||
     toolName === "scheduledJob.latestRunStatus" ||
     toolName === "runtime.heartbeat" ||
-    toolName === "runtime.conformance.echo" ||
-    toolName === "atlassian.listMcpTools" ||
-    toolName === "atlassian.callMcpTool"
+    toolName === "runtime.conformance.echo"
   );
+}
+
+function isWebSearchTool(toolName: string): boolean {
+  const tool = findProviderToolSpec(toolName);
+  return tool?.provider === "web" && tool.implementation === "search";
 }
 
 function readToolProvider(toolName: string): Provider {
@@ -5540,7 +5479,7 @@ function readToolProviderForTelemetry(toolName: string): string {
   if (toolName.startsWith("scheduledJob.")) {
     return "scheduled_job";
   }
-  if (toolName === "web.search" || toolName === "web_search") {
+  if (isWebSearchTool(toolName)) {
     return "web";
   }
   return readToolProvider(toolName);

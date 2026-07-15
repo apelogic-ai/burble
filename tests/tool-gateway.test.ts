@@ -9,6 +9,7 @@ import type {
   TokenStore
 } from "../src/db";
 import { JiraApiError } from "../src/providers/jira/client";
+import { providerToolCatalog } from "../src/providers/catalog";
 import { handleToolGatewayRequest } from "../src/tool-gateway";
 import type { ObservabilityEventInput } from "../src/observability";
 import { createConversationAttachmentCapability } from "../src/conversation/attachment-capabilities";
@@ -585,6 +586,26 @@ describe("handleToolGatewayRequest", () => {
         ]
       }
     });
+  });
+
+  test("recognizes every provider tool alias declared in the catalog", async () => {
+    for (const tool of providerToolCatalog) {
+      for (const toolName of [tool.alias, ...(tool.aliases ?? [])]) {
+        const response = await handleToolGatewayRequest(
+          config,
+          createStore(null, runtime),
+          toolName,
+          request(
+            toolName,
+            { input: {} },
+            "runtime-token-u123",
+            "rt_u123"
+          )
+        );
+
+        expect(response.status, `${toolName} must be recognized`).not.toBe(404);
+      }
+    }
   });
 
   test("passes Google Analytics report inputs to the provider tool", async () => {
