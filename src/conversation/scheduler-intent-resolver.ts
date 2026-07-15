@@ -4,6 +4,9 @@ import type { DirectLanguageModel, ModelResolver } from "../agent/providers";
 import type {
   SchedulerIntentResolver,
   SchedulerIntentResolverResult,
+  SchedulerTaskPlan,
+  SchedulerTaskPlanStep,
+  SchedulerTaskPreparationStep,
 } from "./types";
 
 import { isAgentRuntimeEngine } from "@burble/runtime-sdk/runtime-engines";
@@ -104,6 +107,12 @@ const schedulerIntentSystemPrompt = [
   "create.prompt is the executable task only. Remove schedule and delivery clauses such as every 30 min, hourly, report back here, to this channel.",
   "For update_job_schedule, include schedule with the new cron schedule and include jobId when one current task/job clearly matches the user reference.",
   "For update_job_prompt, include prompt with the new executable task prompt and include jobId when one current task/job clearly matches the user reference.",
+  "When a task update contains multiple requested steps, return taskPlan instead of copying the user's message into prompt.",
+  "taskPlan.steps are recurring executable steps. Each step has id, instruction, and the exact recurring provider tool names it requires in tools.",
+  "taskPlan.preparation contains one-time provider calls that must finish before the task is updated. Each preparation step has id, tool, input, saveAs, and optional purpose.",
+  "Use {{resources.<saveAs>.<field>}} placeholders in recurring instructions when they need values returned by preparation steps.",
+  "Do not put one-time setup work such as create a document now into recurring steps.",
+  "Do not include schedule cadence or delivery wording as recurring task steps; scheduled delivery is owned by Burble.",
   "For update_job_runtime, include runtimeType and jobId. Supported runtimeType values: deterministic, openclaw, openclaw-gateway, burble-native, hermes.",
   "For a request changing two or more of prompt, schedule, and runtime, use update_job and include every requested field plus jobId.",
   'Use cron schedules with UTC timezone. Examples: every 30 min => {"kind":"cron","expression":"*/30 * * * *","timezone":"UTC"}; hourly => {"kind":"cron","expression":"0 * * * *","timezone":"UTC"}; every weekday at 9 AM => {"kind":"cron","expression":"0 9 * * 1-5","timezone":"UTC"}.',
@@ -145,6 +154,7 @@ function schedulerIntentPrompt(
     'For create_job use: {"intent":"create_job","confidence":0.94,"jobId":null,"create":{"title":"Heart emoji every 30 min","prompt":"Post exactly this message: ❤️","schedule":{"kind":"cron","expression":"*/30 * * * *","timezone":"UTC"}}}',
     'For update_job_schedule use: {"intent":"update_job_schedule","confidence":0.94,"jobId":"job_123","schedule":{"kind":"cron","expression":"*/45 * * * *","timezone":"UTC"}}',
     'For update_job_prompt use: {"intent":"update_job_prompt","confidence":0.94,"jobId":"job_123","prompt":"Post exactly this message: ❤️❤️"}',
+    'For a planned update use: {"intent":"update_job_prompt","confidence":0.98,"jobId":"job_123","taskPlan":{"preparation":[{"id":"create_state","tool":"google_docs_create_document","input":{"name":"News state"},"saveAs":"state_document","purpose":"Track previously reported topics"}],"steps":[{"id":"collect","instruction":"Find the latest news and select the top five.","tools":["web_search"]},{"id":"deduplicate","instruction":"Read {{resources.state_document.id}}, remove previously reported topics, and record newly reported topics.","tools":["google_get_drive_file","google_append_to_drive_text_file"]},{"id":"report","instruction":"Return only net-new results.","tools":[]}]}}',
     'For update_job_runtime use: {"intent":"update_job_runtime","confidence":0.94,"jobId":"job_123","runtimeType":"burble-native"}',
     'For a composite update use: {"intent":"update_job","confidence":0.97,"jobId":"job_123","prompt":"Post exactly this message: ❤️","schedule":{"kind":"cron","expression":"*/15 * * * *","timezone":"UTC"},"runtimeType":"burble-native"}',
   ].join("\n");
@@ -211,6 +221,10 @@ export function parseSchedulerIntentResponse(
     isAgentRuntimeEngine(parsed.runtimeType)
       ? parsed.runtimeType
       : null;
+  const taskPlan =
+    intent === "update_job_prompt" || intent === "update_job"
+      ? parseSchedulerTaskPlan(parsed.taskPlan)
+      : null;
   return {
     intent,
     confidence,
@@ -219,7 +233,91 @@ export function parseSchedulerIntentResponse(
     ...(schedule ? { schedule } : {}),
     ...(prompt ? { prompt } : {}),
     ...(runtimeType ? { runtimeType } : {}),
+    ...(taskPlan ? { taskPlan } : {}),
   };
+}
+
+function parseSchedulerTaskPlan(value: unknown): SchedulerTaskPlan | null {
+  if (!isRecord(value) || !Array.isArray(value.steps)) {
+    return null;
+  }
+  const steps = value.steps.map(parseSchedulerTaskPlanStep);
+  if (steps.some((step) => step === null) || steps.length === 0) {
+    return null;
+  }
+  const preparationValue = value.preparation ?? [];
+  if (!Array.isArray(preparationValue)) {
+    return null;
+  }
+  const preparation = preparationValue.map(parseSchedulerPreparationStep);
+  if (preparation.some((step) => step === null)) {
+    return null;
+  }
+  const ids = [...steps, ...preparation].map((step) => step!.id);
+  const bindings = preparation.map((step) => step!.saveAs);
+  if (new Set(ids).size !== ids.length || new Set(bindings).size !== bindings.length) {
+    return null;
+  }
+  return {
+    steps: steps as SchedulerTaskPlanStep[],
+    preparation: preparation as SchedulerTaskPreparationStep[],
+  };
+}
+
+function parseSchedulerTaskPlanStep(value: unknown): SchedulerTaskPlanStep | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = parsePlanIdentifier(value.id);
+  const instruction =
+    typeof value.instruction === "string" ? value.instruction.trim() : "";
+  const tools = parseToolNames(value.tools);
+  if (!id || !instruction || !tools) {
+    return null;
+  }
+  return { id, instruction, tools };
+}
+
+function parseSchedulerPreparationStep(
+  value: unknown,
+): SchedulerTaskPreparationStep | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = parsePlanIdentifier(value.id);
+  const tool = typeof value.tool === "string" ? value.tool.trim() : "";
+  const saveAs = parsePlanIdentifier(value.saveAs);
+  const input = value.input;
+  const purpose =
+    typeof value.purpose === "string" ? value.purpose.trim() : "";
+  if (!id || !tool || !saveAs || !isRecord(input)) {
+    return null;
+  }
+  return {
+    id,
+    tool,
+    input,
+    saveAs,
+    ...(purpose ? { purpose } : {}),
+  };
+}
+
+function parsePlanIdentifier(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return /^[a-z][a-z0-9_]{0,63}$/.test(normalized) ? normalized : null;
+}
+
+function parseToolNames(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const tools = value.map((tool) =>
+    typeof tool === "string" ? tool.trim() : "",
+  );
+  return tools.every(Boolean) ? [...new Set(tools)] : null;
 }
 
 function parseSchedulerCreatePayload(

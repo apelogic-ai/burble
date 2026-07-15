@@ -101,6 +101,25 @@ export type SchedulerResolvedCreateJob = {
   schedule: unknown;
 };
 
+export type SchedulerTaskPlanStep = {
+  id: string;
+  instruction: string;
+  tools: string[];
+};
+
+export type SchedulerTaskPreparationStep = {
+  id: string;
+  tool: string;
+  input: Record<string, unknown>;
+  saveAs: string;
+  purpose?: string;
+};
+
+export type SchedulerTaskPlan = {
+  steps: SchedulerTaskPlanStep[];
+  preparation: SchedulerTaskPreparationStep[];
+};
+
 export type SchedulerIntentResolverResult = {
   intent: Exclude<SchedulerControlIntent, null> | "none";
   confidence: number;
@@ -110,6 +129,7 @@ export type SchedulerIntentResolverResult = {
   schedule?: unknown;
   prompt?: string | null;
   runtimeType?: AgentRuntimeEngine | null;
+  taskPlan?: SchedulerTaskPlan | null;
 };
 
 export type SchedulerIntentResolver = (input: {
