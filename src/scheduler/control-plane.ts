@@ -17,6 +17,7 @@ import {
 } from "./task-validation";
 import { validateScheduledJobSchedule } from "./timer";
 import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./active-run";
+import type { ScheduledJobStateRef } from "../agent/scheduled-job-context";
 import {
   recordTaskWorkflowRunTriggered,
   type TaskWorkflowShadowStore,
@@ -225,6 +226,7 @@ export type SchedulerUpdateJobScheduleInput = SchedulerJobMutationInput & {
 
 export type SchedulerUpdateJobPromptInput = SchedulerJobMutationInput & {
   prompt: string;
+  capability?: SchedulerTaskCapabilityUpdate;
 };
 
 export type SchedulerUpdateJobRuntimeInput = SchedulerJobMutationInput & {
@@ -235,6 +237,12 @@ export type SchedulerUpdateJobInput = SchedulerJobMutationInput & {
   prompt?: string;
   schedule?: unknown;
   runtimeType?: AgentRuntimeEngine;
+  capability?: SchedulerTaskCapabilityUpdate;
+};
+
+export type SchedulerTaskCapabilityUpdate = {
+  requiredTools: string[];
+  stateRefs: ScheduledJobStateRef[];
 };
 
 export type SchedulerJobMutationResult =
@@ -710,6 +718,7 @@ function updateScheduledJobSchedule(
     | "listScheduledJobsForPrincipal"
     | "upsertScheduledJob"
     | "upsertAgentJobCapability"
+    | "getAgentJobCapability"
   >,
   input: SchedulerUpdateJobScheduleInput,
   now: Date,
@@ -748,7 +757,7 @@ function updateScheduledJobSchedule(
     state: record.state,
     now,
   });
-  ensureScheduledJobCapability(store, job, now);
+  refreshScheduledJobCapability(store, job, now);
   return { ok: true, job };
 }
 
@@ -758,6 +767,7 @@ function updateScheduledJob(
     | "listScheduledJobsForPrincipal"
     | "upsertScheduledJob"
     | "upsertAgentJobCapability"
+    | "getAgentJobCapability"
   >,
   input: SchedulerUpdateJobInput,
   now: Date,
@@ -811,7 +821,7 @@ function updateScheduledJob(
     state: record.state,
     now,
   });
-  ensureScheduledJobCapability(store, job, now);
+  refreshScheduledJobCapability(store, job, now, input.capability);
   return { ok: true, job };
 }
 
@@ -821,6 +831,7 @@ function updateScheduledJobPrompt(
     | "listScheduledJobsForPrincipal"
     | "upsertScheduledJob"
     | "upsertAgentJobCapability"
+    | "getAgentJobCapability"
   >,
   input: SchedulerUpdateJobPromptInput,
   now: Date,
@@ -850,7 +861,7 @@ function updateScheduledJobPrompt(
     state: record.state,
     now,
   });
-  ensureScheduledJobCapability(store, job, now);
+  refreshScheduledJobCapability(store, job, now, input.capability);
   return { ok: true, job };
 }
 
@@ -860,6 +871,7 @@ function updateScheduledJobRuntime(
     | "listScheduledJobsForPrincipal"
     | "upsertScheduledJob"
     | "upsertAgentJobCapability"
+    | "getAgentJobCapability"
   >,
   input: SchedulerUpdateJobRuntimeInput,
   now: Date,
@@ -899,7 +911,7 @@ function updateScheduledJobRuntime(
     state: record.state,
     now,
   });
-  ensureScheduledJobCapability(store, job, now);
+  refreshScheduledJobCapability(store, job, now);
   return { ok: true, job };
 }
 
@@ -909,6 +921,7 @@ function updateScheduledJobDelivery(
     | "listScheduledJobsForPrincipal"
     | "upsertScheduledJob"
     | "upsertAgentJobCapability"
+    | "getAgentJobCapability"
     | "getConversationGrantRouteForSlackChannel"
   >,
   input: SchedulerUpdateJobDeliveryInput,
@@ -1010,7 +1023,7 @@ function updateScheduledJobDelivery(
     state: record.state,
     now,
   });
-  ensureScheduledJobCapability(store, job, now);
+  refreshScheduledJobCapability(store, job, now);
   return { ok: true, job, routeId: resolvedRouteId };
 }
 
@@ -1063,6 +1076,35 @@ function ensureScheduledJobCapability(
     capabilityProfile: "scheduled_job",
     stateRefs: [],
     visibilityPolicy: {},
+    now,
+  });
+}
+
+function refreshScheduledJobCapability(
+  store: Pick<
+    TokenStore,
+    "getAgentJobCapability" | "upsertAgentJobCapability"
+  >,
+  job: ScheduledJobRecord,
+  now: Date,
+  capability?: SchedulerTaskCapabilityUpdate,
+): void {
+  const existing = store.getAgentJobCapability(job.jobId);
+  store.upsertAgentJobCapability({
+    jobId: job.jobId,
+    workspaceId: job.workspaceId,
+    slackUserId: job.slackUserId,
+    requiredTools: [
+      ...new Set(
+        capability?.requiredTools ?? inferAllowedToolsForScheduledJob(job),
+      ),
+    ].sort(),
+    routeId: job.routeId,
+    policyHash: existing?.policyHash ?? null,
+    capabilityProfile: existing?.capabilityProfile ?? "scheduled_job",
+    runtimeType: job.runtimeType,
+    stateRefs: capability?.stateRefs ?? existing?.stateRefs ?? [],
+    visibilityPolicy: existing?.visibilityPolicy ?? {},
     now,
   });
 }
