@@ -1104,6 +1104,78 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("preserves explicit grants and durable state during schedule updates", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "Find current AI news and use doc-123 to deduplicate it.",
+      schedule: {
+        kind: "cron",
+        expression: "0 * * * *",
+        timezone: "UTC",
+      },
+      routeId: "convrt_news",
+      runtimeType: "burble-native",
+      now: new Date("2026-07-15T17:10:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [
+        "google_append_to_drive_text_file",
+        "google_get_drive_file",
+        "web_search",
+      ],
+      routeId: "convrt_news",
+      runtimeType: "burble-native",
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "document",
+          id: "doc-123",
+          purpose: "Track previously reported topics",
+        },
+      ],
+      now: new Date("2026-07-15T17:10:00.000Z"),
+    });
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-07-15T17:20:00.000Z"),
+    });
+
+    await scheduler.updateJobSchedule?.({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job-ai-news",
+      schedule: {
+        kind: "cron",
+        expression: "*/20 * * * *",
+        timezone: "UTC",
+      },
+    });
+
+    expect(store.getAgentJobCapability("job-ai-news")).toMatchObject({
+      requiredTools: [
+        "google_append_to_drive_text_file",
+        "google_get_drive_file",
+        "web_search",
+      ],
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "document",
+          id: "doc-123",
+          purpose: "Track previously reported topics",
+        },
+      ],
+    });
+
+    store.close();
+  });
+
   test("updates scheduled job prompt and refreshes inferred capabilities", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({

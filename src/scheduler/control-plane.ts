@@ -757,7 +757,9 @@ function updateScheduledJobSchedule(
     state: record.state,
     now,
   });
-  refreshScheduledJobCapability(store, job, now);
+  refreshScheduledJobCapability(store, job, now, undefined, {
+    preserveExistingRequiredTools: true,
+  });
   return { ok: true, job };
 }
 
@@ -821,7 +823,9 @@ function updateScheduledJob(
     state: record.state,
     now,
   });
-  refreshScheduledJobCapability(store, job, now, input.capability);
+  refreshScheduledJobCapability(store, job, now, input.capability, {
+    preserveExistingRequiredTools: input.prompt === undefined,
+  });
   return { ok: true, job };
 }
 
@@ -911,7 +915,9 @@ function updateScheduledJobRuntime(
     state: record.state,
     now,
   });
-  refreshScheduledJobCapability(store, job, now);
+  refreshScheduledJobCapability(store, job, now, undefined, {
+    preserveExistingRequiredTools: true,
+  });
   return { ok: true, job };
 }
 
@@ -1023,7 +1029,9 @@ function updateScheduledJobDelivery(
     state: record.state,
     now,
   });
-  refreshScheduledJobCapability(store, job, now);
+  refreshScheduledJobCapability(store, job, now, undefined, {
+    preserveExistingRequiredTools: true,
+  });
   return { ok: true, job, routeId: resolvedRouteId };
 }
 
@@ -1088,6 +1096,7 @@ function refreshScheduledJobCapability(
   job: ScheduledJobRecord,
   now: Date,
   capability?: SchedulerTaskCapabilityUpdate,
+  options: { preserveExistingRequiredTools?: boolean } = {},
 ): void {
   const existing = store.getAgentJobCapability(job.jobId);
   store.upsertAgentJobCapability({
@@ -1096,7 +1105,11 @@ function refreshScheduledJobCapability(
     slackUserId: job.slackUserId,
     requiredTools: [
       ...new Set(
-        capability?.requiredTools ?? inferAllowedToolsForScheduledJob(job),
+        capability?.requiredTools ??
+          (options.preserveExistingRequiredTools
+            ? existing?.requiredTools
+            : undefined) ??
+          inferAllowedToolsForScheduledJob(job),
       ),
     ].sort(),
     routeId: job.routeId,
