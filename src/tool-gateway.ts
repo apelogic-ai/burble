@@ -1570,6 +1570,7 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.appendDriveTextFile":
     case "google.appendToDriveTextFile": {
       if (!isAppendGoogleDriveTextFileInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -2091,6 +2092,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "google.createGoogleDoc" ||
     toolName === "google.createDocsDocument" ||
     toolName === "google.updateDriveTextFile" ||
+    toolName === "google.appendDriveTextFile" ||
     toolName === "google.appendToDriveTextFile" ||
     toolName === "google.createDriveFolder" ||
     toolName === "google.moveDriveFile" ||

@@ -842,9 +842,9 @@ describe("handleToolGatewayRequest", () => {
         mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
       },
       createStore(null, runtime, [], null, [], { found: capability }),
-      "google.appendToDriveTextFile",
+      "google.appendDriveTextFile",
       request(
-        "google.appendToDriveTextFile",
+        "google.appendDriveTextFile",
         {
           scheduledJob: { jobId: "ai-news-hourly" },
           input: {
