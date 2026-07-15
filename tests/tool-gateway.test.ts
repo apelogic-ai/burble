@@ -769,7 +769,7 @@ describe("handleToolGatewayRequest", () => {
     expect(calls).toHaveLength(1);
   });
 
-  test("uses the shared MCP-GW Google adapter for Drive file reads through the tool gateway", async () => {
+  test("uses the shared MCP-GW Google adapter for Drive metadata reads through the tool gateway", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity"
     });
@@ -789,7 +789,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             fileId: "sheet-123",
-            mimeType: "application/vnd.google-apps.spreadsheet"
+            includeContent: false
           }
         },
         "runtime-token-u123",
@@ -801,12 +801,13 @@ describe("handleToolGatewayRequest", () => {
         callMcpGwTool: async (_clientConfig, input) => {
           calls.push(input);
           expect(input).toEqual({
-            name: "gws_drive_files_export",
+            name: "gws_drive_files_get",
             arguments: {
               params: {
                 fileId: "sheet-123",
-                mimeType: "text/csv"
-              }
+                fields: "id,name,mimeType,webViewLink,modifiedTime"
+              },
+              format: "json"
             }
           });
           return {
@@ -822,7 +823,7 @@ describe("handleToolGatewayRequest", () => {
       classification: "user_private",
       content: {
         mcpGw: true,
-        toolName: "gws_drive_files_export",
+        toolName: "gws_drive_files_get",
         burbleToolName: "google_get_drive_file"
       }
     });
