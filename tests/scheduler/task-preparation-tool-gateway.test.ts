@@ -45,7 +45,7 @@ describe("tool-gateway scheduled task preparation", () => {
     });
 
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.toolName).toBe("google_docs_create_document");
+    expect(requests[0]?.toolName).toBe("google.docsCreateDocument");
     expect(requests[0]?.request.headers.get("authorization")).toBe(
       "Bearer runtime-token",
     );

@@ -32,9 +32,9 @@ export function createToolGatewayScheduledTaskPreparationExecutor(input: {
     const response = await handleRequest(
       input.config,
       input.store,
-      spec.name,
+      spec.alias,
       new Request(
-        `http://burble.internal/internal/tools/${encodeURIComponent(spec.name)}/execute`,
+        `http://burble.internal/internal/tools/${encodeURIComponent(spec.alias)}/execute`,
         {
           method: "POST",
           headers: {
