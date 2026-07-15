@@ -121,6 +121,8 @@ import { defaultResolveSlackChannelIdByName } from "./tool-gateway";
 import { createSchedulerRunExecutor } from "./scheduler/run-executor";
 import { createScheduledRunAuditMaintenanceLoop } from "./scheduler/run-audit-maintenance";
 import { createScheduledRuntimeAdmissionValidator } from "./scheduler/runtime-admission";
+import { createToolGatewayScheduledTaskPreparationExecutor } from "./scheduler/task-preparation-tool-gateway";
+import type { ScheduledTaskPreparationToolExecutor } from "./scheduler/task-preparation";
 import { createSchedulerTimer } from "./scheduler/timer";
 import { createTaskWorkflowMaintenanceLoop } from "./workflow/task-workflow-maintenance";
 import { createTaskWorkflowOracleLoop } from "./workflow/task-workflow-oracle";
@@ -207,6 +209,7 @@ export type SlackRuntimeOptions = {
   sandboxModelProviderUrls?: string[];
   sandboxFetch?: SandboxRuntimeFetch;
   schedulerIntentResolver?: SchedulerIntentResolver;
+  scheduledTaskPreparationExecutor?: ScheduledTaskPreparationToolExecutor;
   mcpIdentityIssuer?: McpIdentityIssuer;
   mcpGwGoogleAuthService?: McpGwGoogleAuthService;
   testbed?: boolean;
@@ -584,6 +587,19 @@ export function createSlackRuntime(
     runtimeJwtIssuer,
     options
   );
+  const scheduledTaskPreparationExecutor =
+    options.scheduledTaskPreparationExecutor ??
+    (runtimeFactory
+      ? createToolGatewayScheduledTaskPreparationExecutor({
+          config,
+          store,
+          runtimeFactory,
+          getSlackEmail,
+          ...(options.mcpIdentityIssuer
+            ? { mcpIdentityIssuer: options.mcpIdentityIssuer }
+            : {})
+        })
+      : undefined);
   const schedulerControl = createSchedulerControlPlane(store, {
     workflowAuthority: config.taskWorkflowAuthority,
     workflowShadowStore,
@@ -1280,6 +1296,9 @@ export function createSlackRuntime(
           },
           schedulerControl,
           schedulerIntentResolver,
+          ...(scheduledTaskPreparationExecutor
+            ? { scheduledTaskPreparationExecutor }
+            : {}),
           ...(schedulerRunExecutor
             ? {
                 onSchedulerRunQueued: (run) =>
@@ -1483,6 +1502,9 @@ export function createSlackRuntime(
           },
           schedulerControl,
           schedulerIntentResolver,
+          ...(scheduledTaskPreparationExecutor
+            ? { scheduledTaskPreparationExecutor }
+            : {}),
           ...(schedulerRunExecutor
             ? {
                 onSchedulerRunQueued: (run) =>
