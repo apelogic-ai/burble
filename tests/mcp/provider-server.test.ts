@@ -1116,9 +1116,12 @@ describe("handleProviderMcpRequest", () => {
       {
         mcpIdentityIssuer: identityIssuer,
         getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "github_github_search_pull_requests" }
+        ],
         callMcpGwTool: async (clientConfig, input) => {
           expect(input).toEqual({
-            name: "github_search_pull_requests",
+            name: "github_github_search_pull_requests",
             arguments: { query: "org:apelogic-ai is:pr is:open" }
           });
           expect(

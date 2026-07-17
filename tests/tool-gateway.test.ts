@@ -721,6 +721,9 @@ describe("handleToolGatewayRequest", () => {
           expect(slackUserId).toBe("U123");
           return "person@example.com";
         },
+        listMcpGwTools: async () => [
+          { name: "github_github_search_pull_requests" }
+        ],
         callMcpGwTool: async (clientConfig, input) => {
           calls.push({ clientConfig, input });
           expect(
@@ -735,7 +738,7 @@ describe("handleToolGatewayRequest", () => {
             jti: "github-assertion-1"
           });
           expect(input).toEqual({
-            name: "github_search_pull_requests",
+            name: "github_github_search_pull_requests",
             arguments: { query: "org:apelogic-ai is:pr is:open" }
           });
           return {
@@ -774,6 +777,10 @@ describe("handleToolGatewayRequest", () => {
     const deps = {
       mcpIdentityIssuer: issuer,
       getSlackEmail: async () => "person@example.com",
+      listMcpGwTools: async () => [
+        { name: "github_list_commits" },
+        { name: "google_drive_files_list" }
+      ],
       callMcpGwTool: async (_clientConfig: unknown, input: unknown) => {
         calls.push(input);
         return {

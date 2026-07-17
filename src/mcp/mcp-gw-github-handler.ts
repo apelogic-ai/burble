@@ -12,6 +12,10 @@ import {
   listMcpGwTools,
   McpGwUnauthorizedError,
 } from "./mcp-gw-client";
+import {
+  isFederatedGitHubToolName,
+  resolveMcpGwGitHubToolName,
+} from "./mcp-gw-github-tools";
 import type { ProviderMcpDeps } from "./provider-context";
 import { resolveMcpUserAssertion } from "./user-assertion";
 
@@ -58,11 +62,11 @@ export async function handleMcpGwGitHubToolRequest(input: {
       url: input.config.mcpGwMcpUrl as string,
       bearerToken: assertion.token,
     };
+    const getAdvertisedTools = () =>
+      (input.deps.listMcpGwTools ?? listMcpGwTools)(clientConfig);
 
     if (input.toolName === "github_list_mcp_tools") {
-      const tools = await (input.deps.listMcpGwTools ?? listMcpGwTools)(
-        clientConfig,
-      );
+      const tools = await getAdvertisedTools();
       return {
         classification: "user_private",
         content: tools
@@ -75,12 +79,16 @@ export async function handleMcpGwGitHubToolRequest(input: {
     if (input.toolName === "github_call_mcp_tool") {
       const args = recordInput(input.args);
       const name = stringInput(args, "name");
-      if (!isFederatedGitHubToolName(name)) {
+      const advertisedTools = await getAdvertisedTools();
+      if (
+        !isFederatedGitHubToolName(name) ||
+        !advertisedTools.some((tool) => tool.name === name)
+      ) {
         return {
           classification: "user_private",
           content: {
             error: "github_mcp_tool_not_allowed",
-            message: `MCP-GW tool \`${name}\` is outside the GitHub namespace.`,
+            message: `MCP-GW tool \`${name}\` is not an advertised GitHub tool.`,
           },
         };
       }
@@ -109,10 +117,16 @@ export async function handleMcpGwGitHubToolRequest(input: {
         },
       };
     }
+    const advertisedToolNames = (await getAdvertisedTools()).map(
+      (tool) => tool.name,
+    );
     const result = await executeMcpGwGitHubToolPlan(plan, (call) =>
       (input.deps.callMcpGwTool ?? callMcpGwTool)(
         clientConfig,
-        call,
+        {
+          ...call,
+          name: resolveMcpGwGitHubToolName(call.name, advertisedToolNames),
+        },
       ),
     );
     return mcpGwGitHubToolResult(plan, result);
@@ -140,14 +154,6 @@ export async function handleMcpGwGitHubToolRequest(input: {
       },
     };
   }
-}
-
-function isFederatedGitHubToolName(name: string): boolean {
-  return (
-    /^github_[a-z0-9_]+$/.test(name) &&
-    name !== "github_list_mcp_tools" &&
-    name !== "github_call_mcp_tool"
-  );
 }
 
 function sanitizeMcpGwTool(tool: {
