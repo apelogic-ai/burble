@@ -37,8 +37,14 @@ export function registerGitHubMcpTools(input: {
     if (!isProviderMcpToolEnabled(input.policy, spec.name)) {
       continue;
     }
+    const isMcpGwFacade =
+      spec.implementation === "listMcpTools" ||
+      spec.implementation === "callMcpTool";
+    if (isMcpGwFacade && !input.config.githubViaMcpGw) {
+      continue;
+    }
     const handler = handlers[spec.implementation];
-    if (!handler) {
+    if (!handler && !isMcpGwFacade) {
       throw new Error(`Missing GitHub MCP handler for ${spec.implementation}`);
     }
 
@@ -63,7 +69,7 @@ export function registerGitHubMcpTools(input: {
         }
         return mcpToolResult(
           await withConnection(input.store, input.runtime, "github", (connection) =>
-            handler(connection, args as GitHubToolArgs)
+            (handler as GitHubMcpHandler)(connection, args as GitHubToolArgs)
           )
         );
       }

@@ -760,6 +760,88 @@ describe("handleToolGatewayRequest", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test("calls arbitrary federated GitHub tools but rejects other MCP-GW namespaces", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const githubConfig = {
+      ...config,
+      githubViaMcpGw: true,
+      mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+      mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+    };
+    const calls: unknown[] = [];
+    const deps = {
+      mcpIdentityIssuer: issuer,
+      getSlackEmail: async () => "person@example.com",
+      callMcpGwTool: async (_clientConfig: unknown, input: unknown) => {
+        calls.push(input);
+        return {
+          status: "ok" as const,
+          result: { content: [{ type: "text", text: "commit-123" }] }
+        };
+      }
+    };
+
+    const response = await handleToolGatewayRequest(
+      githubConfig,
+      createStore(null, runtime),
+      "github.callMcpTool",
+      request(
+        "github.callMcpTool",
+        {
+          input: {
+            name: "github_list_commits",
+            arguments: { owner: "NVIDIA", repo: "OpenShell" }
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      deps
+    );
+
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        name: "github_list_commits",
+        arguments: { owner: "NVIDIA", repo: "OpenShell" }
+      }
+    ]);
+    await expect(response.json()).resolves.toMatchObject({
+      content: {
+        mcpGw: true,
+        toolName: "github_list_commits",
+        burbleToolName: "github_call_mcp_tool"
+      }
+    });
+
+    const rejected = await handleToolGatewayRequest(
+      githubConfig,
+      createStore(null, runtime),
+      "github.callMcpTool",
+      request(
+        "github.callMcpTool",
+        {
+          input: {
+            name: "google_drive_files_list",
+            arguments: {}
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      deps
+    );
+
+    await expect(rejected.json()).resolves.toMatchObject({
+      content: {
+        error: "github_mcp_tool_not_allowed"
+      }
+    });
+    expect(calls).toHaveLength(1);
+  });
+
   test("routes runtime Google tools through MCP-GW without a Burble Google connection when enabled", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity",

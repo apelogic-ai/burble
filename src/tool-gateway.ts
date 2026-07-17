@@ -111,6 +111,7 @@ import {
 } from "./mcp/upstream-http-client";
 import {
   callMcpGwTool,
+  listMcpGwTools,
   McpGwUnauthorizedError
 } from "./mcp/mcp-gw-client";
 import {
@@ -205,6 +206,7 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
     mcpIdentityIssuer?: McpIdentityIssuer | null;
     getSlackEmail?: (slackUserId: string) => Promise<string>;
     callMcpGwTool?: typeof callMcpGwTool;
+    listMcpGwTools?: typeof listMcpGwTools;
     observability?: ObservabilitySink;
   };
 

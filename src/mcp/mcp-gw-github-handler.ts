@@ -5,9 +5,11 @@ import {
   adaptMcpGwGitHubToolCall,
   executeMcpGwGitHubToolPlan,
   mcpGwGitHubToolResult,
+  type McpGwGitHubToolPlan,
 } from "./mcp-gw-github-adapter";
 import {
   callMcpGwTool,
+  listMcpGwTools,
   McpGwUnauthorizedError,
 } from "./mcp-gw-client";
 import type { ProviderMcpDeps } from "./provider-context";
@@ -20,17 +22,6 @@ export async function handleMcpGwGitHubToolRequest(input: {
   toolName: string;
   args: unknown;
 }): Promise<ToolResult<unknown>> {
-  const plan = adaptMcpGwGitHubToolCall(input.toolName, input.args);
-  if (!plan.ok) {
-    return {
-      classification: "user_private",
-      content: {
-        error: "mcp_gw_tool_not_adapted",
-        burbleToolName: plan.burbleToolName,
-        message: plan.message,
-      },
-    };
-  }
   if (
     !input.config.mcpGwMcpUrl ||
     !input.config.mcpGwAudience ||
@@ -63,12 +54,64 @@ export async function handleMcpGwGitHubToolRequest(input: {
       issuer: input.deps.mcpIdentityIssuer,
       getSlackEmail: input.deps.getSlackEmail,
     });
+    const clientConfig = {
+      url: input.config.mcpGwMcpUrl as string,
+      bearerToken: assertion.token,
+    };
+
+    if (input.toolName === "github_list_mcp_tools") {
+      const tools = await (input.deps.listMcpGwTools ?? listMcpGwTools)(
+        clientConfig,
+      );
+      return {
+        classification: "user_private",
+        content: tools
+          .filter((tool) => isFederatedGitHubToolName(tool.name))
+          .slice(0, 100)
+          .map(sanitizeMcpGwTool),
+      };
+    }
+
+    if (input.toolName === "github_call_mcp_tool") {
+      const args = recordInput(input.args);
+      const name = stringInput(args, "name");
+      if (!isFederatedGitHubToolName(name)) {
+        return {
+          classification: "user_private",
+          content: {
+            error: "github_mcp_tool_not_allowed",
+            message: `MCP-GW tool \`${name}\` is outside the GitHub namespace.`,
+          },
+        };
+      }
+      const toolArguments = optionalRecordInput(args, "arguments");
+      const result = await (input.deps.callMcpGwTool ?? callMcpGwTool)(
+        clientConfig,
+        { name, arguments: toolArguments },
+      );
+      const dynamicPlan: McpGwGitHubToolPlan = {
+        ok: true,
+        kind: "call",
+        burbleToolName: input.toolName,
+        call: { name, arguments: toolArguments },
+      };
+      return mcpGwGitHubToolResult(dynamicPlan, result);
+    }
+
+    const plan = adaptMcpGwGitHubToolCall(input.toolName, input.args);
+    if (!plan.ok) {
+      return {
+        classification: "user_private",
+        content: {
+          error: "mcp_gw_tool_not_adapted",
+          burbleToolName: plan.burbleToolName,
+          message: plan.message,
+        },
+      };
+    }
     const result = await executeMcpGwGitHubToolPlan(plan, (call) =>
       (input.deps.callMcpGwTool ?? callMcpGwTool)(
-        {
-          url: input.config.mcpGwMcpUrl as string,
-          bearerToken: assertion.token,
-        },
+        clientConfig,
         call,
       ),
     );
@@ -97,4 +140,55 @@ export async function handleMcpGwGitHubToolRequest(input: {
       },
     };
   }
+}
+
+function isFederatedGitHubToolName(name: string): boolean {
+  return (
+    /^github_[a-z0-9_]+$/.test(name) &&
+    name !== "github_list_mcp_tools" &&
+    name !== "github_call_mcp_tool"
+  );
+}
+
+function sanitizeMcpGwTool(tool: {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema?: unknown;
+}) {
+  return {
+    name: tool.name,
+    ...(tool.title ? { title: tool.title } : {}),
+    ...(tool.description ? { description: tool.description } : {}),
+    ...(tool.inputSchema !== undefined
+      ? { inputSchema: boundedJson(tool.inputSchema, 12_000) }
+      : {}),
+  };
+}
+
+function boundedJson(value: unknown, maxLength: number): unknown {
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized.length <= maxLength ? JSON.parse(serialized) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function recordInput(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function stringInput(input: Record<string, unknown>, key: string): string {
+  const value = input[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function optionalRecordInput(
+  input: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> {
+  return recordInput(input[key]);
 }
