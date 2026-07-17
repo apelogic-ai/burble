@@ -1070,6 +1070,91 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("routes GitHub provider MCP calls through MCP-GW without a local token", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const identityIssuer = createMcpIdentityIssuer({
+      issuer: config.mcpIdentityIssuer
+    });
+    const mcpGwConfig: Config = {
+      ...config,
+      githubViaMcpGw: true,
+      mcpGwAudience: "https://mcp-gw.example/mcp",
+      mcpGwMcpUrl: "https://mcp-gw.example/mcp"
+    };
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-native",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/runtime.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      mcpGwConfig,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "github_search_issues",
+            arguments: { query: "org:apelogic-ai is:pr is:open" }
+          }
+        },
+        token
+      ),
+      {
+        mcpIdentityIssuer: identityIssuer,
+        getSlackEmail: async () => "person@example.com",
+        callMcpGwTool: async (clientConfig, input) => {
+          expect(input).toEqual({
+            name: "github_search_pull_requests",
+            arguments: { query: "org:apelogic-ai is:pr is:open" }
+          });
+          expect(
+            identityIssuer.verifyUserAssertion({
+              token: clientConfig.bearerToken,
+              audience: "https://mcp-gw.example/mcp"
+            })
+          ).toMatchObject({
+            sub: "T123:U123",
+            email: "person@example.com"
+          });
+          return {
+            status: "ok",
+            result: {
+              content: [{ type: "text", text: "[]" }]
+            }
+          };
+        }
+      },
+      "github"
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toMatchObject({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "github_search_pull_requests",
+        burbleToolName: "github_search_issues"
+      }
+    });
+    store.close();
+  });
+
   test("routes Google Drive metadata reads through MCP-GW from provider MCP", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const identityIssuer = createMcpIdentityIssuer({

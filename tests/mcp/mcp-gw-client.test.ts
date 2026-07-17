@@ -275,6 +275,7 @@ describe("MCP-GW client", () => {
           message: "Google Workspace reauthorization required",
           data: {
             code: "reauth_required",
+            provider: "google",
             connectUrl: "https://18.210.100.44.nip.io/connect/google"
           }
         }
@@ -291,8 +292,9 @@ describe("MCP-GW client", () => {
         { name: "google_search_drive_files", arguments: { query: "qbr" } }
       )
     ).resolves.toEqual({
-      status: "needs_google_connect",
+      status: "needs_connect",
       message: "Google Workspace reauthorization required",
+      provider: "google",
       connectUrl: "https://18.210.100.44.nip.io/connect/google"
     });
   });
@@ -338,7 +340,7 @@ describe("MCP-GW client", () => {
         { name: "google_search_drive_files", arguments: { query: "qbr" } }
       )
     ).resolves.toEqual({
-      status: "needs_google_connect",
+      status: "needs_connect",
       message: "Google Workspace reauthorization required"
     });
   });
@@ -392,7 +394,7 @@ describe("MCP-GW client", () => {
         }
       )
     ).resolves.toEqual({
-      status: "needs_google_connect",
+      status: "needs_connect",
       message: "Google account must be reconnected"
     });
   });

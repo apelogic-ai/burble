@@ -158,6 +158,51 @@ describe("managed runtime Burble Native integration", () => {
     });
   });
 
+  test("advertises tokenless MCP-GW GitHub availability to managed runtimes", async () => {
+    const runtimeHandle: RuntimeHandle = {
+      id: "rt_native",
+      engine: "burble-native",
+      endpointUrl: "http://burble-native-runtime:8080",
+      authToken: "runtime-token-u123",
+      status: "ready",
+      statePath: "/data/runtimes/rt_native/state",
+      configPath: "/data/runtimes/rt_native/config/burble-native.json",
+      workspacePath: "/data/runtimes/rt_native/workspace",
+      manifest: runtimeManifest("rt_native"),
+    };
+    let postedBody: Record<string, unknown> | null = null;
+    const runner = createManagedRuntimeAgentRunner({
+      config: { ...baseConfig, githubViaMcpGw: true },
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return runtimeHandle;
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {},
+      },
+      fetch: async (_url, init) => {
+        postedBody = JSON.parse(String(init?.body));
+        return Response.json({
+          response: { classification: "public", text: "ok" },
+        });
+      },
+    });
+
+    await collectAgentRun(runner, {
+      principal,
+      text: "list my assigned issues",
+      connections: { github: null },
+    });
+
+    expect(postedBody).toMatchObject({
+      input: {
+        connections: {
+          github: { connected: true },
+        },
+      },
+    });
+  });
+
   test("executes a provider tool through the real app tool gateway auth path", async () => {
     const store = createTokenStore(":memory:");
     const runtimeToken = "runtime-token-u123";

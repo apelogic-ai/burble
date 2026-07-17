@@ -20,8 +20,9 @@ export type McpGwToolCallResult =
       result: UpstreamMcpToolResult;
     }
   | {
-      status: "needs_google_connect";
+      status: "needs_connect";
       message: string;
+      provider?: string;
       connectUrl?: string;
     };
 
@@ -64,8 +65,9 @@ export async function callMcpGwTool(
   } catch (error) {
     if (error instanceof UpstreamMcpJsonRpcError && isReauthRequired(error)) {
       return {
-        status: "needs_google_connect",
+        status: "needs_connect",
         message: cleanUpstreamMcpErrorMessage(error.message),
+        ...readReauthProvider(error.data),
         ...readConnectUrl(error.data, config.url)
       };
     }
@@ -118,15 +120,27 @@ function readToolResultReauth(
       const message =
         typeof parsed.error === "string" && parsed.error.trim()
           ? parsed.error.trim()
-          : "Google Workspace reauthorization required";
+          : "Provider reauthorization required";
       return {
-        status: "needs_google_connect",
+        status: "needs_connect",
         message,
+        ...readReauthProvider(parsed),
         ...readConnectUrl(parsed, mcpGwUrl)
       };
     }
   }
   return null;
+}
+
+function readReauthProvider(data: unknown): { provider?: string } {
+  if (!data || typeof data !== "object") {
+    return {};
+  }
+  const record = data as Record<string, unknown>;
+  const value = record.provider ?? record.service;
+  return typeof value === "string" && value.trim()
+    ? { provider: value.trim() }
+    : {};
 }
 
 function parseToolResultTextJson(item: unknown): Record<string, unknown> | null {

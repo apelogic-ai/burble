@@ -119,6 +119,7 @@ import {
   canAdaptMcpGwGoogleToolCall,
   mcpGwGoogleToolResult
 } from "./mcp/mcp-gw-google-adapter";
+import { handleMcpGwGitHubToolRequest } from "./mcp/mcp-gw-github-handler";
 import { resolveMcpUserAssertion } from "./mcp/user-assertion";
 import type { McpIdentityIssuer } from "./mcp-identity";
 import { searchSlackMessages, searchSlackUsers } from "./providers/slack/client";
@@ -988,6 +989,22 @@ export async function handleToolGatewayRequest(
   if (shouldRouteGoogleViaMcpGw(config, auth, providerToolSpec, body.input)) {
     return respondWithAudit(
       await handleMcpGwGoogleToolRequest(config, auth, toolName, body, deps)
+    );
+  }
+
+  if (
+    config.githubViaMcpGw &&
+    auth.kind === "runtime" &&
+    providerToolSpec?.provider === "github"
+  ) {
+    return respondWithAudit(
+      await handleMcpGwGitHubToolRequest({
+        config,
+        runtime: auth.runtime,
+        deps,
+        toolName: providerToolSpec.name,
+        args: body.input
+      })
     );
   }
 

@@ -1785,6 +1785,10 @@ function sanitizeAgentInput(
             email: github.email,
             providerLogin: github.providerLogin,
           }
+        : options?.config?.githubViaMcpGw
+          ? {
+              connected: true,
+            }
         : {
             connected: false,
           },

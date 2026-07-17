@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Config } from "../config";
 import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "../db";
 import { githubProviderToolSpecs } from "../providers/github/tool-specs";
 import { providerToolInputSchema } from "../providers/tool-specs";
@@ -12,6 +13,7 @@ import {
   isProviderMcpToolEnabled,
   type ProviderMcpToolPolicy
 } from "./provider-policy";
+import { handleMcpGwGitHubToolRequest } from "./mcp-gw-github-handler";
 
 type GitHubTools = ReturnType<typeof createGitHubTools>;
 type GitHubToolArgs = Record<string, unknown>;
@@ -22,6 +24,7 @@ type GitHubMcpHandler = (
 
 export function registerGitHubMcpTools(input: {
   server: McpServer;
+  config: Config;
   store: TokenStore;
   runtime: AgentRuntimeRecord;
   deps: Parameters<typeof createGitHubTools>[0] & ProviderMcpDeps;
@@ -46,12 +49,24 @@ export function registerGitHubMcpTools(input: {
         description: spec.description,
         inputSchema: providerToolInputSchema(spec)
       },
-      async (args) =>
-        mcpToolResult(
+      async (args) => {
+        if (input.config.githubViaMcpGw) {
+          return mcpToolResult(
+            await handleMcpGwGitHubToolRequest({
+              config: input.config,
+              runtime: input.runtime,
+              deps: input.deps,
+              toolName: spec.name,
+              args,
+            }),
+          );
+        }
+        return mcpToolResult(
           await withConnection(input.store, input.runtime, "github", (connection) =>
             handler(connection, args as GitHubToolArgs)
           )
-        )
+        );
+      }
     );
   }
 }

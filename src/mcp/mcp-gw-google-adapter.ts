@@ -180,7 +180,7 @@ export function mcpGwGoogleToolResult(
   tool: McpGwGoogleAdaptedToolCall,
   result: McpGwToolCallResult
 ): ToolResult<unknown> {
-  if (result.status === "needs_google_connect") {
+  if (result.status === "needs_connect") {
     return {
       classification: "user_private",
       content: {
