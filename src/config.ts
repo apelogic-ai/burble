@@ -523,8 +523,12 @@ export function readConfig(env: Env): Config {
     slackRedirectUri:
       optionalUrlEnv(env, "SLACK_REDIRECT_URI") ??
       `${baseUrl}/oauth/slack/callback`,
-    githubClientId: requiredEnv(env, "GITHUB_CLIENT_ID"),
-    githubClientSecret: requiredEnv(env, "GITHUB_CLIENT_SECRET"),
+    githubClientId: githubViaMcpGw
+      ? (optionalSecretEnv(env, "GITHUB_CLIENT_ID") ?? "")
+      : requiredEnv(env, "GITHUB_CLIENT_ID"),
+    githubClientSecret: githubViaMcpGw
+      ? (optionalSecretEnv(env, "GITHUB_CLIENT_SECRET") ?? "")
+      : requiredEnv(env, "GITHUB_CLIENT_SECRET"),
     jiraClientId: optionalSecretEnv(env, "JIRA_CLIENT_ID"),
     jiraClientSecret: optionalSecretEnv(env, "JIRA_CLIENT_SECRET"),
     googleClientId: optionalSecretEnv(env, "GOOGLE_CLIENT_ID"),

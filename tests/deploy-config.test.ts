@@ -142,6 +142,12 @@ describe("dev deploy config", () => {
       "ATLASSIAN_MCP_URL",
       "RUNTIME_JWT_ISSUER",
       "RUNTIME_JWT_PRIVATE_KEY_PATH",
+      "MCP_IDENTITY_ISSUER",
+      "MCP_IDENTITY_PRIVATE_KEY_PATH",
+      "MCP_GW_AUDIENCE",
+      "MCP_GW_MCP_URL",
+      "GOOGLE_VIA_MCP_GW",
+      "GITHUB_VIA_MCP_GW",
       "OBSERVABILITY_JSONL_PATH",
       "OBSERVABILITY_INCLUDE_CONTENT",
       "TASK_WORKFLOW_SHADOW_ENABLED",
@@ -159,8 +165,8 @@ describe("dev deploy config", () => {
       "OLLAMA_API_KEY",
       "OLLAMA_BASE_URL",
       "OLLAMA_OPENAI_BASE_URL",
-      "GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required",
-      "GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET is required",
+      "GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}",
+      "GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}",
       "JIRA_CLIENT_ID",
       "JIRA_CLIENT_SECRET",
       "BASE_URL",
@@ -462,6 +468,12 @@ describe("dev deploy config", () => {
       "ATLASSIAN_MCP_URL",
       "RUNTIME_JWT_ISSUER",
       "RUNTIME_JWT_PRIVATE_KEY_PATH",
+      "MCP_IDENTITY_ISSUER",
+      "MCP_IDENTITY_PRIVATE_KEY_PATH",
+      "MCP_GW_AUDIENCE",
+      "MCP_GW_MCP_URL",
+      "GOOGLE_VIA_MCP_GW",
+      "GITHUB_VIA_MCP_GW",
       "OPENCLAW_CONFIG_PATCH_HOST_PATH"
     ]) {
       expect(ansibleEnvTemplate).toContain(name);
@@ -477,6 +489,8 @@ describe("dev deploy config", () => {
       "scheduled_run_audit_retention_days: 90",
       "scheduled_run_audit_prune_interval_ms: 86400000",
       "openclaw_model_api: openai-responses",
+      "google_via_mcp_gw: false",
+      "github_via_mcp_gw: false",
     ]) {
       expect(ansibleGroupVars).toContain(name);
     }

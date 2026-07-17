@@ -91,6 +91,24 @@ describe("readConfig", () => {
     );
   });
 
+  test("does not require Burble GitHub OAuth credentials on the MCP-GW path", () => {
+    const { GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, ...env } = validEnv;
+
+    expect(
+      readConfig({
+        ...env,
+        GITHUB_VIA_MCP_GW: "true",
+        MCP_IDENTITY_PRIVATE_KEY_PATH: "/data/mcp-identity-private.pem",
+        MCP_GW_AUDIENCE: "https://mcp-gw.example/mcp",
+        MCP_GW_MCP_URL: "https://mcp-gw.example/mcp"
+      })
+    ).toMatchObject({
+      githubClientId: "",
+      githubClientSecret: "",
+      githubViaMcpGw: true
+    });
+  });
+
   test("reads optional Slack OAuth settings", () => {
     const config = readConfig({
       ...validEnv,

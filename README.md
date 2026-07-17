@@ -36,6 +36,11 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 {BASE_URL}/oauth/hubspot/callback
 ```
 
+When `GITHUB_VIA_MCP_GW=true`, MCP-GW owns GitHub OAuth instead. Burble does
+not need `GITHUB_CLIENT_ID` or `GITHUB_CLIENT_SECRET`; `/auth github` starts
+the authenticated MCP-GW flow and returns to
+`{BASE_URL}/oauth/github/connected`.
+
 ## Slack Commands
 
 - `@Burble connect github` starts a per-user GitHub OAuth flow from a mention.
