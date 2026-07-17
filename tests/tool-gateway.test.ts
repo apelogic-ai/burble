@@ -19,6 +19,7 @@ import {
   type ProviderCassette
 } from "./helpers/provider-cassettes";
 import { createMcpIdentityIssuer } from "../src/mcp-identity";
+import { McpGwProviderConnectionRequiredError } from "../src/mcp/mcp-gw-client";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -761,6 +762,44 @@ describe("handleToolGatewayRequest", () => {
       }
     });
     expect(calls).toHaveLength(1);
+  });
+
+  test("returns GitHub connect guidance when MCP-GW has no user credential", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "github.searchIssues",
+      request(
+        "github.searchIssues",
+        { input: { query: "org:apelogic-ai is:pr is:open" } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => {
+          throw new McpGwProviderConnectionRequiredError("github");
+        }
+      }
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        error: "github_not_connected",
+        authCommand: "/auth github"
+      }
+    });
   });
 
   test("calls arbitrary federated GitHub tools but rejects other MCP-GW namespaces", async () => {

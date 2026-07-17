@@ -41,6 +41,16 @@ export class McpGwUnauthorizedError extends Error {
   }
 }
 
+export class McpGwProviderConnectionRequiredError extends Error {
+  readonly name = "McpGwProviderConnectionRequiredError";
+  readonly provider: "github";
+
+  constructor(provider: "github") {
+    super("GitHub account is not connected");
+    this.provider = provider;
+  }
+}
+
 export async function listMcpGwTools(
   config: McpGwClientConfig
 ): Promise<UpstreamMcpTool[]> {
@@ -88,11 +98,35 @@ function toUpstreamConfig(config: McpGwClientConfig) {
 
 function mapMcpGwError(error: unknown): never {
   if (error instanceof UpstreamMcpHttpError && error.status === 401) {
+    const provider = readMissingProviderConnection(error.detail);
+    if (provider) {
+      throw new McpGwProviderConnectionRequiredError(provider);
+    }
     throw new McpGwUnauthorizedError({
       wwwAuthenticate: error.wwwAuthenticate
     });
   }
   throw error;
+}
+
+function readMissingProviderConnection(detail: string): "github" | null {
+  const raw = detail.replace(/^:\s*/, "");
+  try {
+    const payload = JSON.parse(raw) as unknown;
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    const rpcError = (payload as Record<string, unknown>).error;
+    if (!rpcError || typeof rpcError !== "object") {
+      return null;
+    }
+    const message = (rpcError as Record<string, unknown>).message;
+    return message === "Unauthorized: GitHub account is not connected"
+      ? "github"
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function isReauthRequired(error: UpstreamMcpJsonRpcError): boolean {

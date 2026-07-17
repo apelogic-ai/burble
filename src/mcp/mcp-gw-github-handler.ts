@@ -10,6 +10,7 @@ import {
 import {
   callMcpGwTool,
   listMcpGwTools,
+  McpGwProviderConnectionRequiredError,
   McpGwUnauthorizedError,
 } from "./mcp-gw-client";
 import {
@@ -131,6 +132,20 @@ export async function handleMcpGwGitHubToolRequest(input: {
     );
     return mcpGwGitHubToolResult(plan, result);
   } catch (error) {
+    if (
+      error instanceof McpGwProviderConnectionRequiredError &&
+      error.provider === "github"
+    ) {
+      return {
+        classification: "user_private",
+        content: {
+          error: "github_not_connected",
+          message:
+            "GitHub account is not connected. Run `/auth github` to connect or reconnect GitHub.",
+          authCommand: "/auth github",
+        },
+      };
+    }
     if (error instanceof McpGwUnauthorizedError) {
       return {
         classification: "user_private",

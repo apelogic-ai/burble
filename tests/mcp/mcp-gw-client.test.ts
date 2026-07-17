@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  McpGwProviderConnectionRequiredError,
   McpGwUnauthorizedError,
   callMcpGwTool,
   listMcpGwTools
@@ -248,6 +249,33 @@ describe("MCP-GW client", () => {
       protectedResourceMetadataUrl:
         "https://18.210.100.44.nip.io/.well-known/oauth-protected-resource"
     } satisfies Partial<McpGwUnauthorizedError>);
+  });
+
+  test("distinguishes a missing GitHub connection from a rejected HOP-1 assertion", async () => {
+    const fetchStub = (async () =>
+      Response.json(
+        {
+          jsonrpc: "2.0",
+          id: null,
+          error: {
+            code: -32001,
+            message: "Unauthorized: GitHub account is not connected"
+          }
+        },
+        { status: 401 }
+      )) as unknown as typeof fetch;
+
+    await expect(
+      listMcpGwTools({
+        url: "https://18.210.100.44.nip.io/mcp",
+        bearerToken: "valid-unconnected-user",
+        fetch: fetchStub
+      })
+    ).rejects.toMatchObject({
+      name: "McpGwProviderConnectionRequiredError",
+      provider: "github",
+      message: "GitHub account is not connected"
+    } satisfies Partial<McpGwProviderConnectionRequiredError>);
   });
 
   test("maps MCP-GW reauth_required errors to a Google connect result", async () => {
