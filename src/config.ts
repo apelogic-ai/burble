@@ -73,6 +73,7 @@ export type Config = {
   mcpGwAudience: string | null;
   mcpGwMcpUrl: string | null;
   googleViaMcpGw: boolean;
+  githubViaMcpGw?: boolean;
   openClawConfigPatchHostPath: string | null;
   internalApiToken: string | null;
   observabilityJsonlPath: string | null;
@@ -492,6 +493,7 @@ export function readConfig(env: Env): Config {
   const mcpGwAudience = optionalUrlEnv(env, "MCP_GW_AUDIENCE");
   const mcpGwMcpUrl = optionalUrlEnv(env, "MCP_GW_MCP_URL");
   const googleViaMcpGw = optionalBoolEnv(env, "GOOGLE_VIA_MCP_GW", false);
+  const githubViaMcpGw = optionalBoolEnv(env, "GITHUB_VIA_MCP_GW", false);
   if (googleViaMcpGw && !mcpIdentityPrivateKeyPath) {
     throw new Error(
       "GOOGLE_VIA_MCP_GW requires MCP_IDENTITY_PRIVATE_KEY_PATH to use a persistent MCP identity signing key"
@@ -500,6 +502,16 @@ export function readConfig(env: Env): Config {
   if (googleViaMcpGw && (!mcpGwMcpUrl || !mcpGwAudience)) {
     throw new Error(
       "GOOGLE_VIA_MCP_GW requires MCP_GW_MCP_URL and MCP_GW_AUDIENCE"
+    );
+  }
+  if (githubViaMcpGw && !mcpIdentityPrivateKeyPath) {
+    throw new Error(
+      "GITHUB_VIA_MCP_GW requires MCP_IDENTITY_PRIVATE_KEY_PATH to use a persistent MCP identity signing key"
+    );
+  }
+  if (githubViaMcpGw && (!mcpGwMcpUrl || !mcpGwAudience)) {
+    throw new Error(
+      "GITHUB_VIA_MCP_GW requires MCP_GW_MCP_URL and MCP_GW_AUDIENCE"
     );
   }
 
@@ -609,6 +621,7 @@ export function readConfig(env: Env): Config {
     mcpGwAudience,
     mcpGwMcpUrl,
     googleViaMcpGw,
+    githubViaMcpGw,
     openClawConfigPatchHostPath:
       optionalSecretEnv(env, "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH") ??
       optionalSecretEnv(env, "OPENCLAW_CONFIG_PATCH_HOST_PATH"),

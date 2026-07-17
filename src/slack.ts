@@ -187,6 +187,11 @@ import {
   type McpGwGoogleAuthService,
 } from "./mcp/mcp-gw-google-auth-service";
 import type { McpGwGoogleAuthStatus } from "./mcp/mcp-gw-google-auth-client";
+import {
+  createMcpGwGitHubAuthService,
+  type McpGwGitHubAuthService,
+} from "./mcp/mcp-gw-github-auth-service";
+import type { McpGwGitHubAuthStatus } from "./mcp/mcp-gw-github-auth-client";
 
 export {
   formatConnectGitHubMessage,
@@ -212,6 +217,7 @@ export type SlackRuntimeOptions = {
   scheduledTaskPreparationExecutor?: ScheduledTaskPreparationToolExecutor;
   mcpIdentityIssuer?: McpIdentityIssuer;
   mcpGwGoogleAuthService?: McpGwGoogleAuthService;
+  mcpGwGitHubAuthService?: McpGwGitHubAuthService;
   testbed?: boolean;
 };
 
@@ -373,6 +379,20 @@ export function createSlackRuntime(
     config.mcpGwAudience &&
     options.mcpIdentityIssuer
       ? createMcpGwGoogleAuthService({
+          mcpUrl: config.mcpGwMcpUrl,
+          audience: config.mcpGwAudience,
+          issuer: options.mcpIdentityIssuer,
+          getSlackEmail,
+        })
+      : undefined);
+
+  const mcpGwGitHubAuthService =
+    options.mcpGwGitHubAuthService ??
+    (config.githubViaMcpGw &&
+    config.mcpGwMcpUrl &&
+    config.mcpGwAudience &&
+    options.mcpIdentityIssuer
+      ? createMcpGwGitHubAuthService({
           mcpUrl: config.mcpGwMcpUrl,
           audience: config.mcpGwAudience,
           issuer: options.mcpIdentityIssuer,
@@ -698,11 +718,26 @@ export function createSlackRuntime(
           ),
       logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
     });
+    const githubAuth = await resolveGitHubAuthView({
+      service: mcpGwGitHubAuthService,
+      principal: {
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId
+      },
+      legacyUrl: mcpGwGitHubAuthService
+        ? null
+        : buildGitHubOAuthUrl(
+            config,
+            store.createOAuthState(input.slackUserId)
+          ),
+      redirectAfter: `${config.baseUrl}/oauth/github/connected`,
+      logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+    });
     return buildAppHomeView({
-      githubUrl: buildGitHubOAuthUrl(
-        config,
-        store.createOAuthState(input.slackUserId)
-      ),
+      githubUrl: githubAuth.githubUrl,
+      ...(githubAuth.githubMcpGw
+        ? { githubMcpGw: githubAuth.githubMcpGw }
+        : {}),
       googleUrl: googleAuth.googleUrl,
       ...(googleAuth.googleMcpGw
         ? { googleMcpGw: googleAuth.googleMcpGw }
@@ -1052,7 +1087,12 @@ export function createSlackRuntime(
     }
 
     try {
-      if (provider === "google" && mcpGwGoogleAuthService) {
+      if (provider === "github" && mcpGwGitHubAuthService) {
+        await mcpGwGitHubAuthService.disconnect({
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId
+        });
+      } else if (provider === "google" && mcpGwGoogleAuthService) {
         await mcpGwGoogleAuthService.disconnect({
           workspaceId: context.workspaceId,
           slackUserId: context.slackUserId
@@ -1581,10 +1621,23 @@ export function createSlackRuntime(
         return;
       }
 
-      const githubUrl = buildGitHubOAuthUrl(
-        config,
-        store.createOAuthState(body.user_id)
-      );
+      const githubAuth = await resolveGitHubAuthView({
+        service: mcpGwGitHubAuthService,
+        principal: {
+          workspaceId: body.team_id ?? "",
+          slackUserId: body.user_id
+        },
+        legacyUrl: mcpGwGitHubAuthService
+          ? null
+          : buildGitHubOAuthUrl(
+              config,
+              store.createOAuthState(body.user_id)
+            ),
+        redirectAfter: `${config.baseUrl}/oauth/github/connected`,
+        includeStatus: action.kind === "connections",
+        logWarn: (message) => logger.warn(withUtcTimestamp(message))
+      });
+      const githubUrl = githubAuth.githubUrl;
       const jiraUrl = tryBuildJiraOAuthUrl(
         config,
         store.createOAuthState(body.user_id)
@@ -1616,10 +1669,17 @@ export function createSlackRuntime(
 
       await ack(
         action.kind === "github"
-          ? {
+          ? githubUrl
+            ? {
               response_type: "ephemeral",
               text: formatConnectGitHubMessage(githubUrl)
             }
+            : {
+                response_type: "ephemeral",
+                text: mcpGwGitHubAuthService
+                  ? "MCP-GW GitHub authorization is temporarily unavailable."
+                  : "GitHub OAuth is not configured."
+              }
           : action.kind === "jira"
             ? jiraUrl
               ? {
@@ -1664,6 +1724,9 @@ export function createSlackRuntime(
                 }
               : buildAuthResponse({
                   githubUrl,
+                  ...(githubAuth.githubMcpGw
+                    ? { githubMcpGw: githubAuth.githubMcpGw }
+                    : {}),
                   googleUrl,
                   hubspotUrl,
                   jiraUrl,
@@ -3278,13 +3341,16 @@ const MAX_HOME_TASKS = 5;
 const MAX_HOME_RUNS_PER_TASK = 5;
 
 type ProviderConnectionViewInput = {
-  githubUrl: string;
+  githubUrl: string | null;
   googleUrl: string | null;
   hubspotUrl: string | null;
   jiraUrl: string | null;
   slackUrl: string | null;
   googleMcpGw?: {
     status: McpGwGoogleAuthStatus | null;
+  };
+  githubMcpGw?: {
+    status: McpGwGitHubAuthStatus | null;
   };
   connections?: {
     [provider in Provider]?: ProviderConnection | null;
@@ -3432,9 +3498,11 @@ export function buildAppHomeView(input: ProviderConnectionViewInput): View {
 
 function buildAppHomeIntroText(input: ProviderConnectionViewInput): string {
   const connectedCount = connectedProviderIds.filter((provider) =>
-    provider === "google" && input.googleMcpGw
-      ? input.googleMcpGw.status?.connected === true
-      : Boolean(input.connections?.[provider])
+    provider === "github" && input.githubMcpGw
+      ? input.githubMcpGw.status?.connected === true
+      : provider === "google" && input.googleMcpGw
+        ? input.googleMcpGw.status?.connected === true
+        : Boolean(input.connections?.[provider])
   ).length;
   if (connectedCount === 0 && !input.agentSettings?.runtime.id) {
     return [
@@ -3814,6 +3882,22 @@ function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
     .map((descriptor) => {
       const url = input[descriptor.authUrlInputKey];
       const connection = input.connections?.[descriptor.id] ?? null;
+      if (descriptor.id === "github" && input.githubMcpGw) {
+        const status = input.githubMcpGw.status;
+        const accountPresent = Boolean(status?.connected || status?.email);
+        return buildProviderConnectionBlock({
+          provider: descriptor.id,
+          title: descriptor.connectionTitle,
+          status: formatMcpGwGitHubConnectionStatus(status),
+          configured: true,
+          url,
+          connected: status?.connected === true,
+          reconnect: accountPresent || Boolean(status?.missingScopes.length),
+          disconnectable: accountPresent,
+          actionId: `connect_${descriptor.authCommand}`,
+          usage: descriptor.usage
+        });
+      }
       if (descriptor.id === "google" && input.googleMcpGw) {
         const status = input.googleMcpGw.status;
         const accountPresent = Boolean(status?.connected || status?.email);
@@ -6553,6 +6637,68 @@ function formatMcpGwGoogleConnectionStatus(
     return `Reconnect required through MCP-GW${account}.${missing}`;
   }
   return "Not connected through MCP-GW.";
+}
+
+function formatMcpGwGitHubConnectionStatus(
+  status: McpGwGitHubAuthStatus | null
+): string {
+  if (!status) {
+    return "MCP-GW connection status unavailable.";
+  }
+  if (status.connected) {
+    return status.email
+      ? `Connected through MCP-GW as \`${status.email}\`.`
+      : "Connected through MCP-GW.";
+  }
+  if (status.email || status.missingScopes.length > 0) {
+    const account = status.email ? ` for \`${status.email}\`` : "";
+    const missing = status.missingScopes.length
+      ? ` Missing ${status.missingScopes.length} required GitHub scope${status.missingScopes.length === 1 ? "" : "s"}.`
+      : "";
+    return `Reconnect required through MCP-GW${account}.${missing}`;
+  }
+  return "Not connected through MCP-GW.";
+}
+
+async function resolveGitHubAuthView(input: {
+  service?: McpGwGitHubAuthService;
+  principal: { workspaceId: string; slackUserId: string };
+  legacyUrl: string | null;
+  redirectAfter: string;
+  includeStatus?: boolean;
+  logWarn?: (message: string) => void;
+}): Promise<{
+  githubUrl: string | null;
+  githubMcpGw?: { status: McpGwGitHubAuthStatus | null };
+}> {
+  if (!input.service) {
+    return { githubUrl: input.legacyUrl };
+  }
+
+  let githubUrl: string | null = null;
+  let status: McpGwGitHubAuthStatus | null = null;
+  try {
+    githubUrl = (
+      await input.service.start(input.principal, {
+        redirectAfter: input.redirectAfter
+      })
+    ).authorizationUrl;
+  } catch (error) {
+    input.logWarn?.(
+      `Could not start MCP-GW GitHub auth: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  if (input.includeStatus !== false) {
+    try {
+      status = await input.service.status(input.principal);
+    } catch (error) {
+      input.logWarn?.(
+        `Could not read MCP-GW GitHub auth status: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  return { githubUrl, githubMcpGw: { status } };
 }
 
 async function resolveGoogleAuthView(input: {

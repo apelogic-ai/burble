@@ -4,6 +4,7 @@ import { createTokenStore } from "../src/db";
 import { createRuntimeJwtIssuer } from "../src/runtime-jwt";
 import { createSlackRuntime } from "../src/slack";
 import type { McpGwGoogleAuthService } from "../src/mcp/mcp-gw-google-auth-service";
+import type { McpGwGitHubAuthService } from "../src/mcp/mcp-gw-github-auth-service";
 import { startOAuthServer } from "../src/server";
 import {
   installSlackTestbed,
@@ -227,6 +228,115 @@ describe("local Slack testbed", () => {
       expect(
         store.getConnectionForSlackUser("google", testbedUserId)?.providerLogin,
       ).toBe("stale-legacy@example.test");
+    } finally {
+      slack.close();
+      store.close();
+    }
+  }, slackTestbedTimeoutMs);
+
+  test("uses MCP-GW as the authoritative GitHub auth control plane", async () => {
+    const config = readConfig({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SLACK_APP_TOKEN: "xapp-test",
+      GITHUB_CLIENT_ID: "legacy-client-id",
+      GITHUB_CLIENT_SECRET: "legacy-client-secret",
+      BASE_URL: "http://127.0.0.1:3000",
+      PORT: "39189",
+      DATABASE_PATH: ":memory:",
+      BURBLE_TESTBED: "1",
+      AGENT_MODE: "deterministic",
+      GITHUB_VIA_MCP_GW: "on",
+      MCP_IDENTITY_PRIVATE_KEY_PATH: "/tmp/burble-test-mcp-identity.pem",
+      MCP_GW_AUDIENCE: "https://mcp-gw.example.test/mcp",
+      MCP_GW_MCP_URL: "https://mcp-gw.example.test/mcp",
+    });
+    const store = createTokenStore(":memory:");
+    store.upsertProviderConnection({
+      provider: "github",
+      email: "testbed@example.test",
+      slackUserId: testbedUserId,
+      providerLogin: "stale-legacy-user",
+      accessToken: "legacy-access-token",
+    });
+    let connected = true;
+    let disconnectCalls = 0;
+    const mcpGwGitHubAuthService: McpGwGitHubAuthService = {
+      start: async (principal, input) => {
+        expect(principal).toEqual({
+          workspaceId: testbedWorkspaceId,
+          slackUserId: testbedUserId,
+        });
+        expect(input?.redirectAfter).toBe(
+          "http://127.0.0.1:3000/oauth/github/connected",
+        );
+        return {
+          authorizationUrl:
+            "https://github.com/login/oauth/authorize?state=mcp-gw-state",
+        };
+      },
+      status: async () => ({
+        connected,
+        ...(connected ? { email: "mcp-gw-user@example.test" } : {}),
+        scopesRequired: ["repo", "read:org", "workflow", "notifications"],
+        scopesGranted: connected
+          ? ["repo", "read:org", "workflow", "notifications"]
+          : [],
+        missingScopes: connected
+          ? []
+          : ["repo", "read:org", "workflow", "notifications"],
+      }),
+      disconnect: async () => {
+        disconnectCalls += 1;
+        connected = false;
+      },
+    };
+    const runtimeJwtIssuer = createRuntimeJwtIssuer({
+      issuer: config.runtimeJwtIssuer,
+    });
+    const slack = createSlackRuntime(
+      config,
+      store,
+      runtimeJwtIssuer,
+      undefined,
+      { testbed: true, mcpGwGitHubAuthService },
+    );
+    const testbed = installSlackTestbed(slack);
+    const slashResponses: unknown[] = [];
+
+    try {
+      await slack.app.processEvent({
+        body: {
+          type: "slash_command",
+          command: "/auth",
+          text: "github",
+          team_id: testbedWorkspaceId,
+          user_id: testbedUserId,
+          channel_id: testbedDirectChannelId,
+        },
+        ack: async (response) => {
+          slashResponses.push(response);
+        },
+      });
+      expect(JSON.stringify(slashResponses)).toContain(
+        "https://github.com/login/oauth/authorize?state=mcp-gw-state",
+      );
+
+      await testbed.processAppHomeOpened();
+      const connectedHome = JSON.stringify(testbed.state.homes[testbedUserId]);
+      expect(connectedHome).toContain("mcp-gw-user@example.test");
+      expect(connectedHome).not.toContain("stale-legacy-user");
+
+      await testbed.processBlockAction({
+        actionId: "provider_disconnect",
+        value: "github",
+      });
+      expect(disconnectCalls).toBe(1);
+      expect(JSON.stringify(testbed.state.homes[testbedUserId])).toContain(
+        "Reconnect required through MCP-GW",
+      );
+      expect(
+        store.getConnectionForSlackUser("github", testbedUserId)?.providerLogin,
+      ).toBe("stale-legacy-user");
     } finally {
       slack.close();
       store.close();

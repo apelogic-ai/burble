@@ -108,6 +108,30 @@ test("serves MCP identity JWKS separately from runtime JWKS", async () => {
   }
 });
 
+test("serves a safe landing page after MCP-GW GitHub connection", async () => {
+  const runtimeJwtIssuer = createRuntimeJwtIssuer({
+    issuer: config.runtimeJwtIssuer
+  });
+  const server = startOAuthServer(
+    { ...config, port: 0 },
+    {} as TokenStore,
+    {} as SlackRuntime,
+    runtimeJwtIssuer
+  );
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/oauth/github/connected`
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain(
+      "GitHub is connected. You can close this tab and return to Slack."
+    );
+  } finally {
+    server.stop(true);
+  }
+});
+
 function createFakeStore() {
   const connectedUsers: unknown[] = [];
   const providerConnections: unknown[] = [];

@@ -147,6 +147,13 @@ export function startOAuthServer(
         );
       }
 
+      if (url.pathname === "/oauth/github/connected") {
+        return new Response(
+          "GitHub is connected. You can close this tab and return to Slack.",
+          { headers: { "content-type": "text/plain; charset=utf-8" } }
+        );
+      }
+
       if (url.pathname === "/oauth/github/callback") {
         return handleGitHubCallback(config, store, slack, url);
       }
