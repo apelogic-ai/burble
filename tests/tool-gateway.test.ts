@@ -1048,6 +1048,11 @@ describe("handleToolGatewayRequest", () => {
           expect(slackUserId).toBe("U123");
           return "person@example.com";
         },
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "google_oauth_start" },
+          { name: "google_drive_files_list" }
+        ],
         callMcpGwTool: async (clientConfig, input) => {
           calls.push({ clientConfig, input });
           expect(clientConfig.url).toBe("https://18.210.100.44.nip.io/mcp");
@@ -1096,6 +1101,51 @@ describe("handleToolGatewayRequest", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test("returns Google connect guidance when MCP-GW advertises only OAuth helpers", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    let callCount = 0;
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "google.searchDriveFiles",
+      request(
+        "google.searchDriveFiles",
+        { input: { query: "qbr" } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "google_oauth_start" }
+        ],
+        callMcpGwTool: async () => {
+          callCount += 1;
+          return { status: "ok", result: { content: [] } };
+        }
+      }
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        error: "google_not_connected",
+        authCommand: "/auth google"
+      }
+    });
+    expect(callCount).toBe(0);
+  });
+
   test("uses the shared MCP-GW Google adapter for Drive metadata reads through the tool gateway", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity"
@@ -1125,6 +1175,11 @@ describe("handleToolGatewayRequest", () => {
       {
         mcpIdentityIssuer: issuer,
         getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "google_oauth_start" },
+          { name: "gws_drive_files_get" }
+        ],
         callMcpGwTool: async (_clientConfig, input) => {
           calls.push(input);
           expect(input).toEqual({
@@ -1208,6 +1263,11 @@ describe("handleToolGatewayRequest", () => {
       {
         mcpIdentityIssuer: issuer,
         getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "google_oauth_start" },
+          { name: "gws_docs_documents_batch_update" }
+        ],
         callMcpGwTool: async (_clientConfig, input) => {
           calls.push(input);
           expect(input).toEqual({
@@ -1270,6 +1330,11 @@ describe("handleToolGatewayRequest", () => {
       {
         mcpIdentityIssuer: issuer,
         getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "google_oauth_start" },
+          { name: "google_gmail_messages_list" }
+        ],
         callMcpGwTool: async (_clientConfig, input) => {
           calls.push(input);
           expect(input).toEqual({
@@ -1382,6 +1447,11 @@ describe("handleToolGatewayRequest", () => {
       {
         mcpIdentityIssuer: issuer,
         getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "google_oauth_start" },
+          { name: "google_drive_files_list" }
+        ],
         callMcpGwTool: async () => ({
           status: "needs_connect",
           message: "Google Workspace reauthorization required",

@@ -1,3 +1,5 @@
+import { hasMcpGwProviderDataTools } from "./mcp-gw-provider-tools";
+
 const burbleDiscoveryToolNames = new Set([
   "github_list_mcp_tools",
   "github_call_mcp_tool",
@@ -121,9 +123,8 @@ export function resolveMcpGwGitHubToolName(
 export function hasMcpGwGitHubProviderTools(
   advertisedNames: readonly string[],
 ): boolean {
-  return advertisedNames.some(
-    (name) =>
-      isFederatedGitHubToolName(name) &&
-      !mcpGwGitHubOAuthToolNames.has(name),
-  );
+  return hasMcpGwProviderDataTools(advertisedNames, {
+    oauthToolNames: [...mcpGwGitHubOAuthToolNames],
+    isProviderToolName: isFederatedGitHubToolName,
+  });
 }
