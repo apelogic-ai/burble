@@ -192,6 +192,9 @@ import {
   type McpGwGitHubAuthService,
 } from "./mcp/mcp-gw-github-auth-service";
 import type { McpGwGitHubAuthStatus } from "./mcp/mcp-gw-github-auth-client";
+import {
+  createMcpGwConnectionStatusResolver,
+} from "./mcp/mcp-gw-connection-status";
 
 export {
   formatConnectGitHubMessage,
@@ -399,6 +402,18 @@ export function createSlackRuntime(
           getSlackEmail,
         })
       : undefined);
+  const resolveMcpGwConnectionStatuses =
+    mcpGwGoogleAuthService || mcpGwGitHubAuthService
+      ? createMcpGwConnectionStatusResolver({
+          ...(mcpGwGoogleAuthService
+            ? { google: mcpGwGoogleAuthService }
+            : {}),
+          ...(mcpGwGitHubAuthService
+            ? { github: mcpGwGitHubAuthService }
+            : {}),
+          logWarn: (message) => app.logger.warn(withUtcTimestamp(message)),
+        })
+      : undefined;
 
   const createGoogleConnectUrl =
     mcpGwGoogleAuthService
@@ -652,6 +667,9 @@ export function createSlackRuntime(
           jiraTools,
           managedRuntimeUrl: config.managedRuntimeUrl,
           ...(runtimeFactory ? { runtimeFactory } : {}),
+          ...(resolveMcpGwConnectionStatuses
+            ? { resolveMcpGwConnectionStatuses }
+            : {}),
           observability,
           logInfo: (message) => app.logger.info(withUtcTimestamp(message))
         })
