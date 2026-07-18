@@ -308,6 +308,16 @@ describe("scheduler intent resolver", () => {
     expect(system).toContain('"0 9 * * 1-5"');
     expect(prompt).toContain("job_github_checker");
     expect(prompt).toContain("GitHub PR checker");
+    expect(prompt).toContain(
+      'requiredTools=["github_list_my_pull_requests"]',
+    );
+    expect(system).toContain("Canonical provider tools");
+    expect(system).toContain("github_search_issues");
+    expect(system).toContain("google_get_drive_file");
+    expect(system).toContain("google_append_to_drive_text_file");
+    expect(system).toContain(
+      "Use only the exact canonical tool names listed below",
+    );
     expect(result).toEqual({
       intent: "trigger_job",
       confidence: 0.97,

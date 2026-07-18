@@ -1,6 +1,7 @@
 import { generateText } from "ai";
 import { createDirectModelResolver } from "../agent/providers";
 import type { DirectLanguageModel, ModelResolver } from "../agent/providers";
+import { providerToolCatalog } from "../providers/catalog";
 import type {
   SchedulerIntentResolver,
   SchedulerIntentResolverResult,
@@ -121,7 +122,23 @@ const schedulerIntentSystemPrompt = [
   "Use confidence from 0 to 1.",
   "Only include jobId when the user gives a job id or clearly refers to exactly one current job by title/prompt.",
   "If multiple jobs could match, return the intent with jobId null.",
+  "Use only the exact canonical tool names listed below in taskPlan preparation and recurring steps. Provider names such as github or google are not tool names.",
+  schedulerProviderToolCatalog(),
 ].join("\n");
+
+function schedulerProviderToolCatalog(): string {
+  return [
+    "Canonical provider tools:",
+    ...providerToolCatalog
+      .toSorted((left, right) => left.name.localeCompare(right.name))
+      .map((tool) => {
+        const inputs = Object.entries(tool.input)
+          .map(([name, spec]) => `${name}${spec.optional ? "?" : ""}`)
+          .join(",");
+        return `- ${tool.name} [${tool.risk ?? "read"}] inputs=${inputs || "none"}: ${tool.description}`;
+      }),
+  ].join("\n");
+}
 
 function schedulerIntentPrompt(
   text: string,
@@ -131,6 +148,7 @@ function schedulerIntentPrompt(
     title: string | null;
     prompt: string | null;
     state: string;
+    requiredTools: string[];
   }>,
 ): string {
   return [
@@ -144,6 +162,7 @@ function schedulerIntentPrompt(
             `title=${JSON.stringify(job.title ?? "")}`,
             `state=${JSON.stringify(job.state)}`,
             `task=${JSON.stringify(job.prompt ?? "")}`,
+            `requiredTools=${JSON.stringify(job.requiredTools)}`,
           ].join(" "),
         )),
     "Recent context:",
