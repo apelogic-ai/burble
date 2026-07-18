@@ -847,6 +847,61 @@ describe("handleToolGatewayRequest", () => {
     expect(callCount).toBe(0);
   });
 
+  test("calls exact official GitHub tools from the connected MCP-GW catalog", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const calls: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "github.searchIssues",
+      request(
+        "github.searchIssues",
+        { input: { query: "repo:example-org/example-repo is:pr" } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_drive_files_list" },
+          { name: "github_oauth_status" },
+          { name: "github_oauth_start" },
+          { name: "search_pull_requests" }
+        ],
+        callMcpGwTool: async (_clientConfig, input) => {
+          calls.push(input);
+          return {
+            status: "ok",
+            result: { content: [{ type: "text", text: "PR #2350" }] }
+          };
+        }
+      }
+    );
+
+    expect(calls).toEqual([
+      {
+        name: "search_pull_requests",
+        arguments: { query: "repo:example-org/example-repo is:pr" }
+      }
+    ]);
+    await expect(response.json()).resolves.toMatchObject({
+      content: {
+        mcpGw: true,
+        toolName: "github_search_pull_requests",
+        burbleToolName: "github_search_issues"
+      }
+    });
+  });
+
   test("calls arbitrary federated GitHub tools but rejects other MCP-GW namespaces", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity"
@@ -863,6 +918,8 @@ describe("handleToolGatewayRequest", () => {
       getSlackEmail: async () => "person@example.com",
       listMcpGwTools: async () => [
         { name: "github_list_commits" },
+        { name: "list_commits" },
+        { name: "run_sql" },
         { name: "google_drive_files_list" }
       ],
       callMcpGwTool: async (_clientConfig: unknown, input: unknown) => {
@@ -907,6 +964,32 @@ describe("handleToolGatewayRequest", () => {
       }
     });
 
+    const officialResponse = await handleToolGatewayRequest(
+      githubConfig,
+      createStore(null, runtime),
+      "github.callMcpTool",
+      request(
+        "github.callMcpTool",
+        {
+          input: {
+            name: "list_commits",
+            arguments: { owner: "example-org", repo: "example-repo" }
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      deps
+    );
+
+    await expect(officialResponse.json()).resolves.toMatchObject({
+      content: {
+        mcpGw: true,
+        toolName: "list_commits",
+        burbleToolName: "github_call_mcp_tool"
+      }
+    });
+
     const rejected = await handleToolGatewayRequest(
       githubConfig,
       createStore(null, runtime),
@@ -915,7 +998,7 @@ describe("handleToolGatewayRequest", () => {
         "github.callMcpTool",
         {
           input: {
-            name: "google_drive_files_list",
+            name: "run_sql",
             arguments: {}
           }
         },
@@ -930,7 +1013,7 @@ describe("handleToolGatewayRequest", () => {
         error: "github_mcp_tool_not_allowed"
       }
     });
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
   });
 
   test("routes runtime Google tools through MCP-GW without a Burble Google connection when enabled", async () => {

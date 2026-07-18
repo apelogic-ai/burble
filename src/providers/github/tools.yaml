@@ -477,14 +477,14 @@ tools:
     alias: github.callMcpTool
     implementation: callMcpTool
     title: GitHub MCP tool call
-    description: Call any GitHub-namespaced tool advertised by the centralized MCP gateway with this user's connected GitHub identity.
+    description: Call any official or GitHub-namespaced tool advertised by the centralized MCP gateway with this user's connected GitHub identity.
     risk: high_write
     confirmation: none
     input:
       name:
         type: string
         min: 1
-        description: Federated GitHub MCP tool name beginning with github_
+        description: Exact official or GitHub-prefixed MCP tool name returned by github.listMcpTools
       arguments:
         type: object
         optional: true

@@ -59,10 +59,10 @@
         {
           "name": "github_call_mcp_tool",
           "alias": "github.callMcpTool",
-          "description": "Call any GitHub-namespaced tool advertised by the centralized MCP gateway with this user's connected GitHub identity.",
+          "description": "Call any official or GitHub-namespaced tool advertised by the centralized MCP gateway with this user's connected GitHub identity.",
           "input": {
             "name": {
-              "description": "Federated GitHub MCP tool name beginning with github_",
+              "description": "Exact official or GitHub-prefixed MCP tool name returned by github.listMcpTools",
               "type": "string",
               "min": 1
             },
