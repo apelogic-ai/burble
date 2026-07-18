@@ -14,6 +14,7 @@ import {
   McpGwUnauthorizedError,
 } from "./mcp-gw-client";
 import {
+  hasMcpGwGitHubProviderTools,
   isFederatedGitHubToolName,
   resolveMcpGwGitHubToolName,
 } from "./mcp-gw-github-tools";
@@ -121,6 +122,9 @@ export async function handleMcpGwGitHubToolRequest(input: {
     const advertisedToolNames = (await getAdvertisedTools()).map(
       (tool) => tool.name,
     );
+    if (!hasMcpGwGitHubProviderTools(advertisedToolNames)) {
+      return githubConnectionRequiredResult();
+    }
     const result = await executeMcpGwGitHubToolPlan(plan, (call) =>
       (input.deps.callMcpGwTool ?? callMcpGwTool)(
         clientConfig,
@@ -136,15 +140,7 @@ export async function handleMcpGwGitHubToolRequest(input: {
       error instanceof McpGwProviderConnectionRequiredError &&
       error.provider === "github"
     ) {
-      return {
-        classification: "user_private",
-        content: {
-          error: "github_not_connected",
-          message:
-            "GitHub account is not connected. Run `/auth github` to connect or reconnect GitHub.",
-          authCommand: "/auth github",
-        },
-      };
+      return githubConnectionRequiredResult();
     }
     if (error instanceof McpGwUnauthorizedError) {
       return {
@@ -169,6 +165,18 @@ export async function handleMcpGwGitHubToolRequest(input: {
       },
     };
   }
+}
+
+function githubConnectionRequiredResult(): ToolResult<unknown> {
+  return {
+    classification: "user_private",
+    content: {
+      error: "github_not_connected",
+      message:
+        "GitHub account is not connected. Run `/auth github` to connect or reconnect GitHub.",
+      authCommand: "/auth github",
+    },
+  };
 }
 
 function sanitizeMcpGwTool(tool: {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  hasMcpGwGitHubProviderTools,
   isFederatedGitHubToolName,
   resolveMcpGwGitHubToolName,
 } from "../../src/mcp/mcp-gw-github-tools";
@@ -9,6 +10,21 @@ describe("MCP-GW GitHub tool catalog", () => {
     expect(isFederatedGitHubToolName("github_issue_write")).toBe(true);
     expect(isFederatedGitHubToolName("github_github_issue_write")).toBe(true);
     expect(isFederatedGitHubToolName("google_drive_files_list")).toBe(false);
+  });
+
+  test("distinguishes OAuth helpers from connected GitHub provider tools", () => {
+    expect(
+      hasMcpGwGitHubProviderTools([
+        "github_oauth_status",
+        "github_oauth_start",
+      ]),
+    ).toBe(false);
+    expect(
+      hasMcpGwGitHubProviderTools([
+        "github_oauth_status",
+        "github_search_repositories",
+      ]),
+    ).toBe(true);
   });
 
   test("prefers the exact canonical tool name when advertised", () => {

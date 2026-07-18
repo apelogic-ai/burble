@@ -802,6 +802,51 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("returns GitHub connect guidance when MCP-GW advertises only OAuth helpers", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    let callCount = 0;
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "github.searchIssues",
+      request(
+        "github.searchIssues",
+        { input: { query: "org:apelogic-ai is:pr is:open" } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "github_oauth_status" },
+          { name: "github_oauth_start" }
+        ],
+        callMcpGwTool: async () => {
+          callCount += 1;
+          return { status: "ok", result: { content: [] } };
+        }
+      }
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        error: "github_not_connected",
+        authCommand: "/auth github"
+      }
+    });
+    expect(callCount).toBe(0);
+  });
+
   test("calls arbitrary federated GitHub tools but rejects other MCP-GW namespaces", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity"

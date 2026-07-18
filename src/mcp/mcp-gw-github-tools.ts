@@ -2,6 +2,10 @@ const burbleDiscoveryToolNames = new Set([
   "github_list_mcp_tools",
   "github_call_mcp_tool",
 ]);
+const mcpGwGitHubOAuthToolNames = new Set([
+  "github_oauth_status",
+  "github_oauth_start",
+]);
 
 export function isFederatedGitHubToolName(name: string): boolean {
   return (
@@ -33,4 +37,14 @@ export function resolveMcpGwGitHubToolName(
     );
   }
   throw new Error(`GitHub tool ${canonicalName} is not advertised by MCP-GW.`);
+}
+
+export function hasMcpGwGitHubProviderTools(
+  advertisedNames: readonly string[],
+): boolean {
+  return advertisedNames.some(
+    (name) =>
+      isFederatedGitHubToolName(name) &&
+      !mcpGwGitHubOAuthToolNames.has(name),
+  );
 }
