@@ -1,5 +1,8 @@
 import type { AgentJobCapabilityRecord, ScheduledJobRecord } from "../db";
-import { findProviderToolSpec } from "../providers/catalog";
+import {
+  findProviderToolSpec,
+  providerToolCatalog,
+} from "../providers/catalog";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 
 export type SchedulerTaskValidationIssue = {
@@ -43,11 +46,6 @@ export type SchedulerTaskGrant = Pick<
   "requiredTools" | "expectedTools"
 >;
 
-const genericMcpGrantByProvider = new Map<string, string>([
-  ["atlassian", "atlassian_call_mcp_tool"],
-  ["github", "github_call_mcp_tool"],
-]);
-
 export function validateScheduledTask(
   record: ScheduledJobRecord,
   capability: SchedulerTaskGrant | null,
@@ -73,20 +71,6 @@ export function validateScheduledTask(
     }
   }
 
-  if (
-    expectedTools.includes("github_search_issues") &&
-    grantedToolSet.has("github_list_my_pull_requests") &&
-    !grantedToolSet.has("github_search_issues")
-  ) {
-    warnings.push({
-      code: "wrong_github_pr_scope",
-      message:
-        "github_list_my_pull_requests only lists the authenticated user's PRs; org-wide PR monitoring needs github_search_issues.",
-      tool: "github_list_my_pull_requests",
-      expectedTool: "github_search_issues",
-    });
-  }
-
   return {
     ok: errors.length === 0,
     expectedTools,
@@ -108,6 +92,10 @@ function isExpectedToolCovered(
   if (!expectedSpec) {
     return false;
   }
-  const genericGrant = genericMcpGrantByProvider.get(expectedSpec.provider);
-  return Boolean(genericGrant && grantedToolSet.has(genericGrant));
+  return providerToolCatalog.some(
+    (tool) =>
+      tool.provider === expectedSpec.provider &&
+      tool.grantCoverage === "provider" &&
+      grantedToolSet.has(tool.name),
+  );
 }

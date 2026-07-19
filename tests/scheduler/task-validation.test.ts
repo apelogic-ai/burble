@@ -96,6 +96,22 @@ describe("scheduled task validation", () => {
     });
   });
 
+  test("uses catalog-declared provider dispatch coverage generically", () => {
+    const validation = validateScheduledTask(
+      scheduledJob("Inspect the connected provider's available operations."),
+      {
+        expectedTools: ["atlassian_list_mcp_tools"],
+        requiredTools: ["atlassian_call_mcp_tool"],
+      },
+    );
+
+    expect(validation).toMatchObject({
+      ok: true,
+      errors: [],
+      warnings: [],
+    });
+  });
+
   test("does not let GitHub write grants cover organization PR search", () => {
     const createOnly = validateScheduledTask(
       scheduledJob(

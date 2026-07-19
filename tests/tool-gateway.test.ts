@@ -3260,13 +3260,7 @@ describe("handleToolGatewayRequest", () => {
             tool: "github_search_issues"
           }
         ],
-        warnings: [
-          {
-            code: "wrong_github_pr_scope",
-            tool: "github_list_my_pull_requests",
-            expectedTool: "github_search_issues"
-          }
-        ]
+        warnings: []
       }
     });
   });

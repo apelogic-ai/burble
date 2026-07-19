@@ -2593,15 +2593,7 @@ describe("handleConversation", () => {
                     tool: "github_search_issues",
                   },
                 ],
-                warnings: [
-                  {
-                    code: "wrong_github_pr_scope",
-                    message:
-                      "github_list_my_pull_requests only lists the authenticated user's PRs; org-wide PR monitoring needs github_search_issues.",
-                    tool: "github_list_my_pull_requests",
-                    expectedTool: "github_search_issues",
-                  },
-                ],
+                warnings: [],
               },
             };
           },
@@ -2622,7 +2614,6 @@ describe("handleConversation", () => {
     expect(response.text).toContain("Task validation failed");
     expect(response.text).toContain("job_github_checker");
     expect(response.text).toContain("missing_required_tool");
-    expect(response.text).toContain("wrong_github_pr_scope");
   });
 
   test("shows scheduled task details from scheduler resolver intent", async () => {

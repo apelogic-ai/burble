@@ -26,6 +26,19 @@ type HermesProviderToolHints = {
 };
 
 describe("provider tool specs", () => {
+  test("loads provider-wide grant coverage from tool metadata", () => {
+    expect(
+      githubProviderToolSpecs.find(
+        (tool) => tool.name === "github_call_mcp_tool"
+      )?.grantCoverage
+    ).toBe("provider");
+    expect(
+      atlassianProviderToolSpecs.find(
+        (tool) => tool.name === "atlassian_call_mcp_tool"
+      )?.grantCoverage
+    ).toBe("provider");
+  });
+
   test("loads GitHub MCP tool metadata from YAML", () => {
     const names = githubProviderToolSpecs.map((tool) => tool.name);
 
