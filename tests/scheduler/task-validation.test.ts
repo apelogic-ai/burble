@@ -23,7 +23,7 @@ function scheduledJob(prompt: string): ScheduledJobRecord {
 }
 
 describe("scheduled task validation", () => {
-  test("does not treat unrelated provider tools as equivalent capabilities", () => {
+  test("uses resolved task operations instead of re-inferring discovery from prompt wording", () => {
     const validation = validateScheduledTask(
       scheduledJob(
         [
@@ -33,6 +33,11 @@ describe("scheduled task validation", () => {
         ].join("\n"),
       ),
       {
+        expectedTools: [
+          "github_search_issues",
+          "google_get_drive_file",
+          "google_append_to_drive_text_file",
+        ],
         requiredTools: [
           "github_call_mcp_tool",
           "google_append_to_drive_text_file",
@@ -43,22 +48,34 @@ describe("scheduled task validation", () => {
 
     expect(validation.expectedTools).toEqual([
       "github_search_issues",
-      "google_search_drive_files",
+      "google_append_to_drive_text_file",
+      "google_get_drive_file",
     ]);
     expect(validation.grantedTools).toEqual([
       "github_call_mcp_tool",
       "google_append_to_drive_text_file",
       "google_get_drive_file",
     ]);
+    expect(validation).toMatchObject({ ok: true, errors: [], warnings: [] });
+  });
+
+  test("rejects a resolved operation that is not included in the grant", () => {
+    const validation = validateScheduledTask(
+      scheduledJob("Process the configured external state."),
+      {
+        expectedTools: ["google_get_drive_file"],
+        requiredTools: ["google_append_to_drive_text_file"],
+      },
+    );
+
     expect(validation).toMatchObject({
       ok: false,
       errors: [
         {
           code: "missing_required_tool",
-          tool: "google_search_drive_files",
+          tool: "google_get_drive_file",
         },
       ],
-      warnings: [],
     });
   });
 

@@ -1724,11 +1724,17 @@ describe("handleConversation", () => {
           "3. Return only net-new results.",
         ].join("\n"),
         capability: {
+          expectedTools: [
+            "google_append_to_drive_text_file",
+            "google_get_drive_file",
+            "web_search",
+          ],
           requiredTools: [
             "google_append_to_drive_text_file",
             "google_get_drive_file",
             "web_search",
           ],
+          stateRefMode: "merge",
           stateRefs: [
             {
               provider: "google",
@@ -1745,6 +1751,89 @@ describe("handleConversation", () => {
     expect(response.text).toContain(
       "<https://docs.google.com/document/d/doc-123/edit|AI news topic history>",
     );
+  });
+
+  test("preserves existing generic state bindings for a resolved plan without preparation", async () => {
+    const updates: unknown[] = [];
+    const statefulJob: SchedulerJobSummary = {
+      ...aiNewsJob(),
+      expectedTools: ["github_search_issues"],
+      requiredTools: ["github_call_mcp_tool"],
+      stateRefs: [
+        {
+          provider: "object-store",
+          kind: "checkpoint",
+          id: "state-123",
+          purpose: "Deduplicate prior results",
+        },
+      ],
+    };
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Modify the report task to return only new results using its configured state.",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [statefulJob],
+          updateJobPrompt: (input) => {
+            updates.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job_ai_news",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Stateful report",
+                prompt: input.prompt,
+                schedule: statefulJob.schedule,
+                routeId: "convrt_news",
+                state: "scheduled",
+                runtimeType: "burble-native",
+                createdAt: "2026-07-19T16:00:00.000Z",
+                updatedAt: "2026-07-19T16:01:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "update_job_prompt",
+          confidence: 0.99,
+          jobId: "job_ai_news",
+          taskPlan: {
+            preparation: [],
+            steps: [
+              {
+                id: "collect",
+                instruction: "Find current pull requests.",
+                tools: ["github_search_issues"],
+              },
+              {
+                id: "deduplicate",
+                instruction:
+                  "Use configured state state-123 and return only new results.",
+                tools: [],
+              },
+            ],
+          },
+        }),
+      }),
+    );
+
+    expect(updates).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job_ai_news",
+        prompt:
+          "1. Find current pull requests.\n2. Use configured state state-123 and return only new results.",
+        capability: {
+          expectedTools: ["github_search_issues"],
+          requiredTools: ["github_search_issues"],
+        },
+      },
+    ]);
+    expect(response.text).toContain("Updated scheduled job job_ai_news task.");
   });
 
   test("leaves the scheduled job unchanged when generic preparation fails", async () => {

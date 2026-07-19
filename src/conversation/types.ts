@@ -119,6 +119,7 @@ export type SchedulerTaskPreparationStep = {
 export type SchedulerTaskPlan = {
   steps: SchedulerTaskPlanStep[];
   preparation: SchedulerTaskPreparationStep[];
+  stateRefMode?: "merge" | "replace" | "clear";
 };
 
 export type SchedulerIntentResolverResult = {

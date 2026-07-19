@@ -40,7 +40,7 @@ export type SchedulerTaskRuntimeAdmission =
 
 export type SchedulerTaskGrant = Pick<
   AgentJobCapabilityRecord,
-  "requiredTools"
+  "requiredTools" | "expectedTools"
 >;
 
 const genericMcpGrantByProvider = new Map<string, string>([
@@ -52,7 +52,12 @@ export function validateScheduledTask(
   record: ScheduledJobRecord,
   capability: SchedulerTaskGrant | null,
 ): SchedulerTaskValidation {
-  const expectedTools = inferAllowedToolsForScheduledJob(record);
+  const expectedTools = [
+    ...(capability?.expectedTools === null ||
+    capability?.expectedTools === undefined
+      ? inferAllowedToolsForScheduledJob(record)
+      : capability.expectedTools),
+  ].sort();
   const grantedTools = [...(capability?.requiredTools ?? [])].sort();
   const grantedToolSet = new Set(grantedTools);
   const errors: SchedulerTaskValidationIssue[] = [];

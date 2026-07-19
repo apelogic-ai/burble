@@ -1272,6 +1272,7 @@ describe("createTokenStore", () => {
         "github_search_issues",
         "github_search_issues"
       ],
+      expectedTools: ["github_search_issues"],
       routeId: "convrt_123",
       policyHash: "policy-a",
       capabilityProfile: "scheduled_job",
@@ -1294,6 +1295,7 @@ describe("createTokenStore", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["github_list_my_pull_requests"],
+      expectedTools: ["github_list_my_pull_requests"],
       routeId: "convrt_123",
       policyHash: "policy-b",
       capabilityProfile: "scheduled_job",
@@ -1311,6 +1313,7 @@ describe("createTokenStore", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["github_list_my_pull_requests", "github_search_issues"],
+      expectedTools: ["github_search_issues"],
       routeId: "convrt_123",
       policyHash: "policy-a",
       capabilityProfile: "scheduled_job",
@@ -1334,6 +1337,7 @@ describe("createTokenStore", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["github_list_my_pull_requests"],
+      expectedTools: ["github_list_my_pull_requests"],
       routeId: "convrt_123",
       policyHash: "policy-b",
       capabilityProfile: "scheduled_job",
@@ -1354,6 +1358,29 @@ describe("createTokenStore", () => {
     store.deleteAgentJobCapability("job-123");
     expect(store.getAgentJobCapability("job-123")).toBeNull();
 
+    store.close();
+  });
+
+  test("preserves resolved expected operations when a capability refresh omits them", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertAgentJobCapability({
+      jobId: "job-resolved",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_call_mcp_tool"],
+      expectedTools: ["github_search_issues"],
+      now: new Date("2026-07-19T16:00:00.000Z"),
+    });
+
+    const refreshed = store.upsertAgentJobCapability({
+      jobId: "job-resolved",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_call_mcp_tool"],
+      now: new Date("2026-07-19T16:01:00.000Z"),
+    });
+
+    expect(refreshed.expectedTools).toEqual(["github_search_issues"]);
     store.close();
   });
 

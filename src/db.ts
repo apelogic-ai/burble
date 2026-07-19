@@ -215,6 +215,7 @@ export type AgentJobCapabilityRecord = {
   workspaceId: string;
   slackUserId: string;
   requiredTools: string[];
+  expectedTools?: string[] | null;
   routeId: string | null;
   policyHash: string | null;
   capabilityProfile: string;
@@ -290,9 +291,10 @@ type AgentJobRunAuditRow = Omit<
 
 type AgentJobCapabilityRow = Omit<
   AgentJobCapabilityRecord,
-  "requiredTools" | "stateRefs" | "visibilityPolicy"
+  "requiredTools" | "expectedTools" | "stateRefs" | "visibilityPolicy"
 > & {
   requiredToolsJson: string;
+  expectedToolsJson: string | null;
   stateRefsJson: string;
   visibilityPolicyJson: string;
 };
@@ -529,6 +531,7 @@ export function createTokenStore(path: string) {
       workspace_id TEXT NOT NULL,
       slack_user_id TEXT NOT NULL,
       required_tools_json TEXT NOT NULL,
+      expected_tools_json TEXT,
       route_id TEXT,
       policy_hash TEXT,
       capability_profile TEXT NOT NULL DEFAULT 'scheduled_job',
@@ -591,6 +594,7 @@ export function createTokenStore(path: string) {
     "TEXT NOT NULL DEFAULT 'scheduled_job'"
   );
   ensureAgentJobCapabilityColumn(db, "runtime_type", "TEXT");
+  ensureAgentJobCapabilityColumn(db, "expected_tools_json", "TEXT");
   ensureAgentJobCapabilityColumn(
     db,
     "state_refs_json",
@@ -1550,6 +1554,7 @@ export function createTokenStore(path: string) {
       workspace_id,
       slack_user_id,
       required_tools_json,
+      expected_tools_json,
       route_id,
       policy_hash,
       capability_profile,
@@ -1559,11 +1564,12 @@ export function createTokenStore(path: string) {
       created_at,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(job_id) DO UPDATE SET
       workspace_id = excluded.workspace_id,
       slack_user_id = excluded.slack_user_id,
       required_tools_json = excluded.required_tools_json,
+      expected_tools_json = excluded.expected_tools_json,
       route_id = excluded.route_id,
       policy_hash = excluded.policy_hash,
       capability_profile = excluded.capability_profile,
@@ -1578,6 +1584,7 @@ export function createTokenStore(path: string) {
       workspace_id AS workspaceId,
       slack_user_id AS slackUserId,
       required_tools_json AS requiredToolsJson,
+      expected_tools_json AS expectedToolsJson,
       route_id AS routeId,
       policy_hash AS policyHash,
       capability_profile AS capabilityProfile,
@@ -1598,6 +1605,7 @@ export function createTokenStore(path: string) {
       workspace_id AS workspaceId,
       slack_user_id AS slackUserId,
       required_tools_json AS requiredToolsJson,
+      expected_tools_json AS expectedToolsJson,
       route_id AS routeId,
       policy_hash AS policyHash,
       capability_profile AS capabilityProfile,
@@ -2643,6 +2651,7 @@ export function createTokenStore(path: string) {
       workspaceId: string;
       slackUserId: string;
       requiredTools: string[];
+      expectedTools?: string[] | null;
       routeId?: string | null;
       policyHash?: string | null;
       capabilityProfile?: string | null;
@@ -2658,6 +2667,11 @@ export function createTokenStore(path: string) {
         input.workspaceId,
         input.slackUserId,
         stableJson(normalizeRequiredTools(input.requiredTools)),
+        input.expectedTools === undefined
+          ? (existing?.expectedToolsJson ?? null)
+          : input.expectedTools === null
+            ? null
+            : stableJson(normalizeRequiredTools(input.expectedTools)),
         input.routeId ?? null,
         input.policyHash ?? null,
         normalizeCapabilityProfile(input.capabilityProfile),
@@ -3168,6 +3182,10 @@ function toAgentJobCapabilityRecord(
     workspaceId: row.workspaceId,
     slackUserId: row.slackUserId,
     requiredTools: requiredToolsFromJson(row.requiredToolsJson),
+    expectedTools:
+      row.expectedToolsJson === null
+        ? null
+        : requiredToolsFromJson(row.expectedToolsJson),
     routeId: row.routeId,
     policyHash: row.policyHash,
     capabilityProfile: normalizeCapabilityProfile(row.capabilityProfile),

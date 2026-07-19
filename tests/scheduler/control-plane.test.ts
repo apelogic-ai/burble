@@ -54,6 +54,8 @@ describe("scheduler control plane", () => {
         state: "scheduled",
         runtimeType: "hermes",
         requiredTools: [],
+        expectedTools: [],
+        stateRefs: [],
         routeId: "convrt_123",
         updatedAt: "2026-06-24T12:02:00.000Z",
       },
@@ -431,6 +433,8 @@ describe("scheduler control plane", () => {
         state: "scheduled",
         runtimeType: "hermes",
         requiredTools: ["github_search_issues"],
+        expectedTools: [],
+        stateRefs: [],
         routeId: "convrt_123",
         updatedAt: "2026-06-24T12:00:00.000Z",
       },
@@ -456,6 +460,8 @@ describe("scheduler control plane", () => {
         state: "scheduled",
         runtimeType: "hermes",
         requiredTools: ["github_search_issues"],
+        expectedTools: [],
+        stateRefs: [],
         routeId: "convrt_123",
         updatedAt: "2026-06-24T12:00:00.000Z",
       },
@@ -1348,6 +1354,160 @@ describe("scheduler control plane", () => {
         purpose: "Report source",
       },
     ]);
+
+    store.close();
+  });
+
+  test("preserves generic state references when a resolved capability update omits state changes", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-generic-state",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Stateful report",
+      prompt: "Read the configured state and report changes.",
+      schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
+      routeId: "convrt_state",
+      runtimeType: "burble-native",
+      now: new Date("2026-07-19T16:00:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "job-generic-state",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
+      requiredTools: ["github_call_mcp_tool"],
+      routeId: "convrt_state",
+      runtimeType: "burble-native",
+      stateRefs: [
+        {
+          provider: "object-store",
+          kind: "checkpoint",
+          id: "state-123",
+          purpose: "Deduplicate prior results",
+        },
+      ],
+      now: new Date("2026-07-19T16:00:00.000Z"),
+    });
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-07-19T16:01:00.000Z"),
+    });
+
+    const result = await scheduler.updateJobPrompt?.({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job-generic-state",
+      prompt: "Read the configured state and report only new changes.",
+      capability: {
+        expectedTools: ["github_search_issues"],
+        requiredTools: ["github_call_mcp_tool"],
+      },
+    });
+
+    expect(result?.ok).toBe(true);
+    expect(store.getAgentJobCapability("job-generic-state")).toMatchObject({
+      expectedTools: ["github_search_issues"],
+      requiredTools: ["github_call_mcp_tool"],
+      stateRefs: [
+        {
+          provider: "object-store",
+          kind: "checkpoint",
+          id: "state-123",
+          purpose: "Deduplicate prior results",
+        },
+      ],
+    });
+
+    store.close();
+  });
+
+  test("applies explicit generic state merge, replace, and clear operations", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-state-mutations",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "State mutations",
+      prompt: "Use state.",
+      schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
+      routeId: "convrt_state",
+      runtimeType: "burble-native",
+      now: new Date("2026-07-19T16:00:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "job-state-mutations",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      expectedTools: [],
+      requiredTools: [],
+      stateRefs: [{ provider: "alpha", kind: "cursor", id: "a" }],
+      now: new Date("2026-07-19T16:00:00.000Z"),
+    });
+    let tick = 0;
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date(1_753_000_000_000 + tick++ * 1_000),
+    });
+    const update = (stateRefMode: "merge" | "replace" | "clear", stateRefs: Array<{ provider: string; kind: string; id: string }>) =>
+      scheduler.updateJobPrompt?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-state-mutations",
+        prompt: "Use state.",
+        capability: { expectedTools: [], requiredTools: [], stateRefMode, stateRefs },
+      });
+
+    expect((await update("merge", [{ provider: "beta", kind: "cursor", id: "b" }]))?.ok).toBe(true);
+    expect(store.getAgentJobCapability("job-state-mutations")?.stateRefs).toEqual([
+      { provider: "alpha", kind: "cursor", id: "a" },
+      { provider: "beta", kind: "cursor", id: "b" },
+    ]);
+    expect((await update("replace", [{ provider: "gamma", kind: "cursor", id: "c" }]))?.ok).toBe(true);
+    expect(store.getAgentJobCapability("job-state-mutations")?.stateRefs).toEqual([
+      { provider: "gamma", kind: "cursor", id: "c" },
+    ]);
+    expect((await update("clear", []))?.ok).toBe(true);
+    expect(store.getAgentJobCapability("job-state-mutations")?.stateRefs).toEqual([]);
+
+    store.close();
+  });
+
+  test("rejects an invalid candidate before changing the stored task", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-preflight",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Preflight",
+      prompt: "Original prompt.",
+      schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
+      routeId: "convrt_preflight",
+      runtimeType: "burble-native",
+      now: new Date("2026-07-19T16:00:00.000Z"),
+    });
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-07-19T16:01:00.000Z"),
+    });
+
+    const result = await scheduler.updateJobPrompt?.({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job-preflight",
+      prompt: "Candidate prompt.",
+      capability: {
+        expectedTools: ["github_search_issues"],
+        requiredTools: [],
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "validation_failed",
+      validation: {
+        errors: [{ code: "missing_required_tool", tool: "github_search_issues" }],
+      },
+    });
+    expect(store.getScheduledJob("job-preflight")?.prompt).toBe("Original prompt.");
+    expect(store.getAgentJobCapability("job-preflight")).toBeNull();
 
     store.close();
   });

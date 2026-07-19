@@ -4,6 +4,7 @@ import {
   formatIssuesMessage,
 } from "../formatting";
 import { collectAgentRun, type AgentRunEvent } from "../agent/types";
+import type { ScheduledJobStateRef } from "../agent/scheduled-job-context";
 import { selectRuntimeToolGroups } from "../agent/tool-groups";
 import { runtimeCompatibilityFamily } from "../agent/runtime-descriptors";
 import { parseGitHubPullRequestListInput } from "../github-query";
@@ -13,6 +14,7 @@ import type {
   SchedulerCreateJobResult,
   SchedulerJobDeleteResult,
   SchedulerJobMutationResult,
+  SchedulerTaskValidation,
   SchedulerRunStatusResult,
   SchedulerShowTaskResult,
   SchedulerTriggerResult,
@@ -400,10 +402,10 @@ async function handleConversationInternal(
         : {}),
       ...(preparation.result
         ? {
-            capability: {
-              requiredTools: preparation.result.requiredTools,
-              stateRefs: preparation.result.stateRefs,
-            },
+            capability: scheduledTaskCapabilityUpdate(
+              preparation.result,
+              schedulerTaskPlan,
+            ),
           }
         : {}),
     });
@@ -468,10 +470,10 @@ async function handleConversationInternal(
       prompt,
       ...(preparation.result
         ? {
-            capability: {
-              requiredTools: preparation.result.requiredTools,
-              stateRefs: preparation.result.stateRefs,
-            },
+            capability: scheduledTaskCapabilityUpdate(
+              preparation.result,
+              schedulerTaskPlan,
+            ),
           }
         : {}),
     });
@@ -844,6 +846,32 @@ async function prepareResolvedScheduledTask(
       },
     };
   }
+}
+
+function scheduledTaskCapabilityUpdate(
+  preparation: ScheduledTaskPreparationResult,
+  plan: SchedulerTaskPlan | null,
+): {
+  expectedTools: string[];
+  requiredTools: string[];
+  stateRefs?: ScheduledJobStateRef[];
+  stateRefMode?: "merge" | "replace" | "clear";
+} {
+  const stateRefMode = plan?.stateRefMode;
+  const shouldIncludeStateRefs =
+    preparation.stateRefs.length > 0 ||
+    stateRefMode === "replace" ||
+    stateRefMode === "clear";
+  return {
+    expectedTools: preparation.requiredTools,
+    requiredTools: preparation.requiredTools,
+    ...(shouldIncludeStateRefs
+      ? {
+          stateRefs: preparation.stateRefs,
+          stateRefMode: stateRefMode ?? "merge",
+        }
+      : {}),
+  };
 }
 
 function appendPreparedResourceSummary(
@@ -1498,6 +1526,9 @@ export function formatScheduledJobUpdateResult(
         : "- enabled runtimes: none",
     ].join("\n");
   }
+  if (result.reason === "validation_failed") {
+    return formatScheduledUpdateValidationFailure(result.validation);
+  }
   return formatScheduledJobSelectionFailure(result);
 }
 
@@ -1510,7 +1541,21 @@ export function formatScheduledJobPromptUpdateResult(
       `- prompt: ${result.job.prompt}`,
     ].join("\n");
   }
+  if (result.reason === "validation_failed") {
+    return formatScheduledUpdateValidationFailure(result.validation);
+  }
   return formatScheduledJobSelectionFailure(result);
+}
+
+function formatScheduledUpdateValidationFailure(
+  validation: SchedulerTaskValidation,
+): string {
+  return [
+    "I couldn’t apply that scheduled task update because its pre-flight validation failed. The existing task was left unchanged.",
+    ...validation.errors.map(
+      (issue) => `- ${issue.code}: ${issue.message}`,
+    ),
+  ].join("\n");
 }
 
 export function formatScheduledJobRuntimeUpdateResult(

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  AgentJobCapabilityRecord,
   AgentJobRunAuditRecord,
   AgentJobRunRecord,
   AgentRuntimeEngine,
@@ -46,6 +47,8 @@ export type SchedulerJobSummary = {
   state: "scheduled" | "paused";
   runtimeType: string | null;
   requiredTools: string[];
+  expectedTools?: string[];
+  stateRefs?: ScheduledJobStateRef[];
   routeId: string | null;
   updatedAt: string;
 };
@@ -242,7 +245,16 @@ export type SchedulerUpdateJobInput = SchedulerJobMutationInput & {
 
 export type SchedulerTaskCapabilityUpdate = {
   requiredTools: string[];
-  stateRefs: ScheduledJobStateRef[];
+  expectedTools?: string[];
+  stateRefs?: ScheduledJobStateRef[];
+  stateRefMode?: "merge" | "replace" | "clear";
+};
+
+type SchedulerTaskPreflightFailure = {
+  ok: false;
+  reason: "validation_failed";
+  validation: SchedulerTaskValidation;
+  jobs: SchedulerJobSummary[];
 };
 
 export type SchedulerJobMutationResult =
@@ -284,7 +296,9 @@ export type SchedulerUpdateJobScheduleResult =
       message: string;
       jobs: SchedulerJobSummary[];
     };
-export type SchedulerUpdateJobPromptResult = SchedulerJobMutationResult;
+export type SchedulerUpdateJobPromptResult =
+  | SchedulerJobMutationResult
+  | SchedulerTaskPreflightFailure;
 export type SchedulerUpdateJobRuntimeResult =
   | SchedulerJobMutationResult
   | {
@@ -296,6 +310,7 @@ export type SchedulerUpdateJobRuntimeResult =
     };
 export type SchedulerUpdateJobResult =
   | SchedulerJobMutationResult
+  | SchedulerTaskPreflightFailure
   | {
       ok: false;
       reason: "invalid_schedule";
@@ -414,7 +429,12 @@ export function createSchedulerControlPlane(
   }): SchedulerJobSummary[] => {
     return store
       .listScheduledJobsForPrincipal(input.workspaceId, input.slackUserId)
-      .map(summarizeScheduledJob);
+      .map((record) =>
+        summarizeScheduledJob(
+          record,
+          store.getAgentJobCapability(record.jobId),
+        ),
+      );
   };
   const listTasks = (input: SchedulerListTasksInput): SchedulerTaskSummary[] =>
     store
@@ -543,7 +563,12 @@ export function createSchedulerControlPlane(
     deleteJob(input) {
       const jobs = store
         .listScheduledJobsForPrincipal(input.workspaceId, input.slackUserId)
-        .map(summarizeScheduledJob);
+        .map((record) =>
+          summarizeScheduledJob(
+            record,
+            store.getAgentJobCapability(record.jobId),
+          ),
+        );
       const selection = selectSchedulerJob(jobs, input.jobId);
       if (!selection.ok) {
         return selection;
@@ -727,7 +752,9 @@ function updateScheduledJobSchedule(
     input.workspaceId,
     input.slackUserId,
   );
-  const jobs = records.map(summarizeScheduledJob);
+  const jobs = records.map((record) =>
+    summarizeScheduledJob(record, store.getAgentJobCapability(record.jobId)),
+  );
   const selection = selectSchedulerJob(jobs, input.jobId);
   if (!selection.ok) {
     return selection;
@@ -779,7 +806,9 @@ function updateScheduledJob(
     input.workspaceId,
     input.slackUserId,
   );
-  const jobs = records.map(summarizeScheduledJob);
+  const jobs = records.map((record) =>
+    summarizeScheduledJob(record, store.getAgentJobCapability(record.jobId)),
+  );
   const selection = selectSchedulerJob(jobs, input.jobId);
   if (!selection.ok) {
     return selection;
@@ -811,6 +840,23 @@ function updateScheduledJob(
   if (!record) {
     return { ok: false, reason: "not_found", jobs };
   }
+  const candidateJob: ScheduledJobRecord = {
+    ...record,
+    prompt: input.prompt ?? record.prompt,
+    schedule: input.schedule ?? record.schedule,
+    runtimeType: input.runtimeType ?? record.runtimeType,
+    updatedAt: now.toISOString(),
+  };
+  const candidateCapability = resolveScheduledJobCapability(
+    store.getAgentJobCapability(record.jobId),
+    candidateJob,
+    input.capability,
+    { preserveExistingRequiredTools: input.prompt === undefined },
+  );
+  const validation = validateScheduledTask(candidateJob, candidateCapability);
+  if (!validation.ok) {
+    return { ok: false, reason: "validation_failed", validation, jobs };
+  }
   const job = store.upsertScheduledJob({
     jobId: record.jobId,
     workspaceId: record.workspaceId,
@@ -823,9 +869,7 @@ function updateScheduledJob(
     state: record.state,
     now,
   });
-  refreshScheduledJobCapability(store, job, now, input.capability, {
-    preserveExistingRequiredTools: input.prompt === undefined,
-  });
+  persistScheduledJobCapability(store, job, now, candidateCapability);
   return { ok: true, job };
 }
 
@@ -844,7 +888,9 @@ function updateScheduledJobPrompt(
     input.workspaceId,
     input.slackUserId,
   );
-  const jobs = records.map(summarizeScheduledJob);
+  const jobs = records.map((record) =>
+    summarizeScheduledJob(record, store.getAgentJobCapability(record.jobId)),
+  );
   const selection = selectSchedulerJob(jobs, input.jobId);
   if (!selection.ok) {
     return selection;
@@ -852,6 +898,20 @@ function updateScheduledJobPrompt(
   const record = records.find((job) => job.jobId === selection.job.jobId);
   if (!record) {
     return { ok: false, reason: "not_found", jobs };
+  }
+  const candidateJob: ScheduledJobRecord = {
+    ...record,
+    prompt: input.prompt,
+    updatedAt: now.toISOString(),
+  };
+  const candidateCapability = resolveScheduledJobCapability(
+    store.getAgentJobCapability(record.jobId),
+    candidateJob,
+    input.capability,
+  );
+  const validation = validateScheduledTask(candidateJob, candidateCapability);
+  if (!validation.ok) {
+    return { ok: false, reason: "validation_failed", validation, jobs };
   }
   const job = store.upsertScheduledJob({
     jobId: record.jobId,
@@ -865,7 +925,7 @@ function updateScheduledJobPrompt(
     state: record.state,
     now,
   });
-  refreshScheduledJobCapability(store, job, now, input.capability);
+  persistScheduledJobCapability(store, job, now, candidateCapability);
   return { ok: true, job };
 }
 
@@ -885,7 +945,9 @@ function updateScheduledJobRuntime(
     input.workspaceId,
     input.slackUserId,
   );
-  const jobs = records.map(summarizeScheduledJob);
+  const jobs = records.map((record) =>
+    summarizeScheduledJob(record, store.getAgentJobCapability(record.jobId)),
+  );
   const selection = selectSchedulerJob(jobs, input.jobId);
   if (!selection.ok) {
     return selection;
@@ -942,7 +1004,9 @@ function updateScheduledJobDelivery(
     input.workspaceId,
     input.slackUserId,
   );
-  const jobs = records.map(summarizeScheduledJob);
+  const jobs = records.map((record) =>
+    summarizeScheduledJob(record, store.getAgentJobCapability(record.jobId)),
+  );
   const selection = selectSchedulerJob(jobs, input.jobId);
   if (!selection.ok) {
     return selection;
@@ -1079,6 +1143,7 @@ function ensureScheduledJobCapability(
     workspaceId: job.workspaceId,
     slackUserId: job.slackUserId,
     requiredTools: inferAllowedToolsForScheduledJob(job),
+    expectedTools: null,
     routeId: job.routeId,
     runtimeType: job.runtimeType,
     capabilityProfile: "scheduled_job",
@@ -1099,26 +1164,114 @@ function refreshScheduledJobCapability(
   options: { preserveExistingRequiredTools?: boolean } = {},
 ): void {
   const existing = store.getAgentJobCapability(job.jobId);
-  store.upsertAgentJobCapability({
+  const resolved = resolveScheduledJobCapability(
+    existing,
+    job,
+    capability,
+    options,
+  );
+  persistScheduledJobCapability(store, job, now, resolved);
+}
+
+function resolveScheduledJobCapability(
+  existing: AgentJobCapabilityRecord | null,
+  job: ScheduledJobRecord,
+  capability?: SchedulerTaskCapabilityUpdate,
+  options: { preserveExistingRequiredTools?: boolean } = {},
+): AgentJobCapabilityRecord {
+  const requiredTools = [
+    ...new Set(
+      capability?.requiredTools ??
+        (options.preserveExistingRequiredTools
+          ? existing?.requiredTools
+          : undefined) ??
+        inferAllowedToolsForScheduledJob(job),
+    ),
+  ].sort();
+  const expectedTools = capability
+    ? [...new Set(capability.expectedTools ?? capability.requiredTools)].sort()
+    : options.preserveExistingRequiredTools
+      ? (existing?.expectedTools ?? null)
+      : null;
+  return {
     jobId: job.jobId,
     workspaceId: job.workspaceId,
     slackUserId: job.slackUserId,
-    requiredTools: [
-      ...new Set(
-        capability?.requiredTools ??
-          (options.preserveExistingRequiredTools
-            ? existing?.requiredTools
-            : undefined) ??
-          inferAllowedToolsForScheduledJob(job),
-      ),
-    ].sort(),
+    requiredTools,
+    expectedTools,
     routeId: job.routeId,
     policyHash: existing?.policyHash ?? null,
     capabilityProfile: existing?.capabilityProfile ?? "scheduled_job",
     runtimeType: job.runtimeType,
-    stateRefs: capability?.stateRefs ?? existing?.stateRefs ?? [],
+    stateRefs: resolveStateRefs(existing?.stateRefs, capability),
     visibilityPolicy: existing?.visibilityPolicy ?? {},
+    createdAt: existing?.createdAt ?? job.createdAt,
+    updatedAt: job.updatedAt,
+  };
+}
+
+function persistScheduledJobCapability(
+  store: Pick<TokenStore, "upsertAgentJobCapability">,
+  job: ScheduledJobRecord,
+  now: Date,
+  capability: AgentJobCapabilityRecord,
+): void {
+  store.upsertAgentJobCapability({
+    jobId: job.jobId,
+    workspaceId: job.workspaceId,
+    slackUserId: job.slackUserId,
+    requiredTools: capability.requiredTools,
+    expectedTools: capability.expectedTools,
+    routeId: job.routeId,
+    policyHash: capability.policyHash,
+    capabilityProfile: capability.capabilityProfile,
+    runtimeType: job.runtimeType,
+    stateRefs: capability.stateRefs,
+    visibilityPolicy: capability.visibilityPolicy,
     now,
+  });
+}
+
+function resolveStateRefs(
+  existingValue: unknown[] | undefined,
+  update?: SchedulerTaskCapabilityUpdate,
+): ScheduledJobStateRef[] {
+  const existing = normalizeScheduledJobStateRefs(existingValue);
+  if (!update || update.stateRefs === undefined) {
+    return existing;
+  }
+  if (update.stateRefMode === "clear") {
+    return [];
+  }
+  const incoming = normalizeScheduledJobStateRefs(update.stateRefs);
+  if (update.stateRefMode === "merge") {
+    return dedupeScheduledJobStateRefs([...existing, ...incoming]);
+  }
+  return incoming;
+}
+
+function normalizeScheduledJobStateRefs(value: unknown): ScheduledJobStateRef[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is ScheduledJobStateRef =>
+    Boolean(
+      entry &&
+        typeof entry === "object" &&
+        !Array.isArray(entry) &&
+        typeof (entry as ScheduledJobStateRef).provider === "string" &&
+        typeof (entry as ScheduledJobStateRef).kind === "string",
+    ),
+  );
+}
+
+function dedupeScheduledJobStateRefs(
+  refs: ScheduledJobStateRef[],
+): ScheduledJobStateRef[] {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = [ref.provider, ref.kind, ref.id ?? "", ref.name ?? ""].join("\u0000");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 }
 
@@ -1150,7 +1303,9 @@ function isActiveScheduledJobRun(run: AgentJobRunRecord, now: Date): boolean {
 function updateScheduledJobState(
   store: Pick<
     TokenStore,
-    "listScheduledJobsForPrincipal" | "upsertScheduledJob"
+    | "listScheduledJobsForPrincipal"
+    | "upsertScheduledJob"
+    | "getAgentJobCapability"
   >,
   input: SchedulerJobMutationInput,
   state: "scheduled" | "paused",
@@ -1160,7 +1315,9 @@ function updateScheduledJobState(
     input.workspaceId,
     input.slackUserId,
   );
-  const jobs = records.map(summarizeScheduledJob);
+  const jobs = records.map((record) =>
+    summarizeScheduledJob(record, store.getAgentJobCapability(record.jobId)),
+  );
   const selection = selectSchedulerJob(jobs, input.jobId);
   if (!selection.ok) {
     return selection;
@@ -1188,6 +1345,7 @@ function updateScheduledJobState(
 
 function summarizeScheduledJob(
   record: ScheduledJobRecord,
+  capability?: SchedulerTaskGrant | null,
 ): SchedulerJobSummary {
   return {
     jobId: record.jobId,
@@ -1196,7 +1354,11 @@ function summarizeScheduledJob(
     schedule: record.schedule,
     state: record.state,
     runtimeType: record.runtimeType,
-    requiredTools: [],
+    requiredTools: capability?.requiredTools ?? [],
+    expectedTools: capability?.expectedTools ?? [],
+    stateRefs: normalizeScheduledJobStateRefs(
+      (capability as AgentJobCapabilityRecord | null | undefined)?.stateRefs,
+    ),
     routeId: record.routeId,
     updatedAt: record.updatedAt,
   };
@@ -1207,9 +1369,8 @@ function summarizeScheduledTask(
   capability: SchedulerTaskGrant | null,
 ): SchedulerTaskSummary {
   return {
-    ...summarizeScheduledJob(record),
+    ...summarizeScheduledJob(record, capability),
     taskId: record.jobId,
-    requiredTools: capability?.requiredTools ?? [],
   };
 }
 

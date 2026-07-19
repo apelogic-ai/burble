@@ -189,6 +189,34 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses explicit generic state-reference mutation semantics", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        JSON.stringify({
+          intent: "update_job_prompt",
+          confidence: 0.98,
+          jobId: "job_stateful",
+          taskPlan: {
+            stateRefMode: "clear",
+            preparation: [],
+            steps: [
+              {
+                id: "report",
+                instruction: "Report current results without prior state.",
+                tools: [],
+              },
+            ],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      taskPlan: {
+        stateRefMode: "clear",
+        preparation: [],
+      },
+    });
+  });
+
   test("rejects malformed preparation plans instead of accepting unsafe partial plans", () => {
     expect(
       parseSchedulerIntentResponse(
@@ -296,6 +324,15 @@ describe("scheduler intent resolver", () => {
           state: "scheduled",
           runtimeType: "openclaw",
           requiredTools: ["github_list_my_pull_requests"],
+          expectedTools: ["github_search_issues"],
+          stateRefs: [
+            {
+              provider: "object-store",
+              kind: "checkpoint",
+              id: "state-123",
+              purpose: "Deduplicate prior results",
+            },
+          ],
           routeId: "convrt_123",
           updatedAt: "2026-06-24T12:00:00.000Z",
         },
@@ -311,6 +348,9 @@ describe("scheduler intent resolver", () => {
     expect(prompt).toContain(
       'requiredTools=["github_list_my_pull_requests"]',
     );
+    expect(prompt).toContain('expectedTools=["github_search_issues"]');
+    expect(prompt).toContain('"provider":"object-store"');
+    expect(prompt).toContain('"id":"state-123"');
     expect(system).toContain("Canonical provider tools");
     expect(system).toContain("github_search_issues");
     expect(system).toContain("google_get_drive_file");

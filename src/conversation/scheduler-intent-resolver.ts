@@ -135,6 +135,9 @@ function mergeRepairedTaskPlan(
       tool: repaired.preparation[index]!.tool,
       input: repaired.preparation[index]!.input,
     })),
+    ...(original.stateRefMode
+      ? { stateRefMode: original.stateRefMode }
+      : {}),
   };
 }
 
@@ -198,6 +201,8 @@ const schedulerIntentSystemPrompt = [
   "When a task update contains multiple requested steps, return taskPlan instead of copying the user's message into prompt.",
   "taskPlan.steps are recurring executable steps. Each step has id, instruction, and the exact recurring provider tool names it requires in tools.",
   "taskPlan.preparation contains one-time provider calls that must finish before the task is updated. Each preparation step has id, tool, input, saveAs, and optional purpose.",
+  "Current task specs include opaque stateRefs. Preserve and reuse matching existing refs by default; do not rediscover or recreate them.",
+  "taskPlan.stateRefMode controls state changes: omit it to preserve existing refs and merge newly prepared refs; use replace or clear only when the user explicitly requests replacement or removal.",
   "Use {{resources.<saveAs>.<field>}} placeholders in recurring instructions when they need values returned by preparation steps.",
   "Do not put one-time setup work such as create a document now into recurring steps.",
   "Do not include schedule cadence or delivery wording as recurring task steps; scheduled delivery is owned by Burble.",
@@ -235,6 +240,8 @@ function schedulerIntentPrompt(
     prompt: string | null;
     state: string;
     requiredTools: string[];
+    expectedTools?: string[];
+    stateRefs?: unknown[];
   }>,
 ): string {
   return [
@@ -249,6 +256,8 @@ function schedulerIntentPrompt(
             `state=${JSON.stringify(job.state)}`,
             `task=${JSON.stringify(job.prompt ?? "")}`,
             `requiredTools=${JSON.stringify(job.requiredTools)}`,
+            `expectedTools=${JSON.stringify(job.expectedTools ?? [])}`,
+            `stateRefs=${JSON.stringify(job.stateRefs ?? [])}`,
           ].join(" "),
         )),
     "Recent context:",
@@ -260,7 +269,7 @@ function schedulerIntentPrompt(
     'For create_job use: {"intent":"create_job","confidence":0.94,"jobId":null,"create":{"title":"Heart emoji every 30 min","prompt":"Post exactly this message: ❤️","schedule":{"kind":"cron","expression":"*/30 * * * *","timezone":"UTC"}}}',
     'For update_job_schedule use: {"intent":"update_job_schedule","confidence":0.94,"jobId":"job_123","schedule":{"kind":"cron","expression":"*/45 * * * *","timezone":"UTC"}}',
     'For update_job_prompt use: {"intent":"update_job_prompt","confidence":0.94,"jobId":"job_123","prompt":"Post exactly this message: ❤️❤️"}',
-    'For a planned update use: {"intent":"update_job_prompt","confidence":0.98,"jobId":"job_123","taskPlan":{"preparation":[{"id":"create_state","tool":"google_docs_create_document","input":{"name":"News state"},"saveAs":"state_document","purpose":"Track previously reported topics"}],"steps":[{"id":"collect","instruction":"Find the latest news and select the top five.","tools":["web_search"]},{"id":"deduplicate","instruction":"Read {{resources.state_document.id}}, remove previously reported topics, and record newly reported topics.","tools":["google_get_drive_file","google_append_to_drive_text_file"]},{"id":"report","instruction":"Return only net-new results.","tools":[]}]}}',
+    'For a planned update use: {"intent":"update_job_prompt","confidence":0.98,"jobId":"job_123","taskPlan":{"preparation":[],"steps":[{"id":"collect","instruction":"Find the latest news and select the top five.","tools":["web_search"]},{"id":"report","instruction":"Return the results.","tools":[]}]}}',
     'For update_job_runtime use: {"intent":"update_job_runtime","confidence":0.94,"jobId":"job_123","runtimeType":"burble-native"}',
     'For a composite update use: {"intent":"update_job","confidence":0.97,"jobId":"job_123","prompt":"Post exactly this message: ❤️","schedule":{"kind":"cron","expression":"*/15 * * * *","timezone":"UTC"},"runtimeType":"burble-native"}',
   ].join("\n");
@@ -364,9 +373,16 @@ function parseSchedulerTaskPlan(value: unknown): SchedulerTaskPlan | null {
   if (new Set(ids).size !== ids.length || new Set(bindings).size !== bindings.length) {
     return null;
   }
+  const stateRefMode =
+    value.stateRefMode === "merge" ||
+    value.stateRefMode === "replace" ||
+    value.stateRefMode === "clear"
+      ? value.stateRefMode
+      : null;
   return {
     steps: steps as SchedulerTaskPlanStep[],
     preparation: preparation as SchedulerTaskPreparationStep[],
+    ...(stateRefMode ? { stateRefMode } : {}),
   };
 }
 
