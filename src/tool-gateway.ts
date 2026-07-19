@@ -2383,17 +2383,71 @@ function validateAndStripScheduledJobToolGatewayInput(
     };
   }
 
+  const strippedInput = stripScheduledJobIds(body.input);
+  const scheduledJob = buildScheduledJobContext(capability);
+  const deniedStateInput = findDeniedScheduledJobStateInput(
+    toolName,
+    strippedInput,
+    scheduledJob.stateRefs
+  );
+  if (deniedStateInput) {
+    return {
+      body,
+      response: jsonResponse(
+        {
+          classification: "user_private",
+          content: {
+            error: "scheduled_job_state_ref_denied",
+            message: `Tool ${toolName} requires ${deniedStateInput} to reference state bound to scheduled job ${jobId}.`
+          }
+        },
+        403
+      )
+    };
+  }
+
   return {
     body: {
       ...body,
       input: applyMcpGwGoogleStateRefHints(
         toolName,
-        stripScheduledJobIds(body.input),
-        buildScheduledJobContext(capability).stateRefs,
+        strippedInput,
+        scheduledJob.stateRefs,
       )
     },
     response: null
   };
+}
+
+function findDeniedScheduledJobStateInput(
+  toolName: string,
+  input: unknown,
+  stateRefs: Array<{ provider: string; id?: string }>
+): string | null {
+  const tool = findProviderToolSpec(toolName);
+  if (!tool?.stateRefInputs?.length) {
+    return null;
+  }
+  const providerStateRefs = stateRefs.filter(
+    (stateRef) => stateRef.provider === tool.provider && stateRef.id
+  );
+  if (providerStateRefs.length === 0 && !tool.stateRefRequired) {
+    return null;
+  }
+  const normalizedInput = coerceProviderToolGatewayInput(toolName, input);
+  for (const stateInput of tool.stateRefInputs) {
+    const stateId = normalizedInput.ok
+      ? normalizedInput.input[stateInput]
+      : undefined;
+    if (
+      typeof stateId !== "string" ||
+      !stateId.trim() ||
+      !providerStateRefs.some((stateRef) => stateRef.id === stateId)
+    ) {
+      return stateInput;
+    }
+  }
+  return null;
 }
 
 function readScheduledJobId(input: unknown): string | null {

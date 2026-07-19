@@ -1308,6 +1308,171 @@ describe("handleToolGatewayRequest", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test("rejects scheduled state-consuming calls outside the job state bindings", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_get_drive_file"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "document",
+          id: "bound-file"
+        }
+      ],
+      visibilityPolicy: {},
+      createdAt: "2026-07-19T22:00:00.000Z",
+      updatedAt: "2026-07-19T22:00:00.000Z"
+    };
+
+    for (const fileId of ["unbound-file", ""]) {
+      const response = await handleToolGatewayRequest(
+        config,
+        createStore(
+          googleConnection,
+          runtime,
+          [],
+          null,
+          [],
+          { found: capability }
+        ),
+        "google.getDriveFile",
+        request(
+          "google.getDriveFile",
+          {
+            scheduledJob: { jobId: "ai-news-hourly" },
+            input: { fileId }
+          },
+          "runtime-token-u123",
+          "rt_u123"
+        )
+      );
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({
+        classification: "user_private",
+        content: {
+          error: "scheduled_job_state_ref_denied",
+          message:
+            "Tool google.getDriveFile requires fileId to reference state bound to scheduled job ai-news-hourly."
+        }
+      });
+    }
+  });
+
+  test("allows scheduled state-consuming calls for the exact bound resource", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_get_drive_file"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "document",
+          id: "bound-file"
+        }
+      ],
+      visibilityPolicy: {},
+      createdAt: "2026-07-19T22:00:00.000Z",
+      updatedAt: "2026-07-19T22:00:00.000Z"
+    };
+    let calls = 0;
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(
+        googleConnection,
+        runtime,
+        [],
+        null,
+        [],
+        { found: capability }
+      ),
+      "google.getDriveFile",
+      request(
+        "google.getDriveFile",
+        {
+          scheduledJob: { jobId: "ai-news-hourly" },
+          input: { fileId: "bound-file", includeContent: false }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        getGoogleDriveFile: async (_token, input) => {
+          calls += 1;
+          expect(input).toEqual({
+            fileId: "bound-file",
+            includeContent: false
+          });
+          return { id: "bound-file", name: "Bound state" };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(calls).toBe(1);
+  });
+
+  test("allows scheduled state-addressable reads when no provider state is bound", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "drive-report",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_get_drive_file"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-07-19T22:00:00.000Z",
+      updatedAt: "2026-07-19T22:00:00.000Z"
+    };
+    let calls = 0;
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(
+        googleConnection,
+        runtime,
+        [],
+        null,
+        [],
+        { found: capability }
+      ),
+      "google.getDriveFile",
+      request(
+        "google.getDriveFile",
+        {
+          scheduledJob: { jobId: "drive-report" },
+          input: { fileId: "discovered-file", includeContent: false }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        getGoogleDriveFile: async () => {
+          calls += 1;
+          return { id: "discovered-file", name: "Discovered file" };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(calls).toBe(1);
+  });
+
   test("adapts Gmail search inputs for MCP-GW", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity"
