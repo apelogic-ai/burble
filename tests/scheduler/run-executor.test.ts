@@ -17,6 +17,80 @@ describe("scheduler run executor", () => {
     expect(scheduledRuntimeRetryDelayMs(4, () => 1)).toBe(30_000);
   });
 
+  test("delivers a pre-runtime failed run through its configured route", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        threadTs: "1710000000.000000",
+      },
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-invalid",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Invalid scheduled task",
+      prompt: "Find organization pull requests.",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      routeId: route.id,
+      runtimeType: "burble-native",
+      state: "scheduled",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-invalid",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "failed",
+      failureReason: "Scheduled task validation failed: missing tool",
+      finishedAt: "2026-07-18T20:02:18.000Z",
+    });
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    let runnerCalled = false;
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: {
+        name: "test-runner",
+        capabilities: { streaming: true, toolEvents: true, remote: true },
+        async *run() {
+          runnerCalled = true;
+        },
+      },
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+    });
+
+    await executor.notifyFailedRun(run.runId);
+
+    expect(runnerCalled).toBe(false);
+    expect(posts).toEqual([
+      {
+        channel: "C123",
+        thread_ts: "1710000000.000000",
+        text: [
+          "Scheduled job failed: Invalid scheduled task",
+          "Job ID: job-invalid",
+          "Run ID: jobrun-invalid",
+          "Reason: Scheduled task validation failed: missing tool",
+        ].join("\n"),
+      },
+    ]);
+
+    store.close();
+  });
+
   test("claims a queued run, executes the job prompt, delivers to the route, and marks success", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();

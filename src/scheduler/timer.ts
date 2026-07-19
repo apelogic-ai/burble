@@ -45,6 +45,7 @@ export type ScheduledJobScheduleValidation =
 export function createSchedulerTimer(input: {
   store: SchedulerTimerStore;
   executeRun: (runId: string) => Promise<void> | void;
+  notifyFailedRun?: (runId: string) => Promise<void>;
   now?: () => Date;
   newRunId?: () => string;
   intervalMs?: number;
@@ -121,6 +122,17 @@ export function createSchedulerTimer(input: {
                 ),
               ].join("; "),
             );
+            try {
+              await input.notifyFailedRun?.(run.runId);
+            } catch (error) {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "Scheduled job validation failure delivery failed";
+              input.logWarn?.(
+                `Scheduled job validation failure notification failed runId=${run.runId} error=${message}`,
+              );
+            }
             continue;
           }
         }

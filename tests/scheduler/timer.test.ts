@@ -480,12 +480,16 @@ describe("scheduler timer", () => {
       now: new Date("2026-06-27T17:10:00.000Z"),
     });
     const warnings: string[] = [];
+    const notifiedRunIds: string[] = [];
     const timer = createSchedulerTimer({
       store,
       now: () => new Date("2026-06-27T17:15:00.000Z"),
       newRunId: () => "jobrun-invalid-grant",
       executeRun: async () => {
         throw new Error("unexpected run execution");
+      },
+      notifyFailedRun: async (runId) => {
+        notifiedRunIds.push(runId);
       },
       logWarn: (message) => warnings.push(message),
       workflowShadowStore: workflowStore,
@@ -517,6 +521,7 @@ describe("scheduler timer", () => {
       failureClass: "validation_failed",
     });
     expect(warnings.join("\n")).toContain("missing_required_tool");
+    expect(notifiedRunIds).toEqual(["jobrun-invalid-grant"]);
 
     store.close();
   });
