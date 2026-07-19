@@ -479,17 +479,24 @@ describe("scheduler timer", () => {
       visibilityPolicy: {},
       now: new Date("2026-06-27T17:10:00.000Z"),
     });
+    let now = new Date("2026-06-27T17:15:00.000Z");
+    const runIds = [
+      "jobrun-invalid-grant",
+      "jobrun-invalid-grant-repeat",
+      "jobrun-invalid-grant-after-update",
+    ];
     const warnings: string[] = [];
     const notifiedRunIds: string[] = [];
     const timer = createSchedulerTimer({
       store,
-      now: () => new Date("2026-06-27T17:15:00.000Z"),
-      newRunId: () => "jobrun-invalid-grant",
+      now: () => now,
+      newRunId: () => runIds.shift()!,
       executeRun: async () => {
         throw new Error("unexpected run execution");
       },
       notifyFailedRun: async (runId) => {
         notifiedRunIds.push(runId);
+        return true;
       },
       logWarn: (message) => warnings.push(message),
       workflowShadowStore: workflowStore,
@@ -522,6 +529,65 @@ describe("scheduler timer", () => {
     });
     expect(warnings.join("\n")).toContain("missing_required_tool");
     expect(notifiedRunIds).toEqual(["jobrun-invalid-grant"]);
+    expect(
+      store.findRecentNotifiedAgentJobRunFailureForPrincipal({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-open-prs",
+        failureReason:
+          store.getAgentJobRun("jobrun-invalid-grant")?.failureReason ?? "",
+        since: new Date("2026-06-27T17:14:00.000Z"),
+      })?.runId,
+    ).toBe("jobrun-invalid-grant");
+
+    now = new Date("2026-06-27T17:30:00.000Z");
+    expect(await timer.tick()).toEqual({ queuedRunIds: [] });
+    expect(notifiedRunIds).toEqual(["jobrun-invalid-grant"]);
+    expect(
+      store.findRecentNotifiedAgentJobRunFailureForPrincipal({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-open-prs",
+        failureReason:
+          store.getAgentJobRun("jobrun-invalid-grant-repeat")?.failureReason ??
+          "",
+        since: new Date("2026-06-27T17:30:00.000Z"),
+      }),
+    ).toBeNull();
+
+    store.upsertScheduledJob({
+      jobId: "job-open-prs",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Check every 15 min for new PRs in apelogic-ai GitHub org",
+      prompt:
+        "Check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org, post in this channel",
+      schedule: {
+        kind: "cron",
+        expression: "*/15 * * * *",
+        timezone: "UTC",
+      },
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-27T17:31:00.000Z"),
+    });
+    now = new Date("2026-06-27T17:45:00.000Z");
+    expect(await timer.tick()).toEqual({ queuedRunIds: [] });
+    expect(notifiedRunIds).toEqual([
+      "jobrun-invalid-grant",
+      "jobrun-invalid-grant-after-update",
+    ]);
+    expect(
+      store.findRecentNotifiedAgentJobRunFailureForPrincipal({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-open-prs",
+        failureReason:
+          store.getAgentJobRun("jobrun-invalid-grant-after-update")
+            ?.failureReason ?? "",
+        since: new Date("2026-06-27T17:31:00.000Z"),
+      })?.runId,
+    ).toBe("jobrun-invalid-grant-after-update");
 
     store.close();
   });

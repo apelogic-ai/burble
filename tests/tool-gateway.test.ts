@@ -371,6 +371,8 @@ function createStore(
     listAgentJobRunsForJob: () => [],
     listRecentAgentJobRuns: () => [],
     findRecentFailedAgentJobRunForPrincipal: () => null,
+    findRecentNotifiedAgentJobRunFailureForPrincipal: () => null,
+    markAgentJobRunFailureNotificationSent: () => null,
     upsertAgentJobRunAudit: () => {
       throw new Error("unexpected agent job run audit write");
     },

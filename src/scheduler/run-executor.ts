@@ -80,7 +80,7 @@ const DEFAULT_SCHEDULED_RUNTIME_RETRY_JITTER_RATIO = 0.5;
 
 export type SchedulerRunExecutor = {
   executeRun(runId: string): Promise<void>;
-  notifyFailedRun(runId: string): Promise<void>;
+  notifyFailedRun(runId: string): Promise<boolean>;
 };
 
 export function buildScheduledRunAdmissionAgentInput(input: {
@@ -145,15 +145,15 @@ export function createSchedulerRunExecutor(input: {
     async notifyFailedRun(runId) {
       const run = input.store.getAgentJobRun(runId);
       if (!run || run.status !== "failed") {
-        return;
+        return false;
       }
       const job = input.store.getScheduledJob(run.jobId);
       if (!job?.routeId) {
-        return;
+        return false;
       }
       const route = input.store.getConversationRoute(job.routeId);
       const destination = route ? readSlackRouteDestination(route) : null;
-      await postScheduledRunFailureNotification({
+      return postScheduledRunFailureNotification({
         slackClient: input.slackClient,
         job,
         run,

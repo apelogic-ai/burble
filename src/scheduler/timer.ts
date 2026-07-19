@@ -19,6 +19,8 @@ type SchedulerTimerStore = Pick<
   | "listAgentJobRunsForJob"
   | "listAgentJobRunsForPrincipal"
   | "createAgentJobRun"
+  | "findRecentNotifiedAgentJobRunFailureForPrincipal"
+  | "markAgentJobRunFailureNotificationSent"
   | "upsertAgentJobCapability"
   | "getAgentJobCapability"
 >;
@@ -45,7 +47,7 @@ export type ScheduledJobScheduleValidation =
 export function createSchedulerTimer(input: {
   store: SchedulerTimerStore;
   executeRun: (runId: string) => Promise<void> | void;
-  notifyFailedRun?: (runId: string) => Promise<void>;
+  notifyFailedRun?: (runId: string) => Promise<boolean>;
   now?: () => Date;
   newRunId?: () => string;
   intervalMs?: number;
@@ -94,6 +96,14 @@ export function createSchedulerTimer(input: {
           if (!validation.ok && !workflowTimerAuthority) {
             const failureReason =
               formatScheduledTaskValidationFailureReason(validation);
+            const shouldNotify =
+              input.store.findRecentNotifiedAgentJobRunFailureForPrincipal({
+                workspaceId: job.workspaceId,
+                slackUserId: job.slackUserId,
+                jobId: job.jobId,
+                failureReason,
+                since: new Date(job.updatedAt),
+              }) === null;
             const run = input.store.createAgentJobRun({
               runId: newRunId(),
               jobId: job.jobId,
@@ -122,16 +132,24 @@ export function createSchedulerTimer(input: {
                 ),
               ].join("; "),
             );
-            try {
-              await input.notifyFailedRun?.(run.runId);
-            } catch (error) {
-              const message =
-                error instanceof Error
-                  ? error.message
-                  : "Scheduled job validation failure delivery failed";
-              input.logWarn?.(
-                `Scheduled job validation failure notification failed runId=${run.runId} error=${message}`,
-              );
+            if (shouldNotify && input.notifyFailedRun) {
+              try {
+                const delivered = await input.notifyFailedRun(run.runId);
+                if (delivered) {
+                  input.store.markAgentJobRunFailureNotificationSent(
+                    run.runId,
+                    timestamp,
+                  );
+                }
+              } catch (error) {
+                const message =
+                  error instanceof Error
+                    ? error.message
+                    : "Scheduled job validation failure delivery failed";
+                input.logWarn?.(
+                  `Scheduled job validation failure notification failed runId=${run.runId} error=${message}`,
+                );
+              }
             }
             continue;
           }

@@ -72,7 +72,7 @@ describe("scheduler run executor", () => {
       },
     });
 
-    await executor.notifyFailedRun(run.runId);
+    expect(await executor.notifyFailedRun(run.runId)).toBe(true);
 
     expect(runnerCalled).toBe(false);
     expect(posts).toEqual([

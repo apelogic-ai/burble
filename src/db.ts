@@ -274,7 +274,9 @@ type ScheduledJobRow = Omit<ScheduledJobRecord, "schedule" | "runtimeType"> & {
   runtimeType: string | null;
 };
 
-type AgentJobRunRow = AgentJobRunRecord;
+type AgentJobRunRow = AgentJobRunRecord & {
+  failureNotificationSentAt: string | null;
+};
 
 type AgentJobRunAuditRow = Omit<
   AgentJobRunAuditRecord,
@@ -485,6 +487,7 @@ export function createTokenStore(path: string) {
       trigger_source TEXT NOT NULL,
       status TEXT NOT NULL,
       failure_reason TEXT,
+      failure_notification_sent_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       started_at TEXT,
@@ -580,6 +583,7 @@ export function createTokenStore(path: string) {
   ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
   ensureAgentRuntimeColumn(db, "sandbox_id", "TEXT");
   ensureAgentRuntimeColumn(db, "policy_hash", "TEXT");
+  ensureAgentJobRunColumn(db, "failure_notification_sent_at", "TEXT");
   migrateLegacyAgentRuntimeEngines(db);
   ensureAgentJobCapabilityColumn(
     db,
@@ -1261,6 +1265,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1277,6 +1282,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1294,6 +1300,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1314,6 +1321,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1326,6 +1334,33 @@ export function createTokenStore(path: string) {
       AND failure_reason = ?
       AND updated_at >= ?
     ORDER BY updated_at DESC, run_id ASC
+    LIMIT 1
+  `);
+  const findRecentNotifiedAgentJobRunFailureForPrincipal = db.query<
+    AgentJobRunRow,
+    [string, string, string, string, string]
+  >(`
+    SELECT
+      run_id AS runId,
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      trigger_source AS triggerSource,
+      status,
+      failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      started_at AS startedAt,
+      finished_at AS finishedAt
+    FROM agent_job_runs
+    WHERE workspace_id = ?
+      AND slack_user_id = ?
+      AND job_id = ?
+      AND status = 'failed'
+      AND failure_reason = ?
+      AND failure_notification_sent_at >= ?
+    ORDER BY failure_notification_sent_at DESC, run_id ASC
     LIMIT 1
   `);
   const upsertAgentJobRunAudit = db.query(`
@@ -1430,6 +1465,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1453,6 +1489,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1473,6 +1510,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1499,6 +1537,12 @@ export function createTokenStore(path: string) {
         finished_at = ?
     WHERE run_id = ?
       AND status = 'running'
+  `);
+  const markAgentJobRunFailureNotificationSent = db.query(`
+    UPDATE agent_job_runs
+    SET failure_notification_sent_at = ?
+    WHERE run_id = ?
+      AND status = 'failed'
   `);
   const upsertAgentJobCapability = db.query(`
     INSERT INTO agent_job_capabilities (
@@ -2422,6 +2466,36 @@ export function createTokenStore(path: string) {
       return record ? toAgentJobRunRecord(record) : null;
     },
 
+    findRecentNotifiedAgentJobRunFailureForPrincipal(input: {
+      workspaceId: string;
+      slackUserId: string;
+      jobId: string;
+      failureReason: string;
+      since: Date;
+    }): AgentJobRunRecord | null {
+      const record = findRecentNotifiedAgentJobRunFailureForPrincipal.get(
+        input.workspaceId,
+        input.slackUserId,
+        input.jobId,
+        input.failureReason,
+        input.since.toISOString()
+      );
+      return record ? toAgentJobRunRecord(record) : null;
+    },
+
+    markAgentJobRunFailureNotificationSent(
+      runId: string,
+      now = new Date()
+    ): AgentJobRunRecord | null {
+      const timestamp = now.toISOString();
+      const result = markAgentJobRunFailureNotificationSent.run(timestamp, runId);
+      if (result.changes === 0) {
+        return null;
+      }
+      const record = getAgentJobRun.get(runId);
+      return record ? toAgentJobRunRecord(record) : null;
+    },
+
     upsertAgentJobRunAudit(input: {
       runId: string;
       jobId: string;
@@ -2893,6 +2967,20 @@ function ensureAgentRuntimeColumn(
     .map((column) => column.name);
   if (!columns.includes(name)) {
     db.exec(`ALTER TABLE agent_runtimes ADD COLUMN ${name} ${definition}`);
+  }
+}
+
+function ensureAgentJobRunColumn(
+  db: Database,
+  name: string,
+  definition: string
+): void {
+  const columns = db
+    .query<{ name: string }, []>("PRAGMA table_info(agent_job_runs)")
+    .all()
+    .map((column) => column.name);
+  if (!columns.includes(name)) {
+    db.exec(`ALTER TABLE agent_job_runs ADD COLUMN ${name} ${definition}`);
   }
 }
 
