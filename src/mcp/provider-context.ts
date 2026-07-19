@@ -11,7 +11,7 @@ import {
   providerDescriptor,
   type ProviderDescriptorId
 } from "../providers/descriptors";
-import type { callMcpGwTool } from "./mcp-gw-client";
+import type { callMcpGwTool, listMcpGwTools } from "./mcp-gw-client";
 import type {
   UpstreamMcpTool,
   UpstreamMcpToolResult
@@ -38,6 +38,7 @@ export type ProviderMcpDeps = Partial<GitHubToolDeps> &
     mcpIdentityIssuer?: McpIdentityIssuer | null;
     getSlackEmail?: (slackUserId: string) => Promise<string>;
     callMcpGwTool?: typeof callMcpGwTool;
+    listMcpGwTools?: typeof listMcpGwTools;
   };
 
 export async function withConnection<TContent>(

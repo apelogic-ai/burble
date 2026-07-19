@@ -35,6 +35,10 @@ import {
   routeRuntimeEndpointFetch,
 } from "../runtime-endpoint-routing";
 import { createRoutedRuntimeWebSocketFactory } from "../runtime-websocket";
+import type {
+  McpGwConnectionStatusPrincipal,
+  McpGwRuntimeConnectionStatuses,
+} from "../../mcp/mcp-gw-connection-status";
 
 export type AgentRuntimeFetch = (
   input: string,
@@ -67,6 +71,10 @@ export type ManagedRuntimeAgentRunnerDeps = {
   runSnapshotTimeoutMs?: number;
   logInfo?: (message: string) => void;
   observability?: ObservabilitySink;
+  resolveMcpGwConnectionStatuses?: (
+    principal: McpGwConnectionStatusPrincipal,
+  ) => Promise<McpGwRuntimeConnectionStatuses>;
+  mcpGwConnectionStatusCacheTtlMs?: number;
 };
 
 export type ManagedRuntimeAdmissionResult =
@@ -136,6 +144,7 @@ type RuntimeAttachment = {
 const maxRuntimeRecentMessages = 12;
 const maxRuntimeRecentMessageChars = 300;
 const runtimeCapabilityCacheTtlMs = 60_000;
+const defaultMcpGwConnectionStatusCacheTtlMs = 30_000;
 const defaultRunSnapshotTimeoutMs = 180_000;
 
 type RuntimeCapabilityCacheEntry = {
@@ -144,6 +153,11 @@ type RuntimeCapabilityCacheEntry = {
 };
 
 type RuntimeCapabilityCache = Map<string, RuntimeCapabilityCacheEntry>;
+
+type McpGwConnectionStatusCacheEntry = {
+  expiresAt: number;
+  statuses: McpGwRuntimeConnectionStatuses;
+};
 
 type RuntimeRunLease = {
   waitedMs: number;
@@ -230,6 +244,10 @@ export function createManagedRuntimeAdapter(
   const runSnapshotTimeoutMs =
     deps.runSnapshotTimeoutMs ?? defaultRunSnapshotTimeoutMs;
   const runtimeCapabilityCache: RuntimeCapabilityCache = new Map();
+  const mcpGwConnectionStatusCache = new Map<
+    string,
+    McpGwConnectionStatusCacheEntry
+  >();
   const runtimeRunLeases = new Map<string, Promise<void>>();
 
   return {
@@ -276,6 +294,19 @@ export function createManagedRuntimeAdapter(
       const runStartedAt = Date.now();
       const runtimeId = runtime?.id ?? "static";
       const runtimeType = runtime?.engine ?? "static";
+      const mcpGwConnectionStatuses = await resolveRuntimeMcpGwConnectionStatuses({
+        deps,
+        principal: input.principal,
+        principalId,
+        cache: mcpGwConnectionStatusCache,
+        logInfo,
+      });
+      const githubConnected =
+        mcpGwConnectionStatuses.github?.connected ??
+        Boolean(input.connections.github);
+      const googleConnected =
+        mcpGwConnectionStatuses.google?.connected ??
+        Boolean(input.connections.google);
       const scheduledJobSummary = summarizeScheduledJob(input);
       const capabilityManifest = await discoverRuntimeCapabilityManifest({
         baseUrl,
@@ -301,8 +332,8 @@ export function createManagedRuntimeAdapter(
           `principal=${principalId}`,
           `conversationRoot=${input.conversation?.rootId ?? "unknown"}`,
           `textLength=${input.text.length}`,
-          `githubConnected=${Boolean(input.connections.github)}`,
-          `googleConnected=${Boolean(input.connections.google)}`,
+          `githubConnected=${githubConnected}`,
+          `googleConnected=${googleConnected}`,
           `jiraConnected=${Boolean(input.connections.jira)}`,
           `slackConnected=${Boolean(input.connections.slack)}`,
         ].join(" "),
@@ -317,8 +348,8 @@ export function createManagedRuntimeAdapter(
         attributes: {
           conversationRoot: input.conversation?.rootId ?? "unknown",
           textLength: input.text.length,
-          githubConnected: Boolean(input.connections.github),
-          googleConnected: Boolean(input.connections.google),
+          githubConnected,
+          googleConnected,
           jiraConnected: Boolean(input.connections.jira),
           slackConnected: Boolean(input.connections.slack),
           ...(scheduledJobSummary ? { scheduledJob: scheduledJobSummary } : {}),
@@ -336,8 +367,8 @@ export function createManagedRuntimeAdapter(
           summary: {
             conversationRoot: input.conversation?.rootId ?? "unknown",
             textLength: input.text.length,
-            githubConnected: Boolean(input.connections.github),
-            googleConnected: Boolean(input.connections.google),
+            githubConnected,
+            googleConnected,
             jiraConnected: Boolean(input.connections.jira),
             slackConnected: Boolean(input.connections.slack),
             ...(scheduledJobSummary
@@ -357,6 +388,7 @@ export function createManagedRuntimeAdapter(
         runtime,
         runId,
         config: deps.config,
+        mcpGwConnectionStatuses,
       });
       const runUrl = `${baseUrl}/runs`;
       let agentResponse: AgentOutput | null;
@@ -1015,6 +1047,7 @@ function buildManagedRuntimeRunBody(
     runtime: RuntimeHandle | null;
     runId: string;
     config?: Config;
+    mcpGwConnectionStatuses?: McpGwRuntimeConnectionStatuses;
   },
 ): unknown {
   return {
@@ -1026,6 +1059,9 @@ function buildManagedRuntimeRunBody(
       : {}),
     input: sanitizeAgentInput(input, {
       ...(options.config ? { config: options.config } : {}),
+      ...(options.mcpGwConnectionStatuses
+        ? { mcpGwConnectionStatuses: options.mcpGwConnectionStatuses }
+        : {}),
       ...(options.runtime?.id ? { runtimeId: options.runtime.id } : {}),
       runId: options.runId,
     }),
@@ -1740,6 +1776,7 @@ function sanitizeAgentInput(
     config?: Config;
     runtimeId?: string;
     runId?: string;
+    mcpGwConnectionStatuses?: McpGwRuntimeConnectionStatuses;
   },
 ): {
   text: string;
@@ -1779,7 +1816,9 @@ function sanitizeAgentInput(
     ...(input.toolGroups ? { toolGroups: input.toolGroups } : {}),
     ...(input.scheduledJob ? { scheduledJob: input.scheduledJob } : {}),
     connections: {
-      github: github
+      github: options?.mcpGwConnectionStatuses?.github
+        ? options.mcpGwConnectionStatuses.github
+        : github
         ? {
             connected: true,
             email: github.email,
@@ -1788,7 +1827,9 @@ function sanitizeAgentInput(
         : {
             connected: false,
           },
-      google: google
+      google: options?.mcpGwConnectionStatuses?.google
+        ? options.mcpGwConnectionStatuses.google
+        : google
         ? {
             connected: true,
             email: google.email,
@@ -1826,6 +1867,43 @@ function sanitizeAgentInput(
           },
     },
   };
+}
+
+async function resolveRuntimeMcpGwConnectionStatuses(input: {
+  deps: ManagedRuntimeAgentRunnerDeps;
+  principal: McpGwConnectionStatusPrincipal;
+  principalId: string;
+  cache: Map<string, McpGwConnectionStatusCacheEntry>;
+  logInfo: (message: string) => void;
+}): Promise<McpGwRuntimeConnectionStatuses> {
+  if (!input.deps.resolveMcpGwConnectionStatuses) {
+    return {};
+  }
+  const now = Date.now();
+  const cached = input.cache.get(input.principalId);
+  if (cached && cached.expiresAt > now) {
+    return cached.statuses;
+  }
+  try {
+    const statuses = await input.deps.resolveMcpGwConnectionStatuses(
+      input.principal,
+    );
+    input.cache.set(input.principalId, {
+      expiresAt:
+        now +
+        (input.deps.mcpGwConnectionStatusCacheTtlMs ??
+          defaultMcpGwConnectionStatusCacheTtlMs),
+      statuses,
+    });
+    return statuses;
+  } catch (error) {
+    input.logInfo(
+      `Could not resolve MCP-GW connection statuses principal=${input.principalId} error=${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return {};
+  }
 }
 
 function compactRuntimeContext(

@@ -100,7 +100,7 @@ describe("adaptMcpGwGoogleToolCall", () => {
         arguments: {}
       },
       {
-        status: "needs_google_connect",
+        status: "needs_connect",
         message: "Google Workspace reauthorization required"
       }
     );

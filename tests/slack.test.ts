@@ -2061,6 +2061,42 @@ describe("task and job slash commands", () => {
 });
 
 describe("buildAuthResponse", () => {
+  test("uses MCP-GW GitHub status instead of a stale local connection", () => {
+    const response = buildAuthResponse({
+      githubUrl: "https://github.com/login/oauth/authorize?state=mcp-gw",
+      githubMcpGw: {
+        status: {
+          connected: false,
+          email: "mcp-gw-user@example.test",
+          scopesRequired: ["repo", "read:org", "workflow", "notifications"],
+          scopesGranted: ["repo", "read:org"],
+          missingScopes: ["workflow", "notifications"]
+        }
+      },
+      googleUrl: null,
+      hubspotUrl: null,
+      jiraUrl: null,
+      slackUrl: null,
+      connections: {
+        github: {
+          provider: "github",
+          email: "legacy@example.test",
+          slackUserId: "U123",
+          providerLogin: "legacy-user",
+          accessToken: "legacy-token",
+          connectedAt: "2026-05-26T00:00:00.000Z"
+        }
+      }
+    });
+    const serialized = JSON.stringify(response.blocks);
+
+    expect(serialized).toContain("Reconnect required through MCP-GW");
+    expect(serialized).toContain("mcp-gw-user@example.test");
+    expect(serialized).toContain("2 required GitHub scope");
+    expect(serialized).not.toContain("legacy-user");
+    expect(serialized).toContain("provider_disconnect");
+  });
+
   test("builds a connections menu with GitHub and future providers", () => {
     const response = buildAuthResponse({
       githubUrl: "https://example.test/github",

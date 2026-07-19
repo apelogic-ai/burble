@@ -308,11 +308,140 @@ describe("scheduler intent resolver", () => {
     expect(system).toContain('"0 9 * * 1-5"');
     expect(prompt).toContain("job_github_checker");
     expect(prompt).toContain("GitHub PR checker");
+    expect(prompt).toContain(
+      'requiredTools=["github_list_my_pull_requests"]',
+    );
+    expect(system).toContain("Canonical provider tools");
+    expect(system).toContain("github_search_issues");
+    expect(system).toContain("google_get_drive_file");
+    expect(system).toContain("google_append_to_drive_text_file");
+    expect(system).toContain(
+      "Use only the exact canonical tool names listed below",
+    );
     expect(result).toEqual({
       intent: "trigger_job",
       confidence: 0.97,
       jobId: "job_github_checker",
     });
+  });
+
+  test("repairs an unknown recurring tool once without changing scheduler intent", async () => {
+    const requests: Array<{ system: string; prompt: string }> = [];
+    const resolver = createLlmSchedulerIntentResolver({
+      model: "openai:gpt-test",
+      resolveModel: () =>
+        ({
+          provider: "openai",
+          modelId: "gpt-test",
+        }) as never,
+      generateText: async (request) => {
+        requests.push({ system: request.system, prompt: request.prompt });
+        if (requests.length === 1) {
+          return {
+            text: JSON.stringify({
+              intent: "update_job_prompt",
+              confidence: 0.98,
+              jobId: "job_pr_checker",
+              taskPlan: {
+                preparation: [],
+                steps: [
+                  {
+                    id: "collect_open_prs",
+                    instruction:
+                      "Find open pull requests in the example-org organization.",
+                    tools: ["github"],
+                  },
+                  {
+                    id: "deduplicate",
+                    instruction:
+                      "Use the existing Drive state document to remove previously reported pull requests.",
+                    tools: [
+                      "google_get_drive_file",
+                      "google_append_to_drive_text_file",
+                    ],
+                  },
+                  {
+                    id: "report",
+                    instruction:
+                      "Return only net-new pull requests or exactly: no new open PRs",
+                    tools: [],
+                  },
+                ],
+              },
+            }),
+          };
+        }
+        return {
+          text: JSON.stringify({
+            intent: "update_job_prompt",
+            confidence: 0.4,
+            jobId: "wrong_job",
+            taskPlan: {
+              preparation: [],
+              steps: [
+                {
+                  id: "collect_open_prs",
+                  instruction: "Replace the user task with something else.",
+                  tools: ["github_search_issues"],
+                },
+                {
+                  id: "deduplicate",
+                  instruction:
+                    "Use the existing Drive state document to remove previously reported pull requests.",
+                  tools: [
+                    "google_get_drive_file",
+                    "google_append_to_drive_text_file",
+                  ],
+                },
+                {
+                  id: "report",
+                  instruction:
+                    "Return only net-new pull requests or exactly: no new open PRs",
+                  tools: [],
+                },
+              ],
+            },
+          }),
+        };
+      },
+    });
+
+    const result = await resolver({
+      text: "modify the open PRs cron job to run in steps",
+      recentMessages: [],
+      jobs: [
+        {
+          jobId: "job_pr_checker",
+          title: "Open pull request checker",
+          prompt: "Check for open pull requests.",
+          schedule: { kind: "cron", expression: "*/15 * * * *" },
+          state: "scheduled",
+          runtimeType: "burble-native",
+          requiredTools: [
+            "github_search_issues",
+            "google_get_drive_file",
+            "google_append_to_drive_text_file",
+          ],
+          routeId: "convrt_123",
+          updatedAt: "2026-07-18T16:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.prompt).toContain(
+      "Recurring step collect_open_prs references unknown provider tool github.",
+    );
+    expect(requests[1]?.system).toContain("github_search_issues");
+    expect(result.intent).toBe("update_job_prompt");
+    expect(result.jobId).toBe("job_pr_checker");
+    expect(result.confidence).toBe(0.98);
+    expect(result.taskPlan?.steps[0]?.tools).toEqual([
+      "github_search_issues",
+    ]);
+    expect(result.taskPlan?.steps[0]?.instruction).toBe(
+      "Find open pull requests in the example-org organization.",
+    );
   });
 
   test("returns none when the LLM intent resolver times out", async () => {

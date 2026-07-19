@@ -464,3 +464,28 @@ tools:
         min: 1
         optional: true
         description: Optional source branch. Defaults to repository default branch.
+
+  - name: github_list_mcp_tools
+    alias: github.listMcpTools
+    implementation: listMcpTools
+    title: GitHub MCP tools
+    description: List all GitHub tools currently advertised by the centralized MCP gateway for this user.
+    risk: read
+    input: {}
+
+  - name: github_call_mcp_tool
+    alias: github.callMcpTool
+    implementation: callMcpTool
+    title: GitHub MCP tool call
+    description: Call any official or GitHub-namespaced tool advertised by the centralized MCP gateway with this user's connected GitHub identity.
+    risk: high_write
+    confirmation: none
+    input:
+      name:
+        type: string
+        min: 1
+        description: Exact official or GitHub-prefixed MCP tool name returned by github.listMcpTools
+      arguments:
+        type: object
+        optional: true
+        description: JSON arguments matching the discovered upstream tool schema

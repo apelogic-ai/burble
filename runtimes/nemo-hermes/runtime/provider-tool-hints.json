@@ -57,6 +57,23 @@
           }
         },
         {
+          "name": "github_call_mcp_tool",
+          "alias": "github.callMcpTool",
+          "description": "Call any official or GitHub-namespaced tool advertised by the centralized MCP gateway with this user's connected GitHub identity.",
+          "input": {
+            "name": {
+              "description": "Exact official or GitHub-prefixed MCP tool name returned by github.listMcpTools",
+              "type": "string",
+              "min": 1
+            },
+            "arguments": {
+              "optional": true,
+              "description": "JSON arguments matching the discovered upstream tool schema",
+              "type": "object"
+            }
+          }
+        },
+        {
           "name": "github_close_issue",
           "alias": "github.closeIssue",
           "description": "Close a GitHub issue. Use only when explicitly requested.",
@@ -307,6 +324,12 @@
           "name": "github_list_assigned_issues",
           "alias": "github.listAssignedIssues",
           "description": "List GitHub issues assigned to this Slack user.",
+          "input": {}
+        },
+        {
+          "name": "github_list_mcp_tools",
+          "alias": "github.listMcpTools",
+          "description": "List all GitHub tools currently advertised by the centralized MCP gateway for this user.",
           "input": {}
         },
         {

@@ -69,6 +69,12 @@ internal_api_token: ""
 atlassian_mcp_url: https://mcp.atlassian.com/v1/mcp
 runtime_jwt_issuer: ""
 runtime_jwt_private_key_path: /data/runtime-jwt-private.pem
+mcp_identity_issuer: ""
+mcp_identity_private_key_path: /data/mcp-identity-private.pem
+mcp_gw_audience: ""
+mcp_gw_mcp_url: ""
+google_via_mcp_gw: false
+github_via_mcp_gw: false
 observability_jsonl_path: ""
 observability_jsonl_dir: /data/observability/events
 observability_include_content: false

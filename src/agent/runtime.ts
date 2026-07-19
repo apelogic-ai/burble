@@ -11,6 +11,10 @@ import type { ModelResolver } from "./providers";
 import type { RuntimeFactory } from "./runtime-factory";
 import type { AgentRunner } from "./types";
 import type { ObservabilitySink } from "../observability";
+import type {
+  McpGwConnectionStatusPrincipal,
+  McpGwRuntimeConnectionStatuses,
+} from "../mcp/mcp-gw-connection-status";
 
 export type ConfiguredAgentRunnerDeps = {
   config?: Config;
@@ -29,6 +33,9 @@ export type ConfiguredAgentRunnerDeps = {
   generateText?: AgentGenerateText;
   logInfo?: (message: string) => void;
   observability?: ObservabilitySink;
+  resolveMcpGwConnectionStatuses?: (
+    principal: McpGwConnectionStatusPrincipal,
+  ) => Promise<McpGwRuntimeConnectionStatuses>;
 };
 
 export function createConfiguredAgentRunner(
@@ -61,7 +68,13 @@ export function createConfiguredAgentRunner(
         ...(managedRuntimeUrl ? { baseUrl: managedRuntimeUrl } : {}),
         ...(deps.runtimeFactory ? { runtimeFactory: deps.runtimeFactory } : {}),
         ...(deps.logInfo ? { logInfo: deps.logInfo } : {}),
-        ...(deps.observability ? { observability: deps.observability } : {})
+        ...(deps.observability ? { observability: deps.observability } : {}),
+        ...(deps.resolveMcpGwConnectionStatuses
+          ? {
+              resolveMcpGwConnectionStatuses:
+                deps.resolveMcpGwConnectionStatuses,
+            }
+          : {})
       });
     }
   }

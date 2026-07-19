@@ -69,6 +69,7 @@ describe("readConfig", () => {
       mcpGwAudience: null,
       mcpGwMcpUrl: null,
       googleViaMcpGw: false,
+      githubViaMcpGw: false,
       openClawConfigPatchHostPath: null,
       internalApiToken: null,
       observabilityJsonlPath: null,
@@ -88,6 +89,24 @@ describe("readConfig", () => {
     expect(readConfig({ ...validEnv, SLACK_LOG_LEVEL: "debug" }).slackLogLevel).toBe(
       "debug"
     );
+  });
+
+  test("does not require Burble GitHub OAuth credentials on the MCP-GW path", () => {
+    const { GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, ...env } = validEnv;
+
+    expect(
+      readConfig({
+        ...env,
+        GITHUB_VIA_MCP_GW: "true",
+        MCP_IDENTITY_PRIVATE_KEY_PATH: "/data/mcp-identity-private.pem",
+        MCP_GW_AUDIENCE: "https://mcp-gw.example/mcp",
+        MCP_GW_MCP_URL: "https://mcp-gw.example/mcp"
+      })
+    ).toMatchObject({
+      githubClientId: "",
+      githubClientSecret: "",
+      githubViaMcpGw: true
+    });
   });
 
   test("reads optional Slack OAuth settings", () => {
@@ -383,7 +402,8 @@ describe("readConfig", () => {
       MCP_IDENTITY_PRIVATE_KEY_PATH: "/data/mcp-identity-private.pem",
       MCP_GW_AUDIENCE: "https://18.210.100.44.nip.io/mcp/",
       MCP_GW_MCP_URL: "https://18.210.100.44.nip.io/mcp/",
-      GOOGLE_VIA_MCP_GW: "true"
+      GOOGLE_VIA_MCP_GW: "true",
+      GITHUB_VIA_MCP_GW: "true"
     });
 
     expect(config.mcpIdentityIssuer).toBe(
@@ -395,6 +415,30 @@ describe("readConfig", () => {
     expect(config.mcpGwAudience).toBe("https://18.210.100.44.nip.io/mcp");
     expect(config.mcpGwMcpUrl).toBe("https://18.210.100.44.nip.io/mcp");
     expect(config.googleViaMcpGw).toBe(true);
+    expect(config.githubViaMcpGw).toBe(true);
+  });
+
+  test("requires MCP identity configuration when GitHub via MCP-GW is enabled", () => {
+    expect(() =>
+      readConfig({
+        ...validEnv,
+        MCP_GW_AUDIENCE: "https://18.210.100.44.nip.io/mcp",
+        MCP_GW_MCP_URL: "https://18.210.100.44.nip.io/mcp",
+        GITHUB_VIA_MCP_GW: "true"
+      })
+    ).toThrow(
+      "GITHUB_VIA_MCP_GW requires MCP_IDENTITY_PRIVATE_KEY_PATH to use a persistent MCP identity signing key"
+    );
+
+    expect(() =>
+      readConfig({
+        ...validEnv,
+        MCP_IDENTITY_PRIVATE_KEY_PATH: "/data/mcp-identity-private.pem",
+        GITHUB_VIA_MCP_GW: "true"
+      })
+    ).toThrow(
+      "GITHUB_VIA_MCP_GW requires MCP_GW_MCP_URL and MCP_GW_AUDIENCE"
+    );
   });
 
   test("requires a persistent MCP identity signing key when Google via MCP-GW is enabled", () => {

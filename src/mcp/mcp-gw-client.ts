@@ -20,8 +20,9 @@ export type McpGwToolCallResult =
       result: UpstreamMcpToolResult;
     }
   | {
-      status: "needs_google_connect";
+      status: "needs_connect";
       message: string;
+      provider?: string;
       connectUrl?: string;
     };
 
@@ -37,6 +38,16 @@ export class McpGwUnauthorizedError extends Error {
     this.protectedResourceMetadataUrl = parseProtectedResourceMetadataUrl(
       input.wwwAuthenticate
     );
+  }
+}
+
+export class McpGwProviderConnectionRequiredError extends Error {
+  readonly name = "McpGwProviderConnectionRequiredError";
+  readonly provider: "github";
+
+  constructor(provider: "github") {
+    super("GitHub account is not connected");
+    this.provider = provider;
   }
 }
 
@@ -64,8 +75,9 @@ export async function callMcpGwTool(
   } catch (error) {
     if (error instanceof UpstreamMcpJsonRpcError && isReauthRequired(error)) {
       return {
-        status: "needs_google_connect",
+        status: "needs_connect",
         message: cleanUpstreamMcpErrorMessage(error.message),
+        ...readReauthProvider(error.data),
         ...readConnectUrl(error.data, config.url)
       };
     }
@@ -86,11 +98,35 @@ function toUpstreamConfig(config: McpGwClientConfig) {
 
 function mapMcpGwError(error: unknown): never {
   if (error instanceof UpstreamMcpHttpError && error.status === 401) {
+    const provider = readMissingProviderConnection(error.detail);
+    if (provider) {
+      throw new McpGwProviderConnectionRequiredError(provider);
+    }
     throw new McpGwUnauthorizedError({
       wwwAuthenticate: error.wwwAuthenticate
     });
   }
   throw error;
+}
+
+function readMissingProviderConnection(detail: string): "github" | null {
+  const raw = detail.replace(/^:\s*/, "");
+  try {
+    const payload = JSON.parse(raw) as unknown;
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    const rpcError = (payload as Record<string, unknown>).error;
+    if (!rpcError || typeof rpcError !== "object") {
+      return null;
+    }
+    const message = (rpcError as Record<string, unknown>).message;
+    return message === "Unauthorized: GitHub account is not connected"
+      ? "github"
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function isReauthRequired(error: UpstreamMcpJsonRpcError): boolean {
@@ -118,15 +154,27 @@ function readToolResultReauth(
       const message =
         typeof parsed.error === "string" && parsed.error.trim()
           ? parsed.error.trim()
-          : "Google Workspace reauthorization required";
+          : "Provider reauthorization required";
       return {
-        status: "needs_google_connect",
+        status: "needs_connect",
         message,
+        ...readReauthProvider(parsed),
         ...readConnectUrl(parsed, mcpGwUrl)
       };
     }
   }
   return null;
+}
+
+function readReauthProvider(data: unknown): { provider?: string } {
+  if (!data || typeof data !== "object") {
+    return {};
+  }
+  const record = data as Record<string, unknown>;
+  const value = record.provider ?? record.service;
+  return typeof value === "string" && value.trim()
+    ? { provider: value.trim() }
+    : {};
 }
 
 function parseToolResultTextJson(item: unknown): Record<string, unknown> | null {

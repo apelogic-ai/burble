@@ -111,14 +111,20 @@ import {
 } from "./mcp/upstream-http-client";
 import {
   callMcpGwTool,
+  listMcpGwTools,
   McpGwUnauthorizedError
 } from "./mcp/mcp-gw-client";
+import {
+  isMcpGwProviderOAuthOnlyCatalog,
+  mcpGwGoogleToolCatalog,
+} from "./mcp/mcp-gw-provider-tools";
 import {
   applyMcpGwGoogleStateRefHints,
   adaptMcpGwGoogleToolCall,
   canAdaptMcpGwGoogleToolCall,
   mcpGwGoogleToolResult
 } from "./mcp/mcp-gw-google-adapter";
+import { handleMcpGwGitHubToolRequest } from "./mcp/mcp-gw-github-handler";
 import { resolveMcpUserAssertion } from "./mcp/user-assertion";
 import type { McpIdentityIssuer } from "./mcp-identity";
 import { searchSlackMessages, searchSlackUsers } from "./providers/slack/client";
@@ -204,6 +210,7 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
     mcpIdentityIssuer?: McpIdentityIssuer | null;
     getSlackEmail?: (slackUserId: string) => Promise<string>;
     callMcpGwTool?: typeof callMcpGwTool;
+    listMcpGwTools?: typeof listMcpGwTools;
     observability?: ObservabilitySink;
   };
 
@@ -988,6 +995,22 @@ export async function handleToolGatewayRequest(
   if (shouldRouteGoogleViaMcpGw(config, auth, providerToolSpec, body.input)) {
     return respondWithAudit(
       await handleMcpGwGoogleToolRequest(config, auth, toolName, body, deps)
+    );
+  }
+
+  if (
+    config.githubViaMcpGw &&
+    auth.kind === "runtime" &&
+    providerToolSpec?.provider === "github"
+  ) {
+    return respondWithAudit(
+      await handleMcpGwGitHubToolRequest({
+        config,
+        runtime: auth.runtime,
+        deps,
+        toolName: providerToolSpec.name,
+        args: body.input
+      })
     );
   }
 
@@ -2174,11 +2197,36 @@ async function handleMcpGwGoogleToolRequest(
       issuer: deps.mcpIdentityIssuer,
       getSlackEmail
     });
+    const clientConfig = {
+      url: config.mcpGwMcpUrl,
+      bearerToken: assertion.token,
+    };
+    const advertisedToolNames = await (
+      deps.listMcpGwTools ?? listMcpGwTools
+    )(clientConfig).then((tools) => tools.map((tool) => tool.name));
+    if (
+      isMcpGwProviderOAuthOnlyCatalog(
+        advertisedToolNames,
+        mcpGwGoogleToolCatalog,
+      )
+    ) {
+      return mcpGwGoogleToolResult(adaptedTool, {
+        status: "needs_connect",
+        provider: "google",
+        message: "Google Workspace account is not connected",
+      });
+    }
+    if (!advertisedToolNames.includes(adaptedTool.name)) {
+      return {
+        classification: "user_private",
+        content: {
+          error: "mcp_gw_tool_not_advertised",
+          message: `Google tool ${adaptedTool.name} is not advertised by MCP-GW.`,
+        },
+      };
+    }
     const result = await (deps.callMcpGwTool ?? callMcpGwTool)(
-      {
-        url: config.mcpGwMcpUrl,
-        bearerToken: assertion.token
-      },
+      clientConfig,
       {
         name: adaptedTool.name,
         arguments: adaptedTool.arguments

@@ -303,7 +303,14 @@ function createProviderMcpServer(
   };
 
   if (scope === "all" || scope === "github") {
-    registerGitHubMcpTools({ server, store, runtime, deps: allDeps, policy });
+    registerGitHubMcpTools({
+      server,
+      config,
+      store,
+      runtime,
+      deps: allDeps,
+      policy
+    });
   }
   if (scope === "all" || scope === "google") {
     registerGoogleMcpTools({

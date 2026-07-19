@@ -19,6 +19,7 @@ import {
   type ProviderCassette
 } from "./helpers/provider-cassettes";
 import { createMcpIdentityIssuer } from "../src/mcp-identity";
+import { McpGwProviderConnectionRequiredError } from "../src/mcp/mcp-gw-client";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -689,6 +690,332 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("routes runtime GitHub tools through MCP-GW without a Burble GitHub connection when enabled", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity",
+      now: () => new Date("2026-07-16T12:00:00.000Z"),
+      randomId: () => "github-assertion-1"
+    });
+    const calls: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "github.searchIssues",
+      request(
+        "github.searchIssues",
+        {
+          user: { email: "spoofed@example.com" },
+          input: { query: "org:apelogic-ai is:pr is:open" }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async (slackUserId) => {
+          expect(slackUserId).toBe("U123");
+          return "person@example.com";
+        },
+        listMcpGwTools: async () => [
+          { name: "github_github_search_pull_requests" }
+        ],
+        callMcpGwTool: async (clientConfig, input) => {
+          calls.push({ clientConfig, input });
+          expect(
+            issuer.verifyUserAssertion({
+              token: clientConfig.bearerToken,
+              audience: "https://18.210.100.44.nip.io/mcp",
+              now: new Date("2026-07-16T12:00:30.000Z")
+            })
+          ).toMatchObject({
+            sub: "T123:U123",
+            email: "person@example.com",
+            jti: "github-assertion-1"
+          });
+          expect(input).toEqual({
+            name: "github_github_search_pull_requests",
+            arguments: { query: "org:apelogic-ai is:pr is:open" }
+          });
+          return {
+            status: "ok",
+            result: {
+              content: [{ type: "text", text: "PR #123" }]
+            }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "github_search_pull_requests",
+        burbleToolName: "github_search_issues"
+      }
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("returns GitHub connect guidance when MCP-GW has no user credential", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "github.searchIssues",
+      request(
+        "github.searchIssues",
+        { input: { query: "org:apelogic-ai is:pr is:open" } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => {
+          throw new McpGwProviderConnectionRequiredError("github");
+        }
+      }
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        error: "github_not_connected",
+        authCommand: "/auth github"
+      }
+    });
+  });
+
+  test("returns GitHub connect guidance when MCP-GW advertises only OAuth helpers", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    let callCount = 0;
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "github.searchIssues",
+      request(
+        "github.searchIssues",
+        { input: { query: "org:apelogic-ai is:pr is:open" } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "github_oauth_status" },
+          { name: "github_oauth_start" }
+        ],
+        callMcpGwTool: async () => {
+          callCount += 1;
+          return { status: "ok", result: { content: [] } };
+        }
+      }
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        error: "github_not_connected",
+        authCommand: "/auth github"
+      }
+    });
+    expect(callCount).toBe(0);
+  });
+
+  test("calls exact official GitHub tools from the connected MCP-GW catalog", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const calls: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "github.searchIssues",
+      request(
+        "github.searchIssues",
+        { input: { query: "repo:example-org/example-repo is:pr" } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_drive_files_list" },
+          { name: "github_oauth_status" },
+          { name: "github_oauth_start" },
+          { name: "search_pull_requests" }
+        ],
+        callMcpGwTool: async (_clientConfig, input) => {
+          calls.push(input);
+          return {
+            status: "ok",
+            result: { content: [{ type: "text", text: "PR #2350" }] }
+          };
+        }
+      }
+    );
+
+    expect(calls).toEqual([
+      {
+        name: "search_pull_requests",
+        arguments: { query: "repo:example-org/example-repo is:pr" }
+      }
+    ]);
+    await expect(response.json()).resolves.toMatchObject({
+      content: {
+        mcpGw: true,
+        toolName: "github_search_pull_requests",
+        burbleToolName: "github_search_issues"
+      }
+    });
+  });
+
+  test("calls arbitrary federated GitHub tools but rejects other MCP-GW namespaces", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const githubConfig = {
+      ...config,
+      githubViaMcpGw: true,
+      mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+      mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+    };
+    const calls: unknown[] = [];
+    const deps = {
+      mcpIdentityIssuer: issuer,
+      getSlackEmail: async () => "person@example.com",
+      listMcpGwTools: async () => [
+        { name: "github_list_commits" },
+        { name: "list_commits" },
+        { name: "run_sql" },
+        { name: "google_drive_files_list" }
+      ],
+      callMcpGwTool: async (_clientConfig: unknown, input: unknown) => {
+        calls.push(input);
+        return {
+          status: "ok" as const,
+          result: { content: [{ type: "text", text: "commit-123" }] }
+        };
+      }
+    };
+
+    const response = await handleToolGatewayRequest(
+      githubConfig,
+      createStore(null, runtime),
+      "github.callMcpTool",
+      request(
+        "github.callMcpTool",
+        {
+          input: {
+            name: "github_list_commits",
+            arguments: { owner: "NVIDIA", repo: "OpenShell" }
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      deps
+    );
+
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        name: "github_list_commits",
+        arguments: { owner: "NVIDIA", repo: "OpenShell" }
+      }
+    ]);
+    await expect(response.json()).resolves.toMatchObject({
+      content: {
+        mcpGw: true,
+        toolName: "github_list_commits",
+        burbleToolName: "github_call_mcp_tool"
+      }
+    });
+
+    const officialResponse = await handleToolGatewayRequest(
+      githubConfig,
+      createStore(null, runtime),
+      "github.callMcpTool",
+      request(
+        "github.callMcpTool",
+        {
+          input: {
+            name: "list_commits",
+            arguments: { owner: "example-org", repo: "example-repo" }
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      deps
+    );
+
+    await expect(officialResponse.json()).resolves.toMatchObject({
+      content: {
+        mcpGw: true,
+        toolName: "list_commits",
+        burbleToolName: "github_call_mcp_tool"
+      }
+    });
+
+    const rejected = await handleToolGatewayRequest(
+      githubConfig,
+      createStore(null, runtime),
+      "github.callMcpTool",
+      request(
+        "github.callMcpTool",
+        {
+          input: {
+            name: "run_sql",
+            arguments: {}
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      deps
+    );
+
+    await expect(rejected.json()).resolves.toMatchObject({
+      content: {
+        error: "github_mcp_tool_not_allowed"
+      }
+    });
+    expect(calls).toHaveLength(2);
+  });
+
   test("routes runtime Google tools through MCP-GW without a Burble Google connection when enabled", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity",
@@ -721,6 +1048,11 @@ describe("handleToolGatewayRequest", () => {
           expect(slackUserId).toBe("U123");
           return "person@example.com";
         },
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "google_oauth_start" },
+          { name: "google_drive_files_list" }
+        ],
         callMcpGwTool: async (clientConfig, input) => {
           calls.push({ clientConfig, input });
           expect(clientConfig.url).toBe("https://18.210.100.44.nip.io/mcp");
@@ -769,6 +1101,51 @@ describe("handleToolGatewayRequest", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test("returns Google connect guidance when MCP-GW advertises only OAuth helpers", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    let callCount = 0;
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "google.searchDriveFiles",
+      request(
+        "google.searchDriveFiles",
+        { input: { query: "qbr" } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "google_oauth_start" }
+        ],
+        callMcpGwTool: async () => {
+          callCount += 1;
+          return { status: "ok", result: { content: [] } };
+        }
+      }
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        error: "google_not_connected",
+        authCommand: "/auth google"
+      }
+    });
+    expect(callCount).toBe(0);
+  });
+
   test("uses the shared MCP-GW Google adapter for Drive metadata reads through the tool gateway", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity"
@@ -798,6 +1175,11 @@ describe("handleToolGatewayRequest", () => {
       {
         mcpIdentityIssuer: issuer,
         getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "google_oauth_start" },
+          { name: "gws_drive_files_get" }
+        ],
         callMcpGwTool: async (_clientConfig, input) => {
           calls.push(input);
           expect(input).toEqual({
@@ -881,6 +1263,11 @@ describe("handleToolGatewayRequest", () => {
       {
         mcpIdentityIssuer: issuer,
         getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "google_oauth_start" },
+          { name: "gws_docs_documents_batch_update" }
+        ],
         callMcpGwTool: async (_clientConfig, input) => {
           calls.push(input);
           expect(input).toEqual({
@@ -943,6 +1330,11 @@ describe("handleToolGatewayRequest", () => {
       {
         mcpIdentityIssuer: issuer,
         getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "google_oauth_start" },
+          { name: "google_gmail_messages_list" }
+        ],
         callMcpGwTool: async (_clientConfig, input) => {
           calls.push(input);
           expect(input).toEqual({
@@ -1055,8 +1447,13 @@ describe("handleToolGatewayRequest", () => {
       {
         mcpIdentityIssuer: issuer,
         getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "google_oauth_start" },
+          { name: "google_drive_files_list" }
+        ],
         callMcpGwTool: async () => ({
-          status: "needs_google_connect",
+          status: "needs_connect",
           message: "Google Workspace reauthorization required",
           connectUrl: "https://18.210.100.44.nip.io/connect/google"
         })

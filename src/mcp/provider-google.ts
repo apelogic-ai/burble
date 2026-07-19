@@ -5,7 +5,11 @@ import { googleProviderToolSpecs } from "../providers/google/tool-specs";
 import { providerToolInputSchema } from "../providers/tool-specs";
 import { createGoogleTools } from "../tools/google";
 import type { ToolResult } from "../tools/types";
-import { callMcpGwTool, McpGwUnauthorizedError } from "./mcp-gw-client";
+import {
+  callMcpGwTool,
+  listMcpGwTools,
+  McpGwUnauthorizedError,
+} from "./mcp-gw-client";
 import {
   adaptMcpGwGoogleToolCall,
   canAdaptMcpGwGoogleToolCall,
@@ -20,6 +24,10 @@ import {
   isProviderMcpToolEnabled,
   type ProviderMcpToolPolicy
 } from "./provider-policy";
+import {
+  isMcpGwProviderOAuthOnlyCatalog,
+  mcpGwGoogleToolCatalog,
+} from "./mcp-gw-provider-tools";
 import { resolveMcpUserAssertion } from "./user-assertion";
 
 type GoogleTools = ReturnType<typeof createGoogleTools>;
@@ -137,11 +145,36 @@ async function handleMcpGwGoogleToolRequest(input: {
       issuer: input.deps.mcpIdentityIssuer,
       getSlackEmail: input.deps.getSlackEmail
     });
+    const clientConfig = {
+      url: input.config.mcpGwMcpUrl,
+      bearerToken: assertion.token,
+    };
+    const advertisedToolNames = await (
+      input.deps.listMcpGwTools ?? listMcpGwTools
+    )(clientConfig).then((tools) => tools.map((tool) => tool.name));
+    if (
+      isMcpGwProviderOAuthOnlyCatalog(
+        advertisedToolNames,
+        mcpGwGoogleToolCatalog,
+      )
+    ) {
+      return mcpGwGoogleToolResult(adaptedTool, {
+        status: "needs_connect",
+        provider: "google",
+        message: "Google Workspace account is not connected",
+      });
+    }
+    if (!advertisedToolNames.includes(adaptedTool.name)) {
+      return {
+        classification: "user_private",
+        content: {
+          error: "mcp_gw_tool_not_advertised",
+          message: `Google tool ${adaptedTool.name} is not advertised by MCP-GW.`,
+        },
+      };
+    }
     const result = await (input.deps.callMcpGwTool ?? callMcpGwTool)(
-      {
-        url: input.config.mcpGwMcpUrl,
-        bearerToken: assertion.token
-      },
+      clientConfig,
       {
         name: adaptedTool.name,
         arguments: adaptedTool.arguments

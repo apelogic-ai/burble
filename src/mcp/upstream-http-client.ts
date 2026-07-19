@@ -38,6 +38,7 @@ const defaultUpstreamMcpRequestTimeoutMs = 30_000;
 export class UpstreamMcpHttpError extends Error {
   readonly name = "UpstreamMcpHttpError";
   readonly status: number;
+  readonly detail: string;
   readonly wwwAuthenticate: string | null;
 
   constructor(input: {
@@ -47,6 +48,7 @@ export class UpstreamMcpHttpError extends Error {
   }) {
     super(`Upstream MCP returned HTTP ${input.status}${input.detail}`);
     this.status = input.status;
+    this.detail = input.detail;
     this.wwwAuthenticate = input.wwwAuthenticate;
   }
 }

@@ -116,6 +116,12 @@ OLLAMA_API_KEY=
 OLLAMA_BASE_URL=https://ollama.com
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
+MCP_IDENTITY_ISSUER=https://<nip_io_domain>/mcp-identity
+MCP_IDENTITY_PRIVATE_KEY_PATH=/data/mcp-identity-private.pem
+MCP_GW_AUDIENCE=
+MCP_GW_MCP_URL=
+GOOGLE_VIA_MCP_GW=false
+GITHUB_VIA_MCP_GW=false
 JIRA_CLIENT_ID=
 JIRA_CLIENT_SECRET=
 GOOGLE_CLIENT_ID=
@@ -131,6 +137,19 @@ normalized model selector for both AI SDK and OpenClaw/NemoClaw runtimes. Use
 `provider:model` format, for example `openai:gpt-5.4`,
 `anthropic:claude-opus-4.6`, or `ollama:qwen3-coder:30b-cloud`, and set the
 matching provider key before enabling it.
+
+To route GitHub OAuth and tools through centralized MCP-GW DEV, set:
+
+```env
+MCP_GW_AUDIENCE=https://<mcp-gw-host>/mcp
+MCP_GW_MCP_URL=https://<mcp-gw-host>/mcp
+GITHUB_VIA_MCP_GW=true
+```
+
+Keep `MCP_IDENTITY_ISSUER` aligned with MCP-GW's trusted issuer profile and
+use a persistent `MCP_IDENTITY_PRIVATE_KEY_PATH`. In this mode the local
+`GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` may be blank. Users connect with
+`/auth github`; Burble neither receives nor stores the resulting GitHub token.
 
 Workflow flags are explicitly passed through but default to observationally
 off. Keep `TASK_WORKFLOW_AUTHORITY=off` until a deployment has passed the

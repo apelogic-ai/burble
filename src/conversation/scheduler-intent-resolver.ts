@@ -1,6 +1,8 @@
 import { generateText } from "ai";
 import { createDirectModelResolver } from "../agent/providers";
 import type { DirectLanguageModel, ModelResolver } from "../agent/providers";
+import { providerToolCatalog } from "../providers/catalog";
+import { validateScheduledTaskPlan } from "../scheduler/task-preparation";
 import type {
   SchedulerIntentResolver,
   SchedulerIntentResolverResult,
@@ -69,8 +71,93 @@ export function createLlmSchedulerIntentResolver(
         failure: "invalid_response",
       };
     }
-    return parsed;
+    if (!parsed.taskPlan) {
+      return parsed;
+    }
+    const validation = validateScheduledTaskPlan(parsed.taskPlan);
+    if (validation.ok || !hasUnknownProviderToolErrors(validation.errors)) {
+      return parsed;
+    }
+    try {
+      const repairedResponse = await withTimeout(
+        generate({
+          model,
+          system: schedulerIntentSystemPrompt,
+          prompt: schedulerTaskPlanRepairPrompt(response.text, validation.errors),
+          maxRetries: 0,
+        }),
+        timeoutMs,
+      );
+      if (!repairedResponse) {
+        deps.logWarn?.("Scheduler task-plan repair timed out.");
+        return parsed;
+      }
+      const repaired = parseSchedulerIntentResponse(repairedResponse.text);
+      const repairedTaskPlan = repaired?.taskPlan
+        ? mergeRepairedTaskPlan(parsed.taskPlan, repaired.taskPlan)
+        : null;
+      if (
+        !repairedTaskPlan ||
+        !validateScheduledTaskPlan(repairedTaskPlan).ok
+      ) {
+        deps.logWarn?.("Scheduler task-plan repair remained invalid.");
+        return parsed;
+      }
+      return { ...parsed, taskPlan: repairedTaskPlan };
+    } catch {
+      deps.logWarn?.("Scheduler task-plan repair failed.");
+      return parsed;
+    }
   };
+}
+
+function mergeRepairedTaskPlan(
+  original: SchedulerTaskPlan,
+  repaired: SchedulerTaskPlan,
+): SchedulerTaskPlan | null {
+  if (
+    original.steps.length !== repaired.steps.length ||
+    original.preparation.length !== repaired.preparation.length ||
+    original.steps.some((step, index) => step.id !== repaired.steps[index]?.id) ||
+    original.preparation.some(
+      (step, index) => step.id !== repaired.preparation[index]?.id,
+    )
+  ) {
+    return null;
+  }
+  return {
+    steps: original.steps.map((step, index) => ({
+      ...step,
+      tools: repaired.steps[index]!.tools,
+    })),
+    preparation: original.preparation.map((step, index) => ({
+      ...step,
+      tool: repaired.preparation[index]!.tool,
+      input: repaired.preparation[index]!.input,
+    })),
+  };
+}
+
+function hasUnknownProviderToolErrors(errors: string[]): boolean {
+  return errors.some((error) =>
+    error.includes("references unknown provider tool"),
+  );
+}
+
+function schedulerTaskPlanRepairPrompt(
+  originalResponse: string,
+  errors: string[],
+): string {
+  return [
+    "Repair only the taskPlan in this scheduler-intent JSON.",
+    "Use exact canonical tool names from the system catalog.",
+    "Preserve the intent, jobId, confidence, instructions, preparation semantics, and step ordering.",
+    "Return one complete JSON object and no markdown.",
+    "Validation errors:",
+    ...errors.map((error) => `- ${error}`),
+    "Original response:",
+    originalResponse,
+  ].join("\n");
 }
 
 function withTimeout<T>(
@@ -121,7 +208,23 @@ const schedulerIntentSystemPrompt = [
   "Use confidence from 0 to 1.",
   "Only include jobId when the user gives a job id or clearly refers to exactly one current job by title/prompt.",
   "If multiple jobs could match, return the intent with jobId null.",
+  "Use only the exact canonical tool names listed below in taskPlan preparation and recurring steps. Provider names such as github or google are not tool names.",
+  schedulerProviderToolCatalog(),
 ].join("\n");
+
+function schedulerProviderToolCatalog(): string {
+  return [
+    "Canonical provider tools:",
+    ...providerToolCatalog
+      .toSorted((left, right) => left.name.localeCompare(right.name))
+      .map((tool) => {
+        const inputs = Object.entries(tool.input)
+          .map(([name, spec]) => `${name}${spec.optional ? "?" : ""}`)
+          .join(",");
+        return `- ${tool.name} [${tool.risk ?? "read"}] inputs=${inputs || "none"}: ${tool.description}`;
+      }),
+  ].join("\n");
+}
 
 function schedulerIntentPrompt(
   text: string,
@@ -131,6 +234,7 @@ function schedulerIntentPrompt(
     title: string | null;
     prompt: string | null;
     state: string;
+    requiredTools: string[];
   }>,
 ): string {
   return [
@@ -144,6 +248,7 @@ function schedulerIntentPrompt(
             `title=${JSON.stringify(job.title ?? "")}`,
             `state=${JSON.stringify(job.state)}`,
             `task=${JSON.stringify(job.prompt ?? "")}`,
+            `requiredTools=${JSON.stringify(job.requiredTools)}`,
           ].join(" "),
         )),
     "Recent context:",
