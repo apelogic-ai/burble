@@ -1,4 +1,5 @@
 import type { AgentJobCapabilityRecord, ScheduledJobRecord } from "../db";
+import { findProviderToolSpec } from "../providers/catalog";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 
 export type SchedulerTaskValidationIssue = {
@@ -53,7 +54,7 @@ export function validateScheduledTask(
   const warnings: SchedulerTaskValidationIssue[] = [];
 
   for (const tool of expectedTools) {
-    if (!grantedToolSet.has(tool)) {
+    if (!isExpectedToolCovered(tool, grantedTools, grantedToolSet)) {
       errors.push({
         code: "missing_required_tool",
         message: `Task requires ${tool} but the grant does not include it.`,
@@ -83,4 +84,29 @@ export function validateScheduledTask(
     errors,
     warnings,
   };
+}
+
+function isExpectedToolCovered(
+  expectedTool: string,
+  grantedTools: string[],
+  grantedToolSet: Set<string>,
+): boolean {
+  if (grantedToolSet.has(expectedTool)) {
+    return true;
+  }
+
+  const expectedSpec = findProviderToolSpec(expectedTool);
+  if (!expectedSpec) {
+    return false;
+  }
+
+  return grantedTools.some((grantedTool) => {
+    if (
+      expectedTool === "github_search_issues" &&
+      grantedTool === "github_list_my_pull_requests"
+    ) {
+      return false;
+    }
+    return findProviderToolSpec(grantedTool)?.provider === expectedSpec.provider;
+  });
 }
