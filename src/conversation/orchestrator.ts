@@ -956,8 +956,7 @@ async function repairScheduledPromptUpdate(
     if (
       resolved.intent !== "update_job_prompt" ||
       resolved.jobId !== jobId ||
-      resolved.failure ||
-      (resolved.taskPlan?.preparation.length ?? 0) > 0
+      resolved.failure
     ) {
       return null;
     }
@@ -1021,8 +1020,7 @@ async function repairScheduledCreate(
     if (
       resolved.intent !== "create_job" ||
       !create ||
-      resolved.failure ||
-      (resolved.taskPlan?.preparation.length ?? 0) > 0
+      resolved.failure
     ) {
       return null;
     }

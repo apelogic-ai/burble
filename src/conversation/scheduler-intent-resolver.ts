@@ -203,6 +203,8 @@ const schedulerIntentSystemPrompt = [
   "taskPlan.steps are recurring executable steps. Each step has id, instruction, and the exact recurring provider tool names it requires in tools.",
   "taskPlan.preparation contains one-time provider calls that must finish before the task is updated. Each preparation step has id, tool, input, saveAs, and optional purpose.",
   "Current task specs include opaque stateRefs. Preserve and reuse matching existing refs by default; do not rediscover or recreate them.",
+  "Recurring tools marked stateRefRequired require a matching durable stateRef from the same provider. If no matching current stateRef exists, add a one-time preparation step that resolves or creates the resource and bind its returned id into recurring instructions with a {{resources.<saveAs>.<field>}} placeholder.",
+  "Never claim that configured state exists unless the current task contains a matching stateRef or taskPlan.preparation creates or resolves it.",
   "taskPlan.stateRefMode controls state changes: omit it to preserve existing refs and merge newly prepared refs; use replace or clear only when the user explicitly requests replacement or removal.",
   "Use {{resources.<saveAs>.<field>}} placeholders in recurring instructions when they need values returned by preparation steps.",
   "Do not put one-time setup work such as create a document now into recurring steps.",
@@ -227,7 +229,13 @@ function schedulerProviderToolCatalog(): string {
         const inputs = Object.entries(tool.input)
           .map(([name, spec]) => `${name}${spec.optional ? "?" : ""}`)
           .join(",");
-        return `- ${tool.name} [${tool.risk ?? "read"}] inputs=${inputs || "none"}: ${tool.description}`;
+        const stateRefInputs = tool.stateRefInputs?.length
+          ? ` stateRefInputs=${tool.stateRefInputs.join(",")}`
+          : "";
+        const stateRefRequired = tool.stateRefRequired
+          ? " stateRefRequired=true"
+          : "";
+        return `- ${tool.name} [${tool.risk ?? "read"}] inputs=${inputs || "none"}${stateRefInputs}${stateRefRequired}: ${tool.description}`;
       }),
   ].join("\n");
 }

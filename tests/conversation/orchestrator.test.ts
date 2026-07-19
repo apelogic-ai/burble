@@ -1196,6 +1196,130 @@ describe("handleConversation", () => {
     );
   });
 
+  test("prepares missing durable state during a side-effect-free task creation repair", async () => {
+    let resolverCalls = 0;
+    let createCalls = 0;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Create an hourly task that deduplicates results using durable state.",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: (input) => {
+            createCalls += 1;
+            if (createCalls === 1) {
+              return {
+                ok: false,
+                reason: "validation_failed",
+                validation: {
+                  ok: false,
+                  expectedTools: ["google_append_to_drive_text_file"],
+                  grantedTools: ["google_append_to_drive_text_file"],
+                  errors: [
+                    {
+                      code: "missing_state_ref",
+                      message:
+                        "Task requires a bound google state reference for google_append_to_drive_text_file.fileId.",
+                      tool: "google_append_to_drive_text_file",
+                      stateInput: "fileId",
+                    },
+                  ],
+                  warnings: [],
+                },
+              };
+            }
+            expect(input.prompt).toBe("1. Append new results to state-456.");
+            expect(input.capability).toEqual({
+              expectedTools: ["google_append_to_drive_text_file"],
+              requiredTools: ["google_append_to_drive_text_file"],
+              stateRefMode: "merge",
+              stateRefs: [
+                {
+                  provider: "google",
+                  kind: "document",
+                  id: "state-456",
+                },
+              ],
+            });
+            return {
+              ok: true,
+              job: {
+                jobId: "job_created_with_state",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: input.title,
+                prompt: input.prompt,
+                schedule: input.schedule,
+                routeId: input.routeId ?? null,
+                state: "scheduled",
+                runtimeType: input.runtimeType ?? null,
+                createdAt: "2026-07-19T16:00:00.000Z",
+                updatedAt: "2026-07-19T16:00:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => {
+          resolverCalls += 1;
+          return {
+            intent: "create_job",
+            confidence: 0.99,
+            jobId: null,
+            create: {
+              title: "Stateful report",
+              prompt: "Append new results to configured state.",
+              schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
+            },
+            taskPlan:
+              resolverCalls === 1
+                ? {
+                    preparation: [],
+                    steps: [
+                      {
+                        id: "write",
+                        instruction: "Append new results to configured state.",
+                        tools: ["google_append_to_drive_text_file"],
+                      },
+                    ],
+                  }
+                : {
+                    preparation: [
+                      {
+                        id: "prepare_state",
+                        tool: "google_docs_create_document",
+                        input: { name: "Report state" },
+                        saveAs: "report_state",
+                      },
+                    ],
+                    steps: [
+                      {
+                        id: "write",
+                        instruction:
+                          "Append new results to {{resources.report_state.id}}.",
+                        tools: ["google_append_to_drive_text_file"],
+                      },
+                    ],
+                  },
+          };
+        },
+        scheduledTaskPreparationExecutor: async () => ({
+          value: { id: "state-456" },
+          stateRef: {
+            provider: "google",
+            kind: "document",
+            id: "state-456",
+          },
+        }),
+      }),
+    );
+
+    expect(resolverCalls).toBe(2);
+    expect(createCalls).toBe(2);
+    expect(response.text).toContain("Created scheduled job job_created_with_state.");
+  });
+
   test("does not treat one-shot report requests as unresolved scheduled task creates", async () => {
     let called = false;
     const response = await handleConversation(
@@ -2091,6 +2215,175 @@ describe("handleConversation", () => {
 
     expect(resolverCalls).toBe(2);
     expect(updateCalls).toBe(2);
+    expect(response.text).toContain("Updated scheduled job job_stateful task.");
+  });
+
+  test("prepares missing durable state during a side-effect-free task update repair", async () => {
+    let resolverCalls = 0;
+    let updateCalls = 0;
+    const preparations: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Modify the report task to deduplicate results using durable state.",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [
+            {
+              ...aiNewsJob(),
+              jobId: "job_stateful",
+              title: "Stateful task",
+              stateRefs: [],
+            },
+          ],
+          updateJobPrompt: (input) => {
+            updateCalls += 1;
+            if (updateCalls === 1) {
+              return {
+                ok: false,
+                reason: "validation_failed",
+                validation: {
+                  ok: false,
+                  expectedTools: [
+                    "google_get_drive_file",
+                    "google_append_to_drive_text_file",
+                  ],
+                  grantedTools: [
+                    "google_get_drive_file",
+                    "google_append_to_drive_text_file",
+                  ],
+                  errors: [
+                    {
+                      code: "missing_state_ref",
+                      message:
+                        "Task requires a bound google state reference for google_append_to_drive_text_file.fileId.",
+                      tool: "google_append_to_drive_text_file",
+                      stateInput: "fileId",
+                    },
+                  ],
+                  warnings: [],
+                },
+                jobs: [],
+              };
+            }
+            expect(input).toEqual({
+              workspaceId: "T123",
+              slackUserId: "U123",
+              jobId: "job_stateful",
+              prompt:
+                "1. Read state-123 and remove previously reported results.\n2. Append newly reported results to state-123.",
+              capability: {
+                expectedTools: [
+                  "google_append_to_drive_text_file",
+                  "google_get_drive_file",
+                ],
+                requiredTools: [
+                  "google_append_to_drive_text_file",
+                  "google_get_drive_file",
+                ],
+                stateRefMode: "merge",
+                stateRefs: [
+                  {
+                    provider: "google",
+                    kind: "document",
+                    id: "state-123",
+                    purpose: "Deduplicate prior results",
+                  },
+                ],
+              },
+            });
+            return {
+              ok: true,
+              job: {
+                jobId: "job_stateful",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Stateful task",
+                prompt: input.prompt,
+                schedule: aiNewsJob().schedule,
+                routeId: "convrt_news",
+                state: "scheduled",
+                runtimeType: "burble-native",
+                createdAt: "2026-07-19T16:00:00.000Z",
+                updatedAt: "2026-07-19T16:01:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async (input) => {
+          resolverCalls += 1;
+          if (resolverCalls === 1) {
+            return {
+              intent: "update_job_prompt",
+              confidence: 0.99,
+              jobId: "job_stateful",
+              taskPlan: {
+                preparation: [],
+                steps: [
+                  {
+                    id: "deduplicate",
+                    instruction: "Use configured state to deduplicate results.",
+                    tools: [
+                      "google_get_drive_file",
+                      "google_append_to_drive_text_file",
+                    ],
+                  },
+                ],
+              },
+            };
+          }
+          expect(input.repair?.errors).toEqual([
+            "missing_state_ref: Task requires a bound google state reference for google_append_to_drive_text_file.fileId.",
+          ]);
+          return {
+            intent: "update_job_prompt",
+            confidence: 0.99,
+            jobId: "job_stateful",
+            taskPlan: {
+              preparation: [
+                {
+                  id: "prepare_state",
+                  tool: "google_docs_create_document",
+                  input: { name: "Report deduplication state" },
+                  saveAs: "dedupe_state",
+                  purpose: "Deduplicate prior results",
+                },
+              ],
+              steps: [
+                {
+                  id: "read",
+                  instruction:
+                    "Read {{resources.dedupe_state.id}} and remove previously reported results.",
+                  tools: ["google_get_drive_file"],
+                },
+                {
+                  id: "write",
+                  instruction:
+                    "Append newly reported results to {{resources.dedupe_state.id}}.",
+                  tools: ["google_append_to_drive_text_file"],
+                },
+              ],
+            },
+          };
+        },
+        scheduledTaskPreparationExecutor: async (input) => {
+          preparations.push(input);
+          return {
+            value: { id: "state-123" },
+            stateRef: {
+              provider: "google",
+              kind: "document",
+              id: "state-123",
+            },
+          };
+        },
+      }),
+    );
+
+    expect(resolverCalls).toBe(2);
+    expect(updateCalls).toBe(2);
+    expect(preparations).toHaveLength(1);
     expect(response.text).toContain("Updated scheduled job job_stateful task.");
   });
 

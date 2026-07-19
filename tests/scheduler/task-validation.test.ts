@@ -43,6 +43,13 @@ describe("scheduled task validation", () => {
           "google_append_to_drive_text_file",
           "google_get_drive_file",
         ],
+        stateRefs: [
+          {
+            provider: "google",
+            kind: "document",
+            id: "dedupe-state",
+          },
+        ],
       },
     );
 
@@ -65,6 +72,13 @@ describe("scheduled task validation", () => {
       {
         expectedTools: ["google_get_drive_file"],
         requiredTools: ["google_append_to_drive_text_file"],
+        stateRefs: [
+          {
+            provider: "google",
+            kind: "document",
+            id: "dedupe-state",
+          },
+        ],
       },
     );
 
@@ -77,6 +91,72 @@ describe("scheduled task validation", () => {
         },
       ],
     });
+  });
+
+  test("rejects state-consuming operations without a bound provider reference", () => {
+    const validation = validateScheduledTask(
+      scheduledJob("Read and update the configured checkpoint."),
+      {
+        expectedTools: [
+          "google_get_drive_file",
+          "google_append_to_drive_text_file",
+        ],
+        requiredTools: [
+          "google_get_drive_file",
+          "google_append_to_drive_text_file",
+        ],
+        stateRefs: [],
+      },
+    );
+
+    expect(validation).toMatchObject({
+      ok: false,
+      errors: [
+        {
+          code: "missing_state_ref",
+          tool: "google_append_to_drive_text_file",
+          stateInput: "fileId",
+        },
+      ],
+    });
+  });
+
+  test("allows state-addressable reads when the task has no durable binding", () => {
+    const validation = validateScheduledTask(
+      scheduledJob("Read files discovered during this run."),
+      {
+        expectedTools: ["google_get_drive_file"],
+        requiredTools: ["google_get_drive_file"],
+        stateRefs: [],
+      },
+    );
+
+    expect(validation).toMatchObject({ ok: true, errors: [] });
+  });
+
+  test("accepts state-consuming operations with a bound provider reference", () => {
+    const validation = validateScheduledTask(
+      scheduledJob("Read and update the configured checkpoint."),
+      {
+        expectedTools: [
+          "google_get_drive_file",
+          "google_append_to_drive_text_file",
+        ],
+        requiredTools: [
+          "google_get_drive_file",
+          "google_append_to_drive_text_file",
+        ],
+        stateRefs: [
+          {
+            provider: "google",
+            kind: "document",
+            id: "state-123",
+          },
+        ],
+      },
+    );
+
+    expect(validation).toMatchObject({ ok: true, errors: [] });
   });
 
   test("accepts the generic MCP-GW GitHub tool as explicit GitHub coverage", () => {

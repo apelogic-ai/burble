@@ -114,6 +114,26 @@ describe("provider tool specs", () => {
     ).toBe(false);
     expect(
       googleProviderToolSpecs.find(
+        (tool) => tool.name === "google_get_drive_file"
+      )?.stateRefInputs
+    ).toEqual(["fileId"]);
+    expect(
+      googleProviderToolSpecs.find(
+        (tool) => tool.name === "google_append_to_drive_text_file"
+      )?.stateRefInputs
+    ).toEqual(["fileId"]);
+    expect(
+      googleProviderToolSpecs.find(
+        (tool) => tool.name === "google_append_to_drive_text_file"
+      )?.stateRefRequired
+    ).toBe(true);
+    expect(
+      googleProviderToolSpecs.find(
+        (tool) => tool.name === "google_get_drive_file"
+      )?.stateRefRequired
+    ).toBeUndefined();
+    expect(
+      googleProviderToolSpecs.find(
         (tool) => tool.name === "google_slides_create_slide"
       )?.risk
     ).toBe("low_write");

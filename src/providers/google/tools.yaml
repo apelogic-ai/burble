@@ -139,6 +139,7 @@ tools:
   - name: google_get_drive_file
     alias: google.getDriveFile
     implementation: getDriveFile
+    stateRefInputs: [fileId]
     title: Google Drive get file
     description: Read Google Drive file metadata and, by default, text content for files accessible to the connected Google account and granted Drive scopes. Drive metadata search may find files whose content cannot be read or edited if the stored Google connection lacks the required Drive scope or the file is not shared with the connected account.
     risk: read
@@ -165,6 +166,8 @@ tools:
   - name: google_update_drive_text_file
     alias: google.updateDriveTextFile
     implementation: updateDriveTextFile
+    stateRefInputs: [fileId]
+    stateRefRequired: true
     title: Google Drive update text file
     description: Replace the content of a Google Drive text file accessible to the connected Google account and granted Drive scopes. Use google_get_drive_file first when preserving existing content matters.
     risk: moderate_write
@@ -188,6 +191,8 @@ tools:
     aliases:
       - google.appendToDriveTextFile
     implementation: appendDriveTextFile
+    stateRefInputs: [fileId]
+    stateRefRequired: true
     title: Google Drive append text file
     description: Append text to a Google Drive text file accessible to the connected Google account and granted Drive scopes by reading existing content then replacing it.
     risk: moderate_write

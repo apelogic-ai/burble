@@ -355,6 +355,11 @@ describe("scheduler intent resolver", () => {
     expect(system).toContain("github_search_issues");
     expect(system).toContain("google_get_drive_file");
     expect(system).toContain("google_append_to_drive_text_file");
+    expect(system).toContain("stateRefInputs=fileId");
+    expect(system).toContain(
+      "Recurring tools marked stateRefRequired require a matching durable stateRef",
+    );
+    expect(system).toContain("stateRefRequired=true");
     expect(system).toContain(
       "Use only the exact canonical tool names listed below",
     );

@@ -10,6 +10,7 @@ export type SchedulerTaskValidationIssue = {
   message: string;
   tool?: string;
   expectedTool?: string;
+  stateInput?: string;
 };
 
 export type SchedulerTaskValidation = {
@@ -44,7 +45,8 @@ export type SchedulerTaskRuntimeAdmission =
 export type SchedulerTaskGrant = Pick<
   AgentJobCapabilityRecord,
   "requiredTools" | "expectedTools"
->;
+> &
+  Partial<Pick<AgentJobCapabilityRecord, "stateRefs">>;
 
 export function validateScheduledTask(
   record: ScheduledJobRecord,
@@ -69,6 +71,19 @@ export function validateScheduledTask(
         tool,
       });
     }
+    const spec = findProviderToolSpec(tool);
+    for (const stateInput of spec?.stateRefRequired
+      ? (spec.stateRefInputs ?? [])
+      : []) {
+      if (!hasBoundProviderState(capability?.stateRefs, spec!.provider)) {
+        errors.push({
+          code: "missing_state_ref",
+          message: `Task requires a bound ${spec!.provider} state reference for ${tool}.${stateInput}.`,
+          tool,
+          stateInput,
+        });
+      }
+    }
   }
 
   return {
@@ -78,6 +93,23 @@ export function validateScheduledTask(
     errors,
     warnings,
   };
+}
+
+function hasBoundProviderState(
+  stateRefs: unknown[] | undefined,
+  provider: string,
+): boolean {
+  return Boolean(
+    stateRefs?.some(
+      (stateRef) =>
+        stateRef !== null &&
+        typeof stateRef === "object" &&
+        !Array.isArray(stateRef) &&
+        (stateRef as { provider?: unknown }).provider === provider &&
+        typeof (stateRef as { id?: unknown }).id === "string" &&
+        Boolean((stateRef as { id: string }).id.trim()),
+    ),
+  );
 }
 
 function isExpectedToolCovered(
