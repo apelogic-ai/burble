@@ -23,7 +23,7 @@ function scheduledJob(prompt: string): ScheduledJobRecord {
 }
 
 describe("scheduled task validation", () => {
-  test("accepts planned MCP-GW provider tools for provider capabilities", () => {
+  test("does not treat unrelated provider tools as equivalent capabilities", () => {
     const validation = validateScheduledTask(
       scheduledJob(
         [
@@ -51,10 +51,66 @@ describe("scheduled task validation", () => {
       "google_get_drive_file",
     ]);
     expect(validation).toMatchObject({
+      ok: false,
+      errors: [
+        {
+          code: "missing_required_tool",
+          tool: "google_search_drive_files",
+        },
+      ],
+      warnings: [],
+    });
+  });
+
+  test("accepts the generic MCP-GW GitHub tool as explicit GitHub coverage", () => {
+    const validation = validateScheduledTask(
+      scheduledJob(
+        "Find open pull requests in repositories under the apelogic-ai GitHub organization.",
+      ),
+      {
+        requiredTools: ["github_call_mcp_tool"],
+      },
+    );
+
+    expect(validation).toMatchObject({
       ok: true,
       errors: [],
       warnings: [],
     });
+  });
+
+  test("does not let GitHub write grants cover organization PR search", () => {
+    const createOnly = validateScheduledTask(
+      scheduledJob(
+        "Find open pull requests in repositories under the apelogic-ai GitHub organization.",
+      ),
+      {
+        requiredTools: ["github_create_issue"],
+      },
+    );
+    const mixedNarrowGrants = validateScheduledTask(
+      scheduledJob(
+        "Find open pull requests in repositories under the apelogic-ai GitHub organization.",
+      ),
+      {
+        requiredTools: [
+          "github_create_issue",
+          "github_list_my_pull_requests",
+        ],
+      },
+    );
+
+    for (const validation of [createOnly, mixedNarrowGrants]) {
+      expect(validation).toMatchObject({
+        ok: false,
+        errors: [
+          {
+            code: "missing_required_tool",
+            tool: "github_search_issues",
+          },
+        ],
+      });
+    }
   });
 
   test("does not let a provider grant satisfy a non-provider capability", () => {
