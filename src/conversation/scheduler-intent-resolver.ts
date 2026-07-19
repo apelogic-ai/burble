@@ -47,6 +47,7 @@ export function createLlmSchedulerIntentResolver(
           input.text,
           input.recentMessages,
           input.jobs,
+          input.repair,
         ),
         maxRetries: 0,
       }),
@@ -198,7 +199,7 @@ const schedulerIntentSystemPrompt = [
   "create.prompt is the executable task only. Remove schedule and delivery clauses such as every 30 min, hourly, report back here, to this channel.",
   "For update_job_schedule, include schedule with the new cron schedule and include jobId when one current task/job clearly matches the user reference.",
   "For update_job_prompt, include prompt with the new executable task prompt and include jobId when one current task/job clearly matches the user reference.",
-  "When a task update contains multiple requested steps, return taskPlan instead of copying the user's message into prompt.",
+  "When a task creation or update contains multiple requested steps, return taskPlan instead of copying the user's message into prompt.",
   "taskPlan.steps are recurring executable steps. Each step has id, instruction, and the exact recurring provider tool names it requires in tools.",
   "taskPlan.preparation contains one-time provider calls that must finish before the task is updated. Each preparation step has id, tool, input, saveAs, and optional purpose.",
   "Current task specs include opaque stateRefs. Preserve and reuse matching existing refs by default; do not rediscover or recreate them.",
@@ -243,6 +244,7 @@ function schedulerIntentPrompt(
     expectedTools?: string[];
     stateRefs?: unknown[];
   }>,
+  repair?: { jobId: string | null; errors: string[] },
 ): string {
   return [
     `Message: ${JSON.stringify(text)}`,
@@ -264,6 +266,14 @@ function schedulerIntentPrompt(
     ...recentMessages
       .slice(-6)
       .map((message) => `- ${JSON.stringify(message)}`),
+    ...(repair
+      ? [
+          "Pre-flight repair request:",
+          `- jobId=${JSON.stringify(repair.jobId)}`,
+          ...repair.errors.map((error) => `- ${error}`),
+          "Return one corrected candidate for the same job and requested mutation. Do not add preparation side effects.",
+        ]
+      : []),
     "Return JSON with shape:",
     '{"intent":"trigger_job","confidence":0.92,"jobId":null}',
     'For create_job use: {"intent":"create_job","confidence":0.94,"jobId":null,"create":{"title":"Heart emoji every 30 min","prompt":"Post exactly this message: ❤️","schedule":{"kind":"cron","expression":"*/30 * * * *","timezone":"UTC"}}}',
@@ -337,7 +347,9 @@ export function parseSchedulerIntentResponse(
       ? parsed.runtimeType
       : null;
   const taskPlan =
-    intent === "update_job_prompt" || intent === "update_job"
+    intent === "create_job" ||
+    intent === "update_job_prompt" ||
+    intent === "update_job"
       ? parseSchedulerTaskPlan(parsed.taskPlan)
       : null;
   return {

@@ -484,6 +484,52 @@ describe("scheduler intent resolver", () => {
     );
   });
 
+  test("includes deterministic pre-flight feedback in a bounded repair request", async () => {
+    let prompt = "";
+    const resolver = createLlmSchedulerIntentResolver({
+      model: "openai:gpt-test",
+      resolveModel: () =>
+        ({ provider: "openai", modelId: "gpt-test" }) as never,
+      generateText: async (request) => {
+        prompt = request.prompt;
+        return {
+          text: JSON.stringify({
+            intent: "update_job_prompt",
+            confidence: 0.99,
+            jobId: "job_stateful",
+            taskPlan: {
+              preparation: [],
+              steps: [
+                {
+                  id: "read",
+                  instruction: "Read the configured state.",
+                  tools: ["google_get_drive_file"],
+                },
+              ],
+            },
+          }),
+        };
+      },
+    });
+
+    await resolver({
+      text: "Update the stateful task.",
+      recentMessages: [],
+      jobs: [],
+      repair: {
+        jobId: "job_stateful",
+        errors: [
+          "missing_required_tool: Task requires google_get_drive_file but the grant does not include it.",
+        ],
+      },
+    });
+
+    expect(prompt).toContain("Pre-flight repair request");
+    expect(prompt).toContain("job_stateful");
+    expect(prompt).toContain("missing_required_tool");
+    expect(prompt).toContain("Return one corrected candidate");
+  });
+
   test("returns none when the LLM intent resolver times out", async () => {
     const warnings: string[] = [];
     const resolver = createLlmSchedulerIntentResolver({

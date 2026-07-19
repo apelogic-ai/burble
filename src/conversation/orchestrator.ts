@@ -12,6 +12,7 @@ import { tryHandleLocalToolFastPath } from "./local-tool-fast-paths";
 import { enforceVisibility } from "./visibility";
 import type {
   SchedulerCreateJobResult,
+  SchedulerCreateJobInput,
   SchedulerJobDeleteResult,
   SchedulerJobMutationResult,
   SchedulerTaskValidation,
@@ -20,6 +21,7 @@ import type {
   SchedulerTriggerResult,
   SchedulerUpdateJobDeliveryResult,
   SchedulerUpdateJobResult,
+  SchedulerUpdateJobPromptInput,
   SchedulerUpdateJobPromptResult,
   SchedulerUpdateJobRuntimeResult,
   SchedulerUpdateJobScheduleResult,
@@ -251,21 +253,55 @@ async function handleConversationInternal(
   }
 
   if (schedulerCreateRequest && deps.schedulerControl?.createJob) {
-    const result = await deps.schedulerControl.createJob({
+    const preparation = await prepareResolvedScheduledTask(
+      request,
+      deps,
+      schedulerTaskPlan,
+    );
+    if (!preparation.ok) {
+      return preparation.response;
+    }
+    let result = await deps.schedulerControl.createJob({
       workspaceId: request.workspaceId,
       slackUserId: request.user.slackUserId,
       title: schedulerCreateRequest.title,
-      prompt: schedulerCreateRequest.prompt,
+      prompt: preparation.result?.prompt ?? schedulerCreateRequest.prompt,
       schedule: schedulerCreateRequest.schedule,
       routeId: request.conversationRouteId,
       runtimeType: scheduledJobRuntimeType(
         deps.schedulerRuntimeEngine ?? deps.agentRuntimeEngine,
       ),
+      ...(preparation.result
+        ? {
+            capability: scheduledTaskCapabilityUpdate(
+              preparation.result,
+              schedulerTaskPlan,
+            ),
+          }
+        : {}),
     });
+    if (
+      !result.ok &&
+      result.reason === "validation_failed" &&
+      preparation.result &&
+      Object.keys(preparation.result.resources).length === 0
+    ) {
+      const repaired = await repairScheduledCreate(
+        request,
+        deps,
+        result.validation,
+      );
+      if (repaired) {
+        result = await deps.schedulerControl.createJob(repaired);
+      }
+    }
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: formatScheduledJobCreateResult(result),
+      text: appendPreparedResourceSummary(
+        formatScheduledJobCreateResult(result),
+        result.ok ? preparation.result : null,
+      ),
     };
   }
 
@@ -463,7 +499,7 @@ async function handleConversationInternal(
         text: "I can’t update that scheduled task yet because I could not resolve the new task prompt.",
       };
     }
-    const result = await deps.schedulerControl.updateJobPrompt({
+    let result = await deps.schedulerControl.updateJobPrompt({
       workspaceId: request.workspaceId,
       slackUserId: request.user.slackUserId,
       jobId: schedulerJobIdHint,
@@ -477,6 +513,22 @@ async function handleConversationInternal(
           }
         : {}),
     });
+    if (
+      !result.ok &&
+      result.reason === "validation_failed" &&
+      preparation.result &&
+      Object.keys(preparation.result.resources).length === 0
+    ) {
+      const repaired = await repairScheduledPromptUpdate(
+        request,
+        deps,
+        schedulerJobIdHint,
+        result.validation,
+      );
+      if (repaired) {
+        result = await deps.schedulerControl.updateJobPrompt(repaired);
+      }
+    }
     return {
       visibility: "ephemeral",
       classification: "user_private",
@@ -756,7 +808,9 @@ async function resolveSchedulerControlIntent(
               ? resolved.runtimeType
               : null,
           taskPlan:
-            intent === "update_job_prompt" || intent === "update_job"
+            intent === "create_job" ||
+            intent === "update_job_prompt" ||
+            intent === "update_job"
               ? resolved.taskPlan ?? null
               : null,
           failure: null,
@@ -872,6 +926,136 @@ function scheduledTaskCapabilityUpdate(
         }
       : {}),
   };
+}
+
+async function repairScheduledPromptUpdate(
+  request: ConversationRequest,
+  deps: ConversationDeps,
+  jobId: string | null,
+  validation: SchedulerTaskValidation,
+): Promise<SchedulerUpdateJobPromptInput | null> {
+  if (!jobId || !deps.schedulerIntentResolver || !deps.schedulerControl) {
+    return null;
+  }
+  try {
+    const jobs = await deps.schedulerControl.listJobs({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+    });
+    const resolved = await deps.schedulerIntentResolver({
+      text: request.text,
+      recentMessages: recentConversationTexts(request),
+      jobs,
+      repair: {
+        jobId,
+        errors: validation.errors.map(
+          (issue) => `${issue.code}: ${issue.message}`,
+        ),
+      },
+    });
+    if (
+      resolved.intent !== "update_job_prompt" ||
+      resolved.jobId !== jobId ||
+      resolved.failure ||
+      (resolved.taskPlan?.preparation.length ?? 0) > 0
+    ) {
+      return null;
+    }
+    const preparation = await prepareResolvedScheduledTask(
+      request,
+      deps,
+      resolved.taskPlan ?? null,
+    );
+    if (!preparation.ok) {
+      return null;
+    }
+    const prompt =
+      preparation.result?.prompt ?? normalizeResolvedPrompt(resolved.prompt);
+    if (!prompt) {
+      return null;
+    }
+    return {
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId,
+      prompt,
+      ...(preparation.result
+        ? {
+            capability: scheduledTaskCapabilityUpdate(
+              preparation.result,
+              resolved.taskPlan ?? null,
+            ),
+          }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function repairScheduledCreate(
+  request: ConversationRequest,
+  deps: ConversationDeps,
+  validation: SchedulerTaskValidation,
+): Promise<SchedulerCreateJobInput | null> {
+  if (!deps.schedulerIntentResolver || !deps.schedulerControl) {
+    return null;
+  }
+  try {
+    const jobs = await deps.schedulerControl.listJobs({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+    });
+    const resolved = await deps.schedulerIntentResolver({
+      text: request.text,
+      recentMessages: recentConversationTexts(request),
+      jobs,
+      repair: {
+        jobId: null,
+        errors: validation.errors.map(
+          (issue) => `${issue.code}: ${issue.message}`,
+        ),
+      },
+    });
+    const create = normalizeResolverCreateJob(resolved.create);
+    if (
+      resolved.intent !== "create_job" ||
+      !create ||
+      resolved.failure ||
+      (resolved.taskPlan?.preparation.length ?? 0) > 0
+    ) {
+      return null;
+    }
+    const preparation = await prepareResolvedScheduledTask(
+      request,
+      deps,
+      resolved.taskPlan ?? null,
+    );
+    if (!preparation.ok) {
+      return null;
+    }
+    return {
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      title: create.title,
+      prompt: preparation.result?.prompt ?? create.prompt,
+      schedule: create.schedule,
+      routeId: request.conversationRouteId,
+      runtimeType: scheduledJobRuntimeType(
+        deps.schedulerRuntimeEngine ?? deps.agentRuntimeEngine,
+      ),
+      ...(preparation.result
+        ? {
+            capability: scheduledTaskCapabilityUpdate(
+              preparation.result,
+              resolved.taskPlan ?? null,
+            ),
+          }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function appendPreparedResourceSummary(
@@ -1247,6 +1431,9 @@ export function formatScheduledTaskDetailResult(
     task.requiredTools.length
       ? `- granted tools: ${task.requiredTools.join(", ")}`
       : "- granted tools: none",
+    task.stateRefs?.length
+      ? `- state refs: ${JSON.stringify(task.stateRefs)}`
+      : "- state refs: none",
     validation.expectedTools.length
       ? `- expected tools: ${validation.expectedTools.join(", ")}`
       : "- expected tools: none",
@@ -1374,6 +1561,9 @@ export function formatScheduledJobCreateResult(
   result: SchedulerCreateJobResult,
 ): string {
   if (!result.ok) {
+    if (result.reason === "validation_failed") {
+      return formatScheduledUpdateValidationFailure(result.validation);
+    }
     return `I can’t create that scheduled task because the schedule is unsupported: ${result.message}`;
   }
   return [

@@ -1042,6 +1042,160 @@ describe("handleConversation", () => {
     expect(response.text).toContain("delivery: this conversation");
   });
 
+  test("prepares and pre-flights a resolved multi-step task creation", async () => {
+    const creates: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Create an hourly task that collects current results and reports them.",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: (input) => {
+            creates.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job_created",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: input.title,
+                prompt: input.prompt,
+                schedule: input.schedule,
+                routeId: input.routeId ?? null,
+                state: "scheduled",
+                runtimeType: input.runtimeType ?? null,
+                createdAt: "2026-07-19T16:00:00.000Z",
+                updatedAt: "2026-07-19T16:00:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "create_job",
+          confidence: 0.99,
+          jobId: null,
+          create: {
+            title: "Current results",
+            prompt: "Collect current results.",
+            schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
+          },
+          taskPlan: {
+            preparation: [],
+            steps: [
+              {
+                id: "collect",
+                instruction: "Collect current results.",
+                tools: ["github_search_issues"],
+              },
+              { id: "report", instruction: "Report the results.", tools: [] },
+            ],
+          },
+        }),
+      }),
+    );
+
+    expect(creates).toEqual([
+      expect.objectContaining({
+        title: "Current results",
+        prompt: "1. Collect current results.\n2. Report the results.",
+        capability: {
+          expectedTools: ["github_search_issues"],
+          requiredTools: ["github_search_issues"],
+        },
+      }),
+    ]);
+    expect(response.text).toContain("Created scheduled job job_created.");
+  });
+
+  test("repairs one side-effect-free task creation after pre-flight rejection", async () => {
+    let resolverCalls = 0;
+    let createCalls = 0;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Create an hourly scheduled task to collect current results.",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: (input) => {
+            createCalls += 1;
+            if (createCalls === 1) {
+              return {
+                ok: false,
+                reason: "validation_failed",
+                validation: {
+                  ok: false,
+                  expectedTools: ["github_search_issues"],
+                  grantedTools: [],
+                  errors: [
+                    {
+                      code: "missing_required_tool",
+                      message:
+                        "Task requires github_search_issues but the grant does not include it.",
+                      tool: "github_search_issues",
+                    },
+                  ],
+                  warnings: [],
+                },
+              };
+            }
+            return {
+              ok: true,
+              job: {
+                jobId: "job_created_after_repair",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: input.title,
+                prompt: input.prompt,
+                schedule: input.schedule,
+                routeId: input.routeId ?? null,
+                state: "scheduled",
+                runtimeType: input.runtimeType ?? null,
+                createdAt: "2026-07-19T16:00:00.000Z",
+                updatedAt: "2026-07-19T16:00:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async (input) => {
+          resolverCalls += 1;
+          if (resolverCalls === 2) {
+            expect(input.repair?.jobId).toBeNull();
+          }
+          return {
+            intent: "create_job",
+            confidence: 0.99,
+            jobId: null,
+            create: {
+              title: "Current results",
+              prompt: "Collect current results.",
+              schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
+            },
+            taskPlan: {
+              preparation: [],
+              steps: [
+                {
+                  id: "collect",
+                  instruction: "Collect current results.",
+                  tools: ["github_search_issues"],
+                },
+              ],
+            },
+          };
+        },
+      }),
+    );
+
+    expect(resolverCalls).toBe(2);
+    expect(createCalls).toBe(2);
+    expect(response.text).toContain(
+      "Created scheduled job job_created_after_repair.",
+    );
+  });
+
   test("does not treat one-shot report requests as unresolved scheduled task creates", async () => {
     let called = false;
     const response = await handleConversation(
@@ -1836,6 +1990,160 @@ describe("handleConversation", () => {
     expect(response.text).toContain("Updated scheduled job job_ai_news task.");
   });
 
+  test("repairs one side-effect-free task update after deterministic pre-flight rejection", async () => {
+    let resolverCalls = 0;
+    let updateCalls = 0;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Modify the stateful scheduled task to read and report its state.",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [
+            {
+              ...aiNewsJob(),
+              jobId: "job_stateful",
+              title: "Stateful task",
+              stateRefs: [
+                { provider: "object-store", kind: "checkpoint", id: "state-123" },
+              ],
+            },
+          ],
+          updateJobPrompt: (input) => {
+            updateCalls += 1;
+            if (updateCalls === 1) {
+              return {
+                ok: false,
+                reason: "validation_failed",
+                validation: {
+                  ok: false,
+                  expectedTools: ["github_search_issues"],
+                  grantedTools: [],
+                  errors: [
+                    {
+                      code: "missing_required_tool",
+                      message:
+                        "Task requires github_search_issues but the grant does not include it.",
+                      tool: "github_search_issues",
+                    },
+                  ],
+                  warnings: [],
+                },
+                jobs: [],
+              };
+            }
+            expect(input.capability).toEqual({
+              expectedTools: ["github_search_issues"],
+              requiredTools: ["github_search_issues"],
+            });
+            return {
+              ok: true,
+              job: {
+                jobId: "job_stateful",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Stateful task",
+                prompt: input.prompt,
+                schedule: aiNewsJob().schedule,
+                routeId: "convrt_news",
+                state: "scheduled",
+                runtimeType: "burble-native",
+                createdAt: "2026-07-19T16:00:00.000Z",
+                updatedAt: "2026-07-19T16:01:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async (input) => {
+          resolverCalls += 1;
+          if (resolverCalls === 2) {
+            expect(input.repair).toEqual({
+              jobId: "job_stateful",
+              errors: [
+                "missing_required_tool: Task requires github_search_issues but the grant does not include it.",
+              ],
+            });
+          }
+          return {
+            intent: "update_job_prompt",
+            confidence: 0.99,
+            jobId: "job_stateful",
+            taskPlan: {
+              preparation: [],
+              steps: [
+                {
+                  id: "collect",
+                  instruction: "Collect current results.",
+                  tools: ["github_search_issues"],
+                },
+                {
+                  id: "report",
+                  instruction: "Report the results.",
+                  tools: [],
+                },
+              ],
+            },
+          };
+        },
+      }),
+    );
+
+    expect(resolverCalls).toBe(2);
+    expect(updateCalls).toBe(2);
+    expect(response.text).toContain("Updated scheduled job job_stateful task.");
+  });
+
+  test("does not repair after preparation has performed side effects", async () => {
+    let resolverCalls = 0;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Modify the scheduled task and prepare new state.",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [aiNewsJob()],
+          updateJobPrompt: () => ({
+            ok: false,
+            reason: "validation_failed",
+            validation: {
+              ok: false,
+              expectedTools: ["web_search"],
+              grantedTools: [],
+              errors: [
+                {
+                  code: "missing_required_tool",
+                  message: "Task requires web_search but the grant does not include it.",
+                  tool: "web_search",
+                },
+              ],
+              warnings: [],
+            },
+            jobs: [],
+          }),
+        },
+        schedulerIntentResolver: async () => {
+          resolverCalls += 1;
+          return {
+            intent: "update_job_prompt",
+            confidence: 0.99,
+            jobId: "job_ai_news",
+            taskPlan: aiNewsTaskPlan(),
+          };
+        },
+        scheduledTaskPreparationExecutor: async () => ({
+          value: { id: "new-state" },
+          stateRef: { provider: "object-store", kind: "checkpoint", id: "new-state" },
+        }),
+      }),
+    );
+
+    expect(resolverCalls).toBe(1);
+    expect(response.text).toContain("pre-flight validation failed");
+    expect(response.text).toContain("existing task was left unchanged");
+  });
+
   test("leaves the scheduled job unchanged when generic preparation fails", async () => {
     let updated = false;
     const response = await handleConversation(
@@ -2354,6 +2662,14 @@ describe("handleConversation", () => {
                 state: "scheduled",
                 runtimeType: "hermes",
                 requiredTools: ["github_list_my_pull_requests"],
+                stateRefs: [
+                  {
+                    provider: "object-store",
+                    kind: "checkpoint",
+                    id: "state-123",
+                    purpose: "Deduplicate prior results",
+                  },
+                ],
                 routeId: "convrt_123",
                 updatedAt: "2026-06-24T12:00:00.000Z",
               },
@@ -2393,6 +2709,8 @@ describe("handleConversation", () => {
     expect(response.text).toContain("github_list_my_pull_requests");
     expect(response.text).toContain("github_search_issues");
     expect(response.text).toContain("validation: failed");
+    expect(response.text).toContain("state refs:");
+    expect(response.text).toContain("state-123");
   });
 
   test("lists job runs from scheduler resolver intent", async () => {

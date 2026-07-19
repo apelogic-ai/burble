@@ -121,6 +121,38 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("rejects an invalid resolved task before creating any records", async () => {
+    const store = createTokenStore(":memory:");
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-07-19T16:00:00.000Z"),
+      newJobId: () => "job-invalid-create",
+    });
+
+    const result = await scheduler.createJob?.({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Invalid task",
+      prompt: "Run the resolved operation.",
+      schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
+      runtimeType: "burble-native",
+      capability: {
+        expectedTools: ["github_search_issues"],
+        requiredTools: [],
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "validation_failed",
+      validation: {
+        errors: [{ code: "missing_required_tool", tool: "github_search_issues" }],
+      },
+    });
+    expect(store.getScheduledJob("job-invalid-create")).toBeNull();
+    expect(store.getAgentJobCapability("job-invalid-create")).toBeNull();
+    store.close();
+  });
+
   test("rejects scheduled jobs with unsupported schedules", async () => {
     const store = createTokenStore(":memory:");
     const scheduler = createSchedulerControlPlane(store, {

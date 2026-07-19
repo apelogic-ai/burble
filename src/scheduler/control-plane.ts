@@ -198,6 +198,7 @@ export type SchedulerCreateJobInput = {
   schedule: unknown;
   routeId?: string | null;
   runtimeType?: AgentRuntimeEngine | null;
+  capability?: SchedulerTaskCapabilityUpdate;
 };
 
 export type SchedulerCreateJobResult =
@@ -209,7 +210,8 @@ export type SchedulerCreateJobResult =
       ok: false;
       reason: "invalid_schedule";
       message: string;
-    };
+    }
+  | Omit<SchedulerTaskPreflightFailure, "jobs">;
 
 export type SchedulerJobMutationInput = {
   workspaceId: string;
@@ -536,6 +538,32 @@ export function createSchedulerControlPlane(
       }
       const jobId = newJobId();
       const timestamp = now();
+      const timestampIso = timestamp.toISOString();
+      const candidateJob: ScheduledJobRecord = {
+        jobId,
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        title: input.title,
+        prompt: input.prompt,
+        schedule: input.schedule,
+        routeId: input.routeId ?? null,
+        state: "scheduled",
+        runtimeType: input.runtimeType ?? null,
+        createdAt: timestampIso,
+        updatedAt: timestampIso,
+      };
+      const candidateCapability = resolveScheduledJobCapability(
+        null,
+        candidateJob,
+        input.capability,
+      );
+      const validation = validateScheduledTask(
+        candidateJob,
+        candidateCapability,
+      );
+      if (!validation.ok) {
+        return { ok: false, reason: "validation_failed", validation };
+      }
       const job = store.upsertScheduledJob({
         jobId,
         workspaceId: input.workspaceId,
@@ -548,7 +576,12 @@ export function createSchedulerControlPlane(
         state: "scheduled",
         now: timestamp,
       });
-      ensureScheduledJobCapability(store, job, timestamp);
+      persistScheduledJobCapability(
+        store,
+        job,
+        timestamp,
+        candidateCapability,
+      );
       return {
         ok: true,
         job,

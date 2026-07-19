@@ -2866,6 +2866,8 @@ describe("handleToolGatewayRequest", () => {
             state: "scheduled",
             runtimeType: "hermes",
             requiredTools: [],
+            expectedTools: [],
+            stateRefs: [],
             routeId: "convrt_abcdefabcdefabcdefabcdef",
             updatedAt: "2026-06-24T11:05:00.000Z"
           }
