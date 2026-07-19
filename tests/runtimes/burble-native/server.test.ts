@@ -936,6 +936,171 @@ describe("Burble Native runtime server", () => {
     });
   });
 
+  test("allows final synthesis after four tool-call rounds", async () => {
+    let providerRequests = 0;
+    let toolRequests = 0;
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestTools(nativeRunRequest("complete four steps"), [
+            {
+              name: "github_get_authenticated_user",
+              alias: "github.getAuthenticatedUser",
+              provider: "github",
+              title: "GitHub authenticated user",
+              description: "Return the connected GitHub identity.",
+              enabled: true,
+              risk: "read",
+              routeRequired: true,
+              confirmation: "none",
+              retrySafe: true,
+              input: []
+            }
+          ])
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+          BURBLE_INTERNAL_TOKEN: "runtime-token"
+        },
+        fetch: async (url: string) => {
+          if (url.includes("/github.getAuthenticatedUser/execute")) {
+            toolRequests += 1;
+            return Response.json({
+              classification: "user_private",
+              content: { login: "octocat" }
+            });
+          }
+          providerRequests += 1;
+          if (providerRequests <= 4) {
+            return new Response(
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output: [
+                    {
+                      type: "function_call",
+                      call_id: `call_${providerRequests}`,
+                      name: "burble_provider_call",
+                      arguments: JSON.stringify({
+                        toolName: "github.getAuthenticatedUser",
+                        input: {}
+                      })
+                    }
+                  ]
+                }
+              }),
+              { headers: { "content-type": "text/event-stream" } }
+            );
+          }
+          return new Response(
+            [
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "Four-step workflow complete."
+              }),
+              sseEvent({
+                type: "response.completed",
+                response: { output_text: "Four-step workflow complete." }
+              })
+            ].join(""),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Four-step workflow complete.");
+    expect(providerRequests).toBe(5);
+    expect(toolRequests).toBe(4);
+  });
+
+  test("rejects a fifth tool-call round without executing it", async () => {
+    let providerRequests = 0;
+    let toolRequests = 0;
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestTools(nativeRunRequest("keep calling tools"), [
+            {
+              name: "github_get_authenticated_user",
+              alias: "github.getAuthenticatedUser",
+              provider: "github",
+              title: "GitHub authenticated user",
+              description: "Return the connected GitHub identity.",
+              enabled: true,
+              risk: "read",
+              routeRequired: true,
+              confirmation: "none",
+              retrySafe: true,
+              input: []
+            }
+          ])
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+          BURBLE_INTERNAL_TOKEN: "runtime-token"
+        },
+        fetch: async (url: string) => {
+          if (url.includes("/github.getAuthenticatedUser/execute")) {
+            toolRequests += 1;
+            return Response.json({
+              classification: "user_private",
+              content: { login: "octocat" }
+            });
+          }
+          providerRequests += 1;
+          return new Response(
+            sseEvent({
+              type: "response.completed",
+              response: {
+                output: [
+                  {
+                    type: "function_call",
+                    call_id: `call_${providerRequests}`,
+                    name: "burble_provider_call",
+                    arguments: JSON.stringify({
+                      toolName: "github.getAuthenticatedUser",
+                      input: {}
+                    })
+                  }
+                ]
+              }
+            }),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain(
+      "Runtime run failed: Burble Native exceeded 4 tool-call steps"
+    );
+    expect(providerRequests).toBe(5);
+    expect(toolRequests).toBe(4);
+  });
+
   test("leaves scheduled tool authorization to the gateway beyond the prompt slice", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const tools = Array.from({ length: 25 }, (_, index) => ({

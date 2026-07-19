@@ -249,7 +249,8 @@ async function* runNativeTurn(
   let usage: RunUsage | undefined;
   let input = buildOpenAiInput(request);
   const turnDeadline = createTurnDeadline(context.env);
-  for (let step = 0; step < MAX_TOOL_LOOP_STEPS; step += 1) {
+  let toolCallSteps = 0;
+  while (true) {
     const result = await collectOpenAiTurn(input, request, context, turnDeadline);
     usage = mergeUsage(usage, result.usage);
     if (result.toolCalls.length === 0) {
@@ -259,6 +260,11 @@ async function* runNativeTurn(
       }
       responseText = result.text || responseText;
       break;
+    }
+    if (toolCallSteps >= MAX_TOOL_LOOP_STEPS) {
+      throw new Error(
+        `Burble Native exceeded ${MAX_TOOL_LOOP_STEPS} tool-call steps`
+      );
     }
 
     const toolOutputs: OpenAiInputItem[] = [];
@@ -295,11 +301,7 @@ async function* runNativeTurn(
     }
 
     input = [...asOpenAiInputItems(input), ...result.outputItems, ...toolOutputs];
-    if (step === MAX_TOOL_LOOP_STEPS - 1) {
-      throw new Error(
-        `Burble Native exceeded ${MAX_TOOL_LOOP_STEPS} tool-call steps`
-      );
-    }
+    toolCallSteps += 1;
   }
   yield {
     type: "final",
