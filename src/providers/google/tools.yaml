@@ -191,6 +191,7 @@ tools:
     aliases:
       - google.appendToDriveTextFile
     implementation: appendDriveTextFile
+    dependsOn: [google_get_drive_file]
     stateRefInputs: [fileId]
     stateRefRequired: true
     title: Google Drive append text file

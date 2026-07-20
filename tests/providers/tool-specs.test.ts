@@ -120,6 +120,11 @@ describe("provider tool specs", () => {
     expect(
       googleProviderToolSpecs.find(
         (tool) => tool.name === "google_append_to_drive_text_file"
+      )?.dependsOn
+    ).toEqual(["google_get_drive_file"]);
+    expect(
+      googleProviderToolSpecs.find(
+        (tool) => tool.name === "google_append_to_drive_text_file"
       )?.stateRefInputs
     ).toEqual(["fileId"]);
     expect(

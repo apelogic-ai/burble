@@ -1232,8 +1232,14 @@ describe("handleConversation", () => {
             }
             expect(input.prompt).toBe("1. Append new results to state-456.");
             expect(input.capability).toEqual({
-              expectedTools: ["google_append_to_drive_text_file"],
-              requiredTools: ["google_append_to_drive_text_file"],
+              expectedTools: [
+                "google_append_to_drive_text_file",
+                "google_get_drive_file",
+              ],
+              requiredTools: [
+                "google_append_to_drive_text_file",
+                "google_get_drive_file",
+              ],
               stateRefMode: "merge",
               stateRefs: [
                 {

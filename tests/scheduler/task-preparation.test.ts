@@ -246,6 +246,31 @@ describe("scheduled task preparation", () => {
       }),
     ).rejects.toThrow("provider unavailable");
   });
+
+  test("expands catalog-declared recurring capability dependencies", async () => {
+    const result = await executeScheduledTaskPreparation({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      plan: {
+        preparation: [],
+        steps: [
+          {
+            id: "record",
+            instruction: "Append the new checkpoint.",
+            tools: ["google_append_to_drive_text_file"],
+          },
+        ],
+      },
+      executeTool: async () => {
+        throw new Error("not called");
+      },
+    });
+
+    expect(result.requiredTools).toEqual([
+      "google_append_to_drive_text_file",
+      "google_get_drive_file",
+    ]);
+  });
 });
 
 function examplePlan(): SchedulerTaskPlan {

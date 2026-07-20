@@ -3,7 +3,10 @@ import type {
   SchedulerTaskPlan,
   SchedulerTaskPreparationStep,
 } from "../conversation/types";
-import { findProviderToolSpec } from "../providers/catalog";
+import {
+  expandProviderToolDependencies,
+  findProviderToolSpec,
+} from "../providers/catalog";
 import { providerToolInputSchema } from "../providers/tool-specs";
 import type { ScheduledJobStateRef } from "../agent/scheduled-job-context";
 
@@ -147,15 +150,9 @@ async function executePreparationStep(
 }
 
 function canonicalRecurringTools(plan: SchedulerTaskPlan): string[] {
-  return [
-    ...new Set(
-      plan.steps.flatMap((step) =>
-        step.tools.map(
-          (toolName) => findProviderToolSpec(toolName)?.name ?? toolName,
-        ),
-      ),
-    ),
-  ].sort();
+  return expandProviderToolDependencies(
+    plan.steps.flatMap((step) => step.tools),
+  );
 }
 
 function renderResourceBindings(
