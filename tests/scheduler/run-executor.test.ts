@@ -137,6 +137,18 @@ describe("scheduler run executor", () => {
       async *run(input) {
         runnerInputs.push(input);
         yield {
+          type: "tool_call",
+          toolName: "web.search",
+          callId: "call-news",
+          input: { query: "fresh AI news" },
+        };
+        yield {
+          type: "tool_result",
+          toolName: "web.search",
+          callId: "call-news",
+          classification: "public",
+        };
+        yield {
           type: "final",
           response: {
             classification: "public",
@@ -230,6 +242,21 @@ describe("scheduler run executor", () => {
       },
       telemetry: {
         promptChars: 512,
+        scheduledRun: {
+          toolEvents: [
+            {
+              type: "tool_call",
+              toolName: "web.search",
+              callId: "call-news",
+            },
+            {
+              type: "tool_result",
+              toolName: "web.search",
+              callId: "call-news",
+              classification: "public",
+            },
+          ],
+        },
       },
       visibility: {
         destination: "slack",

@@ -71,6 +71,12 @@ type ScheduledRunExecutionContext = {
 type ScheduledRunAttemptResult = {
   text: string;
   output: AgentOutput;
+  events: AgentRunEvent[];
+};
+
+type ScheduledAgentRunCollection = {
+  output: AgentOutput;
+  events: AgentRunEvent[];
 };
 
 const DEFAULT_WORKFLOW_ATTEMPT_HEARTBEAT_INTERVAL_MS = 60_000;
@@ -464,7 +470,7 @@ async function executeScheduledRunAttempt(input: {
   logWarn?: (message: string) => void;
 }): Promise<ScheduledRunAttemptResult> {
   assertScheduledRunDestinationAvailable(input.executionContext);
-  const result = await collectScheduledAgentRunWithProgressRetry({
+  const collected = await collectScheduledAgentRunWithProgressRetry({
     runner: input.runner,
     agentInput: buildScheduledRunAgentInput({
       store: input.store,
@@ -477,13 +483,14 @@ async function executeScheduledRunAttempt(input: {
     scheduledRuntimeRetrySleep: input.scheduledRuntimeRetrySleep,
     logWarn: input.logWarn,
   });
-  const output = validateScheduledJobOutput(result);
+  const output = validateScheduledJobOutput(collected.output);
   if (!output.ok) {
     throw new Error(output.reason);
   }
   return {
     text: output.text,
-    output: result,
+    output: collected.output,
+    events: collected.events,
   };
 }
 
@@ -559,7 +566,10 @@ function recordScheduledRunAudit(input: {
       ),
       telemetry: auditJsonField(
         "telemetry",
-        input.attemptResult.output.telemetry ?? null,
+        scheduledRunAuditTelemetry(
+          input.attemptResult.output.telemetry,
+          input.attemptResult.events,
+        ),
         input,
       ),
       visibility: auditJsonField(
@@ -1086,16 +1096,11 @@ async function collectScheduledAgentRunWithProgressRetry(input: {
   scheduledRuntimeRetryDelayMs?: (attempt: number) => number;
   scheduledRuntimeRetrySleep?: (delayMs: number) => Promise<void>;
   logWarn?: (message: string) => void;
-}) {
-  const events: AgentRunEvent[] = [];
+}): Promise<ScheduledAgentRunCollection> {
+  const collected = collectAgentRunWithEvents(input.runner, input.agentInput);
+  const events = collected.events;
   try {
-    const result = await collectAgentRun(
-      input.runner,
-      input.agentInput,
-      (event) => {
-        events.push(event);
-      },
-    );
+    const result = await collected.output;
     const retryContext = progressOnlyScheduledRunRetryContext(
       events,
       input.scheduledJobContext,
@@ -1114,7 +1119,7 @@ async function collectScheduledAgentRunWithProgressRetry(input: {
         "Managed runtime final response contained only runtime-control/progress text",
       );
     }
-    return result;
+    return { output: result, events };
   } catch (error) {
     const retryContext = progressOnlyScheduledRunRetryContext(
       events,
@@ -1236,23 +1241,24 @@ async function collectScheduledAgentRunProgressRetry(input: {
   job: ScheduledJobRecord;
   scheduledJobContext: ScheduledJobContext;
   logWarn?: (message: string) => void;
-}) {
+}): Promise<ScheduledAgentRunCollection> {
   input.logWarn?.(
     `Scheduled job runtime returned progress-only output before tool call; retrying run jobId=${input.job.jobId}`,
   );
-  const result = await collectAgentRun(input.runner, {
+  const collected = collectAgentRunWithEvents(input.runner, {
     ...input.agentInput,
     text: buildScheduledProgressRetryPrompt(
       input.job.prompt,
       input.scheduledJobContext.allowedTools,
     ),
   });
+  const result = await collected.output;
   if (isRuntimeProgressOnlyResponseText(result.text)) {
     throw new Error(
       "Managed runtime final response contained only runtime-control/progress text after scheduled task retry",
     );
   }
-  return result;
+  return { output: result, events: collected.events };
 }
 
 async function collectScheduledAgentRunTransientRetry(input: {
@@ -1264,7 +1270,7 @@ async function collectScheduledAgentRunTransientRetry(input: {
   scheduledRuntimeRetryDelayMs?: (attempt: number) => number;
   scheduledRuntimeRetrySleep?: (delayMs: number) => Promise<void>;
   logWarn?: (message: string) => void;
-}) {
+}): Promise<ScheduledAgentRunCollection> {
   const delayMs = Math.max(
     0,
     Math.round(
@@ -1276,7 +1282,7 @@ async function collectScheduledAgentRunTransientRetry(input: {
     `Scheduled job runtime failed with retryable error; retrying run jobId=${input.job.jobId} delayMs=${delayMs} error=${scheduledRunErrorMessage(input.error)}`,
   );
   await (input.scheduledRuntimeRetrySleep ?? sleepFor)(delayMs);
-  return collectAgentRun(input.runner, {
+  const collected = collectAgentRunWithEvents(input.runner, {
     ...input.agentInput,
     text: buildScheduledRuntimeRetryPrompt(
       input.job.prompt,
@@ -1284,6 +1290,57 @@ async function collectScheduledAgentRunTransientRetry(input: {
       scheduledRunErrorMessage(input.error),
     ),
   });
+  return { output: await collected.output, events: collected.events };
+}
+
+function collectAgentRunWithEvents(
+  runner: AgentRunner,
+  input: AgentInput,
+): { output: Promise<AgentOutput>; events: AgentRunEvent[] } {
+  const events: AgentRunEvent[] = [];
+  return {
+    output: collectAgentRun(runner, input, (event) => {
+      events.push(event);
+    }),
+    events,
+  };
+}
+
+function scheduledRunAuditTelemetry(
+  telemetry: AgentOutput["telemetry"],
+  events: AgentRunEvent[],
+): Record<string, unknown> {
+  return {
+    ...(telemetry ?? {}),
+    scheduledRun: {
+      toolEvents: events.flatMap(sanitizeScheduledRunToolEvent),
+    },
+  };
+}
+
+function sanitizeScheduledRunToolEvent(
+  event: AgentRunEvent,
+): Array<Record<string, unknown>> {
+  if (event.type === "tool_call") {
+    return [
+      {
+        type: event.type,
+        toolName: event.toolName,
+        callId: event.callId,
+      },
+    ];
+  }
+  if (event.type === "tool_result") {
+    return [
+      {
+        type: event.type,
+        toolName: event.toolName,
+        callId: event.callId,
+        classification: event.classification,
+      },
+    ];
+  }
+  return [];
 }
 
 export function scheduledRuntimeRetryDelayMs(
