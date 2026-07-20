@@ -189,6 +189,61 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("accepts ordinary JSON identifiers in generic task plans", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        JSON.stringify({
+          intent: "update_job_prompt",
+          confidence: 0.99,
+          jobId: "job_pr_checker",
+          taskPlan: {
+            preparation: [
+              {
+                id: "createDedupState",
+                tool: "google_create_drive_text_file",
+                input: { name: "Open PR deduplication", text: "" },
+                saveAs: "dedupState",
+              },
+            ],
+            steps: [
+              {
+                id: "collectOpenPRs",
+                instruction: "Find open pull requests.",
+                tools: ["github_search_issues"],
+              },
+              {
+                id: "deduplicateAndRecord",
+                instruction:
+                  "Use {{resources.dedupState.fileId}} to deduplicate results.",
+                tools: [
+                  "google_get_drive_file",
+                  "google_append_to_drive_text_file",
+                ],
+              },
+            ],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      taskPlan: {
+        preparation: [
+          {
+            id: "createDedupState",
+            saveAs: "dedupState",
+          },
+        ],
+        steps: [
+          { id: "collectOpenPRs" },
+          {
+            id: "deduplicateAndRecord",
+            instruction:
+              "Use {{resources.dedupState.fileId}} to deduplicate results.",
+          },
+        ],
+      },
+    });
+  });
+
   test("parses explicit generic state-reference mutation semantics", () => {
     expect(
       parseSchedulerIntentResponse(

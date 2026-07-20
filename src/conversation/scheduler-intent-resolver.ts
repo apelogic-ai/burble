@@ -449,7 +449,7 @@ function parsePlanIdentifier(value: unknown): string | null {
     return null;
   }
   const normalized = value.trim();
-  return /^[a-z][a-z0-9_]{0,63}$/.test(normalized) ? normalized : null;
+  return /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(normalized) ? normalized : null;
 }
 
 function parseToolNames(value: unknown): string[] | null {
