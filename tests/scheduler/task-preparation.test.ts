@@ -26,6 +26,7 @@ describe("scheduled task preparation", () => {
       ok: false,
       errors: [
         "Preparation step invent references unknown provider tool google_invent_document.",
+        "Recurring step deduplicate references unknown preparation binding dedupe_document.",
       ],
     });
   });
@@ -51,6 +52,81 @@ describe("scheduled task preparation", () => {
         "Preparation step create_doc has invalid input for google_docs_create_document.",
       ],
     });
+  });
+
+  test("rejects malformed step and resource contracts before preparation", () => {
+    const validation = validateScheduledTaskPlan({
+      preparation: [
+        {
+          id: "prepare",
+          tool: "google_create_drive_text_file",
+          input: { name: "One", text: "" },
+          saveAs: "state",
+        },
+        {
+          id: "prepare",
+          tool: "google_create_drive_text_file",
+          input: { name: "Two", text: "" },
+          saveAs: "state",
+        },
+      ],
+      steps: [
+        {
+          id: "run",
+          instruction: "Use {{resources.missing.id}}.",
+          tools: ["google_get_drive_file"],
+        },
+        {
+          id: "run",
+          instruction: "Report the result.",
+          tools: [],
+        },
+      ],
+    });
+
+    expect(validation).toEqual({
+      ok: false,
+      errors: [
+        "Task plan step id prepare is duplicated.",
+        "Preparation binding state is duplicated.",
+        "Recurring step run references unknown preparation binding missing.",
+        "Task plan step id run is duplicated.",
+      ],
+    });
+  });
+
+  test("does not execute preparation for an unbound resource contract", async () => {
+    let calls = 0;
+    await expect(
+      executeScheduledTaskPreparation({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        plan: {
+          preparation: [
+            {
+              id: "prepare",
+              tool: "google_create_drive_text_file",
+              input: { name: "State", text: "" },
+              saveAs: "state",
+            },
+          ],
+          steps: [
+            {
+              id: "run",
+              instruction: "Use {{resources.other.id}}.",
+              tools: ["google_get_drive_file"],
+            },
+          ],
+        },
+        executeTool: async () => {
+          calls += 1;
+          return { value: { id: "state-123" } };
+        },
+      }),
+    ).rejects.toThrow(
+      "Recurring step run references unknown preparation binding other.",
+    );
+    expect(calls).toBe(0);
   });
 
   test("executes generic preparation calls and binds outputs into recurring steps", async () => {

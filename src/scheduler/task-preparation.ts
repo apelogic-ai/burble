@@ -38,8 +38,18 @@ export function validateScheduledTaskPlan(
   plan: SchedulerTaskPlan,
 ): ScheduledTaskPlanValidation {
   const errors: string[] = [];
+  const stepIds = new Set<string>();
+  const preparationBindings = new Set<string>();
 
   for (const step of plan.preparation) {
+    if (stepIds.has(step.id)) {
+      errors.push(`Task plan step id ${step.id} is duplicated.`);
+    }
+    stepIds.add(step.id);
+    if (preparationBindings.has(step.saveAs)) {
+      errors.push(`Preparation binding ${step.saveAs} is duplicated.`);
+    }
+    preparationBindings.add(step.saveAs);
     const tool = findProviderToolSpec(step.tool);
     if (!tool) {
       errors.push(
@@ -61,10 +71,21 @@ export function validateScheduledTaskPlan(
   }
 
   for (const step of plan.steps) {
+    if (stepIds.has(step.id)) {
+      errors.push(`Task plan step id ${step.id} is duplicated.`);
+    }
+    stepIds.add(step.id);
     for (const toolName of step.tools) {
       if (!findProviderToolSpec(toolName)) {
         errors.push(
           `Recurring step ${step.id} references unknown provider tool ${toolName}.`,
+        );
+      }
+    }
+    for (const binding of resourceBindings(step.instruction)) {
+      if (!preparationBindings.has(binding)) {
+        errors.push(
+          `Recurring step ${step.id} references unknown preparation binding ${binding}.`,
         );
       }
     }
@@ -73,6 +94,14 @@ export function validateScheduledTaskPlan(
   return errors.length > 0
     ? { ok: false, errors: [...new Set(errors)] }
     : { ok: true, errors: [] };
+}
+
+function resourceBindings(instruction: string): string[] {
+  return [
+    ...instruction.matchAll(
+      /\{\{resources\.([A-Za-z][A-Za-z0-9_]{0,63})\.[a-zA-Z0-9_.]+\}\}/g,
+    ),
+  ].map((match) => match[1]!);
 }
 
 export async function executeScheduledTaskPreparation(input: {
