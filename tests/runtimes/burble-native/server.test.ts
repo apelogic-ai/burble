@@ -1569,7 +1569,7 @@ describe("Burble Native runtime server", () => {
                 pullRequests: [
                   {
                     title: "Huge result",
-                    body: "x".repeat(40_000)
+                    body: `${"x".repeat(40_000)}LATEST-CHECKPOINT`
                   }
                 ]
               }
@@ -1642,6 +1642,9 @@ describe("Burble Native runtime server", () => {
     expect(toolOutput.output.length).toBeLessThan(12_500);
     expect(toolOutput.output).toContain("\"truncated\":true");
     expect(toolOutput.output).toContain("\"originalChars\"");
+    expect(toolOutput.output).toContain("\"head\"");
+    expect(toolOutput.output).toContain("\"tail\"");
+    expect(toolOutput.output).toContain("LATEST-CHECKPOINT");
   });
 
   test("does not expose the generic tool function without a selected tool catalog", async () => {

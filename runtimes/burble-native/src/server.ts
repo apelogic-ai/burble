@@ -48,6 +48,7 @@ const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 250;
 const MAX_TOOL_LOOP_STEPS = 4;
 const MAX_PROMPT_TOOLS = 24;
 const MAX_MODEL_TOOL_OUTPUT_CHARS = 12_000;
+const TRUNCATED_TOOL_OUTPUT_EDGE_CHARS = 4_000;
 const MAX_ATTACHMENT_NAME_CHARS = 120;
 const BURBLE_PROVIDER_TOOL_NAME = "burble_provider_call";
 
@@ -626,7 +627,12 @@ function serializeToolOutputForModel(toolResult: unknown): string {
     content: {
       truncated: true,
       originalChars: serialized.length,
-      preview: serialized.slice(0, Math.max(0, MAX_MODEL_TOOL_OUTPUT_CHARS - 1000))
+      omittedChars: Math.max(
+        0,
+        serialized.length - TRUNCATED_TOOL_OUTPUT_EDGE_CHARS * 2
+      ),
+      head: serialized.slice(0, TRUNCATED_TOOL_OUTPUT_EDGE_CHARS),
+      tail: serialized.slice(-TRUNCATED_TOOL_OUTPUT_EDGE_CHARS)
     }
   });
 }
