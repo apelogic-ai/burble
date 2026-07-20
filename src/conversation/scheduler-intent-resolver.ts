@@ -62,15 +62,45 @@ export function createLlmSchedulerIntentResolver(
         failure: "timeout",
       };
     }
-    const parsed = parseSchedulerIntentResponse(response.text);
+    let responseText = response.text;
+    let parsed = parseSchedulerIntentResponse(responseText);
     if (!parsed) {
       deps.logWarn?.("Scheduler intent resolver returned invalid JSON.");
-      return {
-        intent: "none",
-        confidence: 0,
-        jobId: null,
-        failure: "invalid_response",
-      };
+      return invalidSchedulerIntentResponse();
+    }
+    if (needsSchedulerMutationRepair(responseText, parsed)) {
+      deps.logWarn?.(
+        "Scheduler intent resolver returned an incomplete or malformed mutation payload; attempting one structural repair.",
+      );
+      try {
+        const repairedResponse = await withTimeout(
+          generate({
+            model,
+            system: schedulerIntentSystemPrompt,
+            prompt: schedulerMutationRepairPrompt(responseText),
+            maxRetries: 0,
+          }),
+          timeoutMs,
+        );
+        if (!repairedResponse) {
+          deps.logWarn?.("Scheduler mutation structural repair timed out.");
+          return invalidSchedulerIntentResponse();
+        }
+        const repaired = parseSchedulerIntentResponse(repairedResponse.text);
+        if (
+          !repaired ||
+          !isSameSchedulerMutationTarget(parsed, repaired) ||
+          needsSchedulerMutationRepair(repairedResponse.text, repaired)
+        ) {
+          deps.logWarn?.("Scheduler mutation structural repair remained invalid.");
+          return invalidSchedulerIntentResponse();
+        }
+        responseText = repairedResponse.text;
+        parsed = repaired;
+      } catch {
+        deps.logWarn?.("Scheduler mutation structural repair failed.");
+        return invalidSchedulerIntentResponse();
+      }
     }
     if (!parsed.taskPlan) {
       return parsed;
@@ -84,7 +114,7 @@ export function createLlmSchedulerIntentResolver(
         generate({
           model,
           system: schedulerIntentSystemPrompt,
-          prompt: schedulerTaskPlanRepairPrompt(response.text, validation.errors),
+          prompt: schedulerTaskPlanRepairPrompt(responseText, validation.errors),
           maxRetries: 0,
         }),
         timeoutMs,
@@ -110,6 +140,66 @@ export function createLlmSchedulerIntentResolver(
       return parsed;
     }
   };
+}
+
+function invalidSchedulerIntentResponse(): SchedulerIntentResolverResult {
+  return {
+    intent: "none",
+    confidence: 0,
+    jobId: null,
+    failure: "invalid_response",
+  };
+}
+
+function needsSchedulerMutationRepair(
+  responseText: string,
+  parsed: SchedulerIntentResolverResult,
+): boolean {
+  const raw = parseJsonRecord(responseText);
+  if (raw && Object.hasOwn(raw, "taskPlan") && !parsed.taskPlan) {
+    return true;
+  }
+  switch (parsed.intent) {
+    case "create_job":
+      return !parsed.create;
+    case "update_job_prompt":
+      return !parsed.prompt && !parsed.taskPlan;
+    case "update_job_schedule":
+      return !parsed.schedule;
+    case "update_job_runtime":
+      return !parsed.runtimeType;
+    case "update_job":
+      return (
+        !parsed.prompt &&
+        !parsed.taskPlan &&
+        !parsed.schedule &&
+        !parsed.runtimeType
+      );
+    default:
+      return false;
+  }
+}
+
+function isSameSchedulerMutationTarget(
+  original: SchedulerIntentResolverResult,
+  repaired: SchedulerIntentResolverResult,
+): boolean {
+  return (
+    repaired.intent === original.intent &&
+    (repaired.jobId ?? null) === (original.jobId ?? null)
+  );
+}
+
+function schedulerMutationRepairPrompt(originalResponse: string): string {
+  return [
+    "Repair this scheduler-intent JSON so its mutation payload matches the required schema.",
+    "Preserve the original intent and jobId exactly.",
+    "Preserve the requested task semantics, preparation semantics, instructions, and step ordering.",
+    "Use ordinary JSON identifiers and exact canonical tool names from the system catalog.",
+    "Return one complete JSON object and no markdown.",
+    "Original response:",
+    originalResponse,
+  ].join("\n");
 }
 
 function mergeRepairedTaskPlan(
@@ -543,6 +633,19 @@ function extractJsonObject(text: string): string | null {
     return trimmed.slice(start, end + 1);
   }
   return null;
+}
+
+function parseJsonRecord(text: string): Record<string, unknown> | null {
+  const jsonText = extractJsonObject(text);
+  if (!jsonText) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(jsonText);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

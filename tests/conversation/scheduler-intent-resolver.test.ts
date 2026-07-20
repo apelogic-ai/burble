@@ -544,6 +544,110 @@ describe("scheduler intent resolver", () => {
     );
   });
 
+  test("repairs one malformed scheduler mutation payload", async () => {
+    const prompts: string[] = [];
+    const warnings: string[] = [];
+    const resolver = createLlmSchedulerIntentResolver({
+      model: "openai:gpt-test",
+      resolveModel: () =>
+        ({ provider: "openai", modelId: "gpt-test" }) as never,
+      generateText: async (request) => {
+        prompts.push(request.prompt);
+        if (prompts.length === 1) {
+          return {
+            text: JSON.stringify({
+              intent: "update_job_prompt",
+              confidence: 0.99,
+              jobId: "job_pr_checker",
+              taskPlan: {
+                preparation: "invalid",
+                steps: [
+                  {
+                    id: "collect",
+                    instruction: "Find open pull requests.",
+                    tools: ["github_search_issues"],
+                  },
+                ],
+              },
+            }),
+          };
+        }
+        return {
+          text: JSON.stringify({
+            intent: "update_job_prompt",
+            confidence: 0.99,
+            jobId: "job_pr_checker",
+            taskPlan: {
+              preparation: [],
+              steps: [
+                {
+                  id: "collect",
+                  instruction: "Find open pull requests.",
+                  tools: ["github_search_issues"],
+                },
+              ],
+            },
+          }),
+        };
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    const result = await resolver({
+      text: "modify the open PR checker job",
+      recentMessages: [],
+      jobs: [],
+    });
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Repair this scheduler-intent JSON");
+    expect(prompts[1]).toContain("Preserve the original intent and jobId");
+    expect(warnings).toEqual([
+      "Scheduler intent resolver returned an incomplete or malformed mutation payload; attempting one structural repair.",
+    ]);
+    expect(result).toMatchObject({
+      intent: "update_job_prompt",
+      jobId: "job_pr_checker",
+      taskPlan: {
+        preparation: [],
+        steps: [{ id: "collect", tools: ["github_search_issues"] }],
+      },
+    });
+  });
+
+  test("rejects a structural repair that changes the selected job", async () => {
+    let calls = 0;
+    const resolver = createLlmSchedulerIntentResolver({
+      model: "openai:gpt-test",
+      resolveModel: () =>
+        ({ provider: "openai", modelId: "gpt-test" }) as never,
+      generateText: async () => {
+        calls += 1;
+        return {
+          text: JSON.stringify({
+            intent: "update_job_prompt",
+            confidence: 0.99,
+            jobId: calls === 1 ? "job_pr_checker" : "job_other",
+          }),
+        };
+      },
+    });
+
+    await expect(
+      resolver({
+        text: "modify the open PR checker job",
+        recentMessages: [],
+        jobs: [],
+      }),
+    ).resolves.toEqual({
+      intent: "none",
+      confidence: 0,
+      jobId: null,
+      failure: "invalid_response",
+    });
+    expect(calls).toBe(2);
+  });
+
   test("includes deterministic pre-flight feedback in a bounded repair request", async () => {
     let prompt = "";
     const resolver = createLlmSchedulerIntentResolver({
