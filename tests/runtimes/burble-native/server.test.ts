@@ -706,7 +706,8 @@ describe("Burble Native runtime server", () => {
         type: "tool_result",
         toolName: "github.getAuthenticatedUser",
         callId: "call_123",
-        classification: "user_private"
+        classification: "user_private",
+        status: "ok"
       },
       { type: "message_delta", text: "Authenticated as octocat." },
       {
@@ -1348,7 +1349,8 @@ describe("Burble Native runtime server", () => {
       type: "tool_result",
       toolName: "conversation.getAttachment",
       callId: "call_attachment",
-      classification: "user_private"
+      classification: "user_private",
+      status: "ok"
     });
     expect(events.at(-1)).toMatchObject({
       type: "final",
@@ -1499,7 +1501,8 @@ describe("Burble Native runtime server", () => {
       type: "tool_result",
       toolName: "github.listMyPullRequests",
       callId: "call_123",
-      classification: "user_private"
+      classification: "user_private",
+      status: "error"
     });
     const secondProviderBody = JSON.parse(
       String(

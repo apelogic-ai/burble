@@ -48,3 +48,18 @@ export function expandProviderToolDependencies(
   }
   return [...expanded].sort();
 }
+
+export function providerToolCovers(
+  actualToolName: string,
+  expectedToolName: string,
+): boolean {
+  const actual = findProviderToolSpec(actualToolName);
+  const expected = findProviderToolSpec(expectedToolName);
+  if (!actual || !expected) {
+    return actualToolName === expectedToolName;
+  }
+  return (
+    actual.name === expected.name ||
+    (actual.provider === expected.provider && actual.grantCoverage === "provider")
+  );
+}

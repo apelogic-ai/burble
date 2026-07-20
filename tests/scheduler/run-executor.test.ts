@@ -5,11 +5,69 @@ import { createTokenStore } from "../../src/db";
 import {
   createSchedulerRunExecutor,
   scheduledRuntimeRetryDelayMs,
+  validateScheduledRunToolEvidence,
 } from "../../src/scheduler/run-executor";
 import type { AgentRunner } from "../../src/agent/types";
 import { createInMemoryTaskWorkflowEventStore } from "../../src/workflow/task-workflow-store";
 
 describe("scheduler run executor", () => {
+  test("requires resolved read capabilities and rejects failed mutations", () => {
+    expect(
+      validateScheduledRunToolEvidence({
+        requiredTools: ["github_search_issues"],
+        events: [],
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Scheduled run did not complete required tool github_search_issues.",
+    });
+
+    expect(
+      validateScheduledRunToolEvidence({
+        requiredTools: ["github_search_issues"],
+        events: [
+          {
+            type: "tool_call",
+            toolName: "github.callMcpTool",
+            callId: "call-github",
+          },
+          {
+            type: "tool_result",
+            toolName: "github.callMcpTool",
+            callId: "call-github",
+            classification: "user_private",
+            status: "ok",
+          },
+        ],
+      }),
+    ).toEqual({ ok: true });
+
+    expect(
+      validateScheduledRunToolEvidence({
+        requiredTools: [],
+        events: [
+          {
+            type: "tool_call",
+            toolName: "google.appendDriveTextFile",
+            callId: "call-write",
+          },
+          {
+            type: "tool_result",
+            toolName: "google.appendDriveTextFile",
+            callId: "call-write",
+            classification: "user_private",
+            status: "error",
+          },
+        ],
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Scheduled run tool google_append_to_drive_text_file failed before delivery.",
+    });
+  });
+
   test("uses bounded exponential backoff with jitter for runtime retries", () => {
     expect(scheduledRuntimeRetryDelayMs(1, () => 0)).toBe(5_000);
     expect(scheduledRuntimeRetryDelayMs(1, () => 1)).toBe(7_500);

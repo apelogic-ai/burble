@@ -119,6 +119,7 @@ type RemoteRunEvent =
       toolName: string;
       callId: string;
       classification: ToolClassification;
+      status?: "ok" | "error";
     }
   | { type: "message_delta"; text: string }
   | { type: "message_replace"; text: string }
@@ -1746,7 +1747,10 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
     case "tool_result":
       return typeof event.toolName === "string" &&
         typeof event.callId === "string" &&
-        classifications.has(event.classification)
+        classifications.has(event.classification) &&
+        (event.status === undefined ||
+          event.status === "ok" ||
+          event.status === "error")
         ? event
         : null;
     case "error":

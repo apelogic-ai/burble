@@ -16,6 +16,10 @@ import { shouldNotifyScheduledRunFailure } from "./failure-notification-policy";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 import { findProviderToolSpec } from "../providers/catalog";
 import {
+  expandProviderToolDependencies,
+  providerToolCovers,
+} from "../providers/catalog";
+import {
   formatScheduledJobFailureMessage,
   scheduledTaskRuntimePrompt,
   validateScheduledJobOutput,
@@ -66,6 +70,7 @@ type ScheduledRunExecutionContext = {
   runtimePrompt: string;
   toolGroups: ReturnType<typeof selectRuntimeToolGroups>;
   scheduledJobContext: ScheduledJobContext | undefined;
+  requiredExecutionTools: string[];
 };
 
 type ScheduledRunAttemptResult = {
@@ -405,6 +410,7 @@ function prepareScheduledRunExecution(
       job,
       toolGroups.groups,
     ),
+    requiredExecutionTools: resolvedExecutionToolsForRun(store, job),
   };
 }
 
@@ -483,6 +489,13 @@ async function executeScheduledRunAttempt(input: {
     scheduledRuntimeRetrySleep: input.scheduledRuntimeRetrySleep,
     logWarn: input.logWarn,
   });
+  const evidence = validateScheduledRunToolEvidence({
+    requiredTools: input.executionContext.requiredExecutionTools,
+    events: collected.events,
+  });
+  if (!evidence.ok) {
+    throw new Error(evidence.reason);
+  }
   const output = validateScheduledJobOutput(collected.output);
   if (!output.ok) {
     throw new Error(output.reason);
@@ -1337,10 +1350,57 @@ function sanitizeScheduledRunToolEvent(
         toolName: event.toolName,
         callId: event.callId,
         classification: event.classification,
+        ...(event.status ? { status: event.status } : {}),
       },
     ];
   }
   return [];
+}
+
+export function validateScheduledRunToolEvidence(input: {
+  requiredTools: readonly string[];
+  events: readonly AgentRunEvent[];
+}): { ok: true } | { ok: false; reason: string } {
+  const successfulResults = input.events.filter(
+    (event): event is Extract<AgentRunEvent, { type: "tool_result" }> =>
+      event.type === "tool_result" && event.status !== "error",
+  );
+  for (const requiredTool of input.requiredTools) {
+    const spec = findProviderToolSpec(requiredTool);
+    if (spec?.risk !== "read") {
+      continue;
+    }
+    if (
+      !successfulResults.some((event) =>
+        providerToolCovers(event.toolName, requiredTool),
+      )
+    ) {
+      return {
+        ok: false,
+        reason: `Scheduled run did not complete required tool ${spec.name}.`,
+      };
+    }
+  }
+
+  const calls = new Map(
+    input.events.flatMap((event) =>
+      event.type === "tool_call" ? [[event.callId, event.toolName] as const] : [],
+    ),
+  );
+  for (const event of input.events) {
+    if (event.type !== "tool_result" || event.status !== "error") {
+      continue;
+    }
+    const toolName = calls.get(event.callId) ?? event.toolName;
+    const spec = findProviderToolSpec(toolName);
+    if (spec && spec.risk !== "read") {
+      return {
+        ok: false,
+        reason: `Scheduled run tool ${spec.name} failed before delivery.`,
+      };
+    }
+  }
+  return { ok: true };
 }
 
 export function scheduledRuntimeRetryDelayMs(
@@ -1531,6 +1591,14 @@ function scheduledJobContextForRun(
     stateRefs: [],
     visibilityPolicy: {},
   };
+}
+
+function resolvedExecutionToolsForRun(
+  store: Pick<TokenStore, "getAgentJobCapability">,
+  job: ScheduledJobRecord,
+): string[] {
+  const expectedTools = store.getAgentJobCapability(job.jobId)?.expectedTools;
+  return expectedTools ? expandProviderToolDependencies(expectedTools) : [];
 }
 
 function isDeliveryOnlyScheduledJobContext(

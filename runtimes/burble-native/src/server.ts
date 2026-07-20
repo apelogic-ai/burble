@@ -292,7 +292,8 @@ async function* runNativeTurn(
         type: "tool_result",
         toolName: toolCall.toolName,
         callId: toolCall.callId,
-        classification: readToolResultClassification(toolResult)
+        classification: readToolResultClassification(toolResult),
+        status: toolResultHasError(toolResult) ? "error" : "ok"
       };
       toolOutputs.push({
         type: "function_call_output",
@@ -1257,6 +1258,24 @@ function readToolResultClassification(
     return value.classification;
   }
   return "user_private";
+}
+
+function toolResultHasError(value: unknown, depth = 0): boolean {
+  if (depth > 5 || !isRecord(value)) {
+    return false;
+  }
+  if (
+    value.isError === true ||
+    typeof value.error === "string" ||
+    value.error === true
+  ) {
+    return true;
+  }
+  return Object.values(value).some((entry) =>
+    Array.isArray(entry)
+      ? entry.some((item) => toolResultHasError(item, depth + 1))
+      : toolResultHasError(entry, depth + 1)
+  );
 }
 
 function mergeUsage(

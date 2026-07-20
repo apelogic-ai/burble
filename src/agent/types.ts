@@ -90,6 +90,7 @@ export type AgentRunEvent =
       toolName: string;
       callId: string;
       classification: ToolClassification;
+      status?: "ok" | "error";
     }
   | { type: "message_delta"; text: string }
   | { type: "message_replace"; text: string }
