@@ -87,7 +87,7 @@ export async function executeScheduledTaskPreparation(input: {
   const stateRefs: ScheduledJobStateRef[] = [];
   for (const step of input.plan.preparation) {
     const result = await executePreparationStep(input, step);
-    resources[step.saveAs] = result.value;
+    resources[step.saveAs] = bindPreparationResource(result);
     if (result.stateRef) {
       stateRefs.push(normalizeStateRef(result.stateRef, step));
     }
@@ -103,6 +103,25 @@ export async function executeScheduledTaskPreparation(input: {
     requiredTools: canonicalRecurringTools(input.plan),
     stateRefs: dedupeStateRefs(stateRefs),
     resources,
+  };
+}
+
+function bindPreparationResource(
+  result: ScheduledTaskPreparationToolResult,
+): unknown {
+  if (!result.stateRef) {
+    return result.value;
+  }
+  const resource: Record<string, unknown> = isRecord(result.value)
+    ? { ...result.value }
+    : { value: result.value };
+  const stateRef = result.stateRef;
+  return {
+    ...resource,
+    ...(resource.id === undefined && stateRef.id ? { id: stateRef.id } : {}),
+    ...(resource.name === undefined && stateRef.name
+      ? { name: stateRef.name }
+      : {}),
   };
 }
 

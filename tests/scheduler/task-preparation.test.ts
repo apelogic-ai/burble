@@ -190,6 +190,50 @@ describe("scheduled task preparation", () => {
     });
   });
 
+  test("binds generic resource identity from the preparation state reference", async () => {
+    const result = await executeScheduledTaskPreparation({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      plan: {
+        preparation: [
+          {
+            id: "resolve_state",
+            tool: "google_create_drive_text_file",
+            input: { name: "State", text: "" },
+            saveAs: "state",
+          },
+        ],
+        steps: [
+          {
+            id: "use_state",
+            instruction:
+              "Use {{resources.state.id}} named {{resources.state.name}}.",
+            tools: ["google_get_drive_file"],
+          },
+        ],
+      },
+      executeTool: async () => ({
+        value: { providerPayload: { acknowledged: true } },
+        stateRef: {
+          provider: "object-store",
+          kind: "text",
+          id: "state-123",
+          name: "State",
+          purpose: "deduplication",
+        },
+      }),
+    });
+
+    expect(result.prompt).toBe("1. Use state-123 named State.");
+    expect(result.resources).toEqual({
+      state: {
+        providerPayload: { acknowledged: true },
+        id: "state-123",
+        name: "State",
+      },
+    });
+  });
+
   test("does not return a partial task when preparation fails", async () => {
     await expect(
       executeScheduledTaskPreparation({
