@@ -160,6 +160,36 @@ describe("scheduled task preparation", () => {
     expect(result.requiredTools).toEqual(["google_create_drive_text_file"]);
   });
 
+  test("renders camelCase preparation bindings", async () => {
+    const result = await executeScheduledTaskPreparation({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      plan: {
+        preparation: [
+          {
+            id: "createDedupState",
+            tool: "google_create_drive_text_file",
+            input: { name: "Open PR deduplication", text: "" },
+            saveAs: "dedupState",
+          },
+        ],
+        steps: [
+          {
+            id: "deduplicateAndRecord",
+            instruction: "Use {{resources.dedupState.fileId}}.",
+            tools: ["google_get_drive_file"],
+          },
+        ],
+      },
+      executeTool: async () => ({ value: { fileId: "state-123" } }),
+    });
+
+    expect(result.prompt).toBe("1. Use state-123.");
+    expect(result.resources).toEqual({
+      dedupState: { fileId: "state-123" },
+    });
+  });
+
   test("does not return a partial task when preparation fails", async () => {
     await expect(
       executeScheduledTaskPreparation({

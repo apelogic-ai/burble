@@ -4,6 +4,7 @@ import {
   formatIssuesMessage,
 } from "../formatting";
 import { collectAgentRun, type AgentRunEvent } from "../agent/types";
+import type { ScheduledJobStateRef } from "../agent/scheduled-job-context";
 import { selectRuntimeToolGroups } from "../agent/tool-groups";
 import { runtimeCompatibilityFamily } from "../agent/runtime-descriptors";
 import { parseGitHubPullRequestListInput } from "../github-query";
@@ -11,13 +12,16 @@ import { tryHandleLocalToolFastPath } from "./local-tool-fast-paths";
 import { enforceVisibility } from "./visibility";
 import type {
   SchedulerCreateJobResult,
+  SchedulerCreateJobInput,
   SchedulerJobDeleteResult,
   SchedulerJobMutationResult,
+  SchedulerTaskValidation,
   SchedulerRunStatusResult,
   SchedulerShowTaskResult,
   SchedulerTriggerResult,
   SchedulerUpdateJobDeliveryResult,
   SchedulerUpdateJobResult,
+  SchedulerUpdateJobPromptInput,
   SchedulerUpdateJobPromptResult,
   SchedulerUpdateJobRuntimeResult,
   SchedulerUpdateJobScheduleResult,
@@ -249,21 +253,55 @@ async function handleConversationInternal(
   }
 
   if (schedulerCreateRequest && deps.schedulerControl?.createJob) {
-    const result = await deps.schedulerControl.createJob({
+    const preparation = await prepareResolvedScheduledTask(
+      request,
+      deps,
+      schedulerTaskPlan,
+    );
+    if (!preparation.ok) {
+      return preparation.response;
+    }
+    let result = await deps.schedulerControl.createJob({
       workspaceId: request.workspaceId,
       slackUserId: request.user.slackUserId,
       title: schedulerCreateRequest.title,
-      prompt: schedulerCreateRequest.prompt,
+      prompt: preparation.result?.prompt ?? schedulerCreateRequest.prompt,
       schedule: schedulerCreateRequest.schedule,
       routeId: request.conversationRouteId,
       runtimeType: scheduledJobRuntimeType(
         deps.schedulerRuntimeEngine ?? deps.agentRuntimeEngine,
       ),
+      ...(preparation.result
+        ? {
+            capability: scheduledTaskCapabilityUpdate(
+              preparation.result,
+              schedulerTaskPlan,
+            ),
+          }
+        : {}),
     });
+    if (
+      !result.ok &&
+      result.reason === "validation_failed" &&
+      preparation.result &&
+      Object.keys(preparation.result.resources).length === 0
+    ) {
+      const repaired = await repairScheduledCreate(
+        request,
+        deps,
+        result.validation,
+      );
+      if (repaired) {
+        result = await deps.schedulerControl.createJob(repaired);
+      }
+    }
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: formatScheduledJobCreateResult(result),
+      text: appendPreparedResourceSummary(
+        formatScheduledJobCreateResult(result),
+        result.ok ? preparation.result : null,
+      ),
     };
   }
 
@@ -400,10 +438,10 @@ async function handleConversationInternal(
         : {}),
       ...(preparation.result
         ? {
-            capability: {
-              requiredTools: preparation.result.requiredTools,
-              stateRefs: preparation.result.stateRefs,
-            },
+            capability: scheduledTaskCapabilityUpdate(
+              preparation.result,
+              schedulerTaskPlan,
+            ),
           }
         : {}),
     });
@@ -461,20 +499,36 @@ async function handleConversationInternal(
         text: "I can’t update that scheduled task yet because I could not resolve the new task prompt.",
       };
     }
-    const result = await deps.schedulerControl.updateJobPrompt({
+    let result = await deps.schedulerControl.updateJobPrompt({
       workspaceId: request.workspaceId,
       slackUserId: request.user.slackUserId,
       jobId: schedulerJobIdHint,
       prompt,
       ...(preparation.result
         ? {
-            capability: {
-              requiredTools: preparation.result.requiredTools,
-              stateRefs: preparation.result.stateRefs,
-            },
+            capability: scheduledTaskCapabilityUpdate(
+              preparation.result,
+              schedulerTaskPlan,
+            ),
           }
         : {}),
     });
+    if (
+      !result.ok &&
+      result.reason === "validation_failed" &&
+      preparation.result &&
+      Object.keys(preparation.result.resources).length === 0
+    ) {
+      const repaired = await repairScheduledPromptUpdate(
+        request,
+        deps,
+        schedulerJobIdHint,
+        result.validation,
+      );
+      if (repaired) {
+        result = await deps.schedulerControl.updateJobPrompt(repaired);
+      }
+    }
     return {
       visibility: "ephemeral",
       classification: "user_private",
@@ -754,7 +808,9 @@ async function resolveSchedulerControlIntent(
               ? resolved.runtimeType
               : null,
           taskPlan:
-            intent === "update_job_prompt" || intent === "update_job"
+            intent === "create_job" ||
+            intent === "update_job_prompt" ||
+            intent === "update_job"
               ? resolved.taskPlan ?? null
               : null,
           failure: null,
@@ -843,6 +899,160 @@ async function prepareResolvedScheduledTask(
         text: `I couldn’t prepare the resources required by that task. No scheduled-job changes were made. ${error instanceof Error ? error.message : String(error)}`,
       },
     };
+  }
+}
+
+function scheduledTaskCapabilityUpdate(
+  preparation: ScheduledTaskPreparationResult,
+  plan: SchedulerTaskPlan | null,
+): {
+  expectedTools: string[];
+  requiredTools: string[];
+  stateRefs?: ScheduledJobStateRef[];
+  stateRefMode?: "merge" | "replace" | "clear";
+} {
+  const stateRefMode = plan?.stateRefMode;
+  const shouldIncludeStateRefs =
+    preparation.stateRefs.length > 0 ||
+    stateRefMode === "replace" ||
+    stateRefMode === "clear";
+  return {
+    expectedTools: preparation.requiredTools,
+    requiredTools: preparation.requiredTools,
+    ...(shouldIncludeStateRefs
+      ? {
+          stateRefs: preparation.stateRefs,
+          stateRefMode: stateRefMode ?? "merge",
+        }
+      : {}),
+  };
+}
+
+async function repairScheduledPromptUpdate(
+  request: ConversationRequest,
+  deps: ConversationDeps,
+  jobId: string | null,
+  validation: SchedulerTaskValidation,
+): Promise<SchedulerUpdateJobPromptInput | null> {
+  if (!jobId || !deps.schedulerIntentResolver || !deps.schedulerControl) {
+    return null;
+  }
+  try {
+    const jobs = await deps.schedulerControl.listJobs({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+    });
+    const resolved = await deps.schedulerIntentResolver({
+      text: request.text,
+      recentMessages: recentConversationTexts(request),
+      jobs,
+      repair: {
+        jobId,
+        errors: validation.errors.map(
+          (issue) => `${issue.code}: ${issue.message}`,
+        ),
+      },
+    });
+    if (
+      resolved.intent !== "update_job_prompt" ||
+      resolved.jobId !== jobId ||
+      resolved.failure
+    ) {
+      return null;
+    }
+    const preparation = await prepareResolvedScheduledTask(
+      request,
+      deps,
+      resolved.taskPlan ?? null,
+    );
+    if (!preparation.ok) {
+      return null;
+    }
+    const prompt =
+      preparation.result?.prompt ?? normalizeResolvedPrompt(resolved.prompt);
+    if (!prompt) {
+      return null;
+    }
+    return {
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId,
+      prompt,
+      ...(preparation.result
+        ? {
+            capability: scheduledTaskCapabilityUpdate(
+              preparation.result,
+              resolved.taskPlan ?? null,
+            ),
+          }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function repairScheduledCreate(
+  request: ConversationRequest,
+  deps: ConversationDeps,
+  validation: SchedulerTaskValidation,
+): Promise<SchedulerCreateJobInput | null> {
+  if (!deps.schedulerIntentResolver || !deps.schedulerControl) {
+    return null;
+  }
+  try {
+    const jobs = await deps.schedulerControl.listJobs({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+    });
+    const resolved = await deps.schedulerIntentResolver({
+      text: request.text,
+      recentMessages: recentConversationTexts(request),
+      jobs,
+      repair: {
+        jobId: null,
+        errors: validation.errors.map(
+          (issue) => `${issue.code}: ${issue.message}`,
+        ),
+      },
+    });
+    const create = normalizeResolverCreateJob(resolved.create);
+    if (
+      resolved.intent !== "create_job" ||
+      !create ||
+      resolved.failure
+    ) {
+      return null;
+    }
+    const preparation = await prepareResolvedScheduledTask(
+      request,
+      deps,
+      resolved.taskPlan ?? null,
+    );
+    if (!preparation.ok) {
+      return null;
+    }
+    return {
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      title: create.title,
+      prompt: preparation.result?.prompt ?? create.prompt,
+      schedule: create.schedule,
+      routeId: request.conversationRouteId,
+      runtimeType: scheduledJobRuntimeType(
+        deps.schedulerRuntimeEngine ?? deps.agentRuntimeEngine,
+      ),
+      ...(preparation.result
+        ? {
+            capability: scheduledTaskCapabilityUpdate(
+              preparation.result,
+              resolved.taskPlan ?? null,
+            ),
+          }
+        : {}),
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -1219,6 +1429,9 @@ export function formatScheduledTaskDetailResult(
     task.requiredTools.length
       ? `- granted tools: ${task.requiredTools.join(", ")}`
       : "- granted tools: none",
+    task.stateRefs?.length
+      ? `- state refs: ${JSON.stringify(task.stateRefs)}`
+      : "- state refs: none",
     validation.expectedTools.length
       ? `- expected tools: ${validation.expectedTools.join(", ")}`
       : "- expected tools: none",
@@ -1346,6 +1559,9 @@ export function formatScheduledJobCreateResult(
   result: SchedulerCreateJobResult,
 ): string {
   if (!result.ok) {
+    if (result.reason === "validation_failed") {
+      return formatScheduledUpdateValidationFailure(result.validation);
+    }
     return `I can’t create that scheduled task because the schedule is unsupported: ${result.message}`;
   }
   return [
@@ -1498,6 +1714,9 @@ export function formatScheduledJobUpdateResult(
         : "- enabled runtimes: none",
     ].join("\n");
   }
+  if (result.reason === "validation_failed") {
+    return formatScheduledUpdateValidationFailure(result.validation);
+  }
   return formatScheduledJobSelectionFailure(result);
 }
 
@@ -1510,7 +1729,21 @@ export function formatScheduledJobPromptUpdateResult(
       `- prompt: ${result.job.prompt}`,
     ].join("\n");
   }
+  if (result.reason === "validation_failed") {
+    return formatScheduledUpdateValidationFailure(result.validation);
+  }
   return formatScheduledJobSelectionFailure(result);
+}
+
+function formatScheduledUpdateValidationFailure(
+  validation: SchedulerTaskValidation,
+): string {
+  return [
+    "I couldn’t apply that scheduled task update because its pre-flight validation failed. The existing task was left unchanged.",
+    ...validation.errors.map(
+      (issue) => `- ${issue.code}: ${issue.message}`,
+    ),
+  ].join("\n");
 }
 
 export function formatScheduledJobRuntimeUpdateResult(

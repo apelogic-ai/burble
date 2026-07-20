@@ -144,7 +144,7 @@ function renderResourceBindings(
   resources: Record<string, unknown>,
 ): string {
   return instruction.replace(
-    /\{\{resources\.([a-z][a-z0-9_]{0,63})\.([a-zA-Z0-9_.]+)\}\}/g,
+    /\{\{resources\.([A-Za-z][A-Za-z0-9_]{0,63})\.([a-zA-Z0-9_.]+)\}\}/g,
     (_placeholder, binding: string, path: string) => {
       const value = readPath(resources[binding], path);
       if (

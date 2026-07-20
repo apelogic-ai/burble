@@ -688,9 +688,11 @@ export function createSlackRuntime(
         })
       : undefined;
   const schedulerTimer = schedulerRunExecutor
-    ? createSchedulerTimer({
+      ? createSchedulerTimer({
         store,
         executeRun: (runId) => schedulerRunExecutor.executeRun(runId),
+        notifyFailedRun: (runId) =>
+          schedulerRunExecutor.notifyFailedRun(runId),
         workflowAuthority: config.taskWorkflowAuthority,
         workflowShadowStore,
         logInfo: (message) => app.logger.info(withUtcTimestamp(message)),

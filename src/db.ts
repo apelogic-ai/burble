@@ -215,6 +215,7 @@ export type AgentJobCapabilityRecord = {
   workspaceId: string;
   slackUserId: string;
   requiredTools: string[];
+  expectedTools?: string[] | null;
   routeId: string | null;
   policyHash: string | null;
   capabilityProfile: string;
@@ -274,7 +275,9 @@ type ScheduledJobRow = Omit<ScheduledJobRecord, "schedule" | "runtimeType"> & {
   runtimeType: string | null;
 };
 
-type AgentJobRunRow = AgentJobRunRecord;
+type AgentJobRunRow = AgentJobRunRecord & {
+  failureNotificationSentAt: string | null;
+};
 
 type AgentJobRunAuditRow = Omit<
   AgentJobRunAuditRecord,
@@ -288,9 +291,10 @@ type AgentJobRunAuditRow = Omit<
 
 type AgentJobCapabilityRow = Omit<
   AgentJobCapabilityRecord,
-  "requiredTools" | "stateRefs" | "visibilityPolicy"
+  "requiredTools" | "expectedTools" | "stateRefs" | "visibilityPolicy"
 > & {
   requiredToolsJson: string;
+  expectedToolsJson: string | null;
   stateRefsJson: string;
   visibilityPolicyJson: string;
 };
@@ -485,6 +489,7 @@ export function createTokenStore(path: string) {
       trigger_source TEXT NOT NULL,
       status TEXT NOT NULL,
       failure_reason TEXT,
+      failure_notification_sent_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       started_at TEXT,
@@ -526,6 +531,7 @@ export function createTokenStore(path: string) {
       workspace_id TEXT NOT NULL,
       slack_user_id TEXT NOT NULL,
       required_tools_json TEXT NOT NULL,
+      expected_tools_json TEXT,
       route_id TEXT,
       policy_hash TEXT,
       capability_profile TEXT NOT NULL DEFAULT 'scheduled_job',
@@ -580,6 +586,7 @@ export function createTokenStore(path: string) {
   ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
   ensureAgentRuntimeColumn(db, "sandbox_id", "TEXT");
   ensureAgentRuntimeColumn(db, "policy_hash", "TEXT");
+  ensureAgentJobRunColumn(db, "failure_notification_sent_at", "TEXT");
   migrateLegacyAgentRuntimeEngines(db);
   ensureAgentJobCapabilityColumn(
     db,
@@ -587,6 +594,7 @@ export function createTokenStore(path: string) {
     "TEXT NOT NULL DEFAULT 'scheduled_job'"
   );
   ensureAgentJobCapabilityColumn(db, "runtime_type", "TEXT");
+  ensureAgentJobCapabilityColumn(db, "expected_tools_json", "TEXT");
   ensureAgentJobCapabilityColumn(
     db,
     "state_refs_json",
@@ -1261,6 +1269,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1277,6 +1286,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1294,6 +1304,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1314,6 +1325,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1326,6 +1338,33 @@ export function createTokenStore(path: string) {
       AND failure_reason = ?
       AND updated_at >= ?
     ORDER BY updated_at DESC, run_id ASC
+    LIMIT 1
+  `);
+  const findRecentNotifiedAgentJobRunFailureForPrincipal = db.query<
+    AgentJobRunRow,
+    [string, string, string, string, string]
+  >(`
+    SELECT
+      run_id AS runId,
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      trigger_source AS triggerSource,
+      status,
+      failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      started_at AS startedAt,
+      finished_at AS finishedAt
+    FROM agent_job_runs
+    WHERE workspace_id = ?
+      AND slack_user_id = ?
+      AND job_id = ?
+      AND status = 'failed'
+      AND failure_reason = ?
+      AND failure_notification_sent_at >= ?
+    ORDER BY failure_notification_sent_at DESC, run_id ASC
     LIMIT 1
   `);
   const upsertAgentJobRunAudit = db.query(`
@@ -1430,6 +1469,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1453,6 +1493,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1473,6 +1514,7 @@ export function createTokenStore(path: string) {
       trigger_source AS triggerSource,
       status,
       failure_reason AS failureReason,
+      failure_notification_sent_at AS failureNotificationSentAt,
       created_at AS createdAt,
       updated_at AS updatedAt,
       started_at AS startedAt,
@@ -1500,12 +1542,19 @@ export function createTokenStore(path: string) {
     WHERE run_id = ?
       AND status = 'running'
   `);
+  const markAgentJobRunFailureNotificationSent = db.query(`
+    UPDATE agent_job_runs
+    SET failure_notification_sent_at = ?
+    WHERE run_id = ?
+      AND status = 'failed'
+  `);
   const upsertAgentJobCapability = db.query(`
     INSERT INTO agent_job_capabilities (
       job_id,
       workspace_id,
       slack_user_id,
       required_tools_json,
+      expected_tools_json,
       route_id,
       policy_hash,
       capability_profile,
@@ -1515,11 +1564,12 @@ export function createTokenStore(path: string) {
       created_at,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(job_id) DO UPDATE SET
       workspace_id = excluded.workspace_id,
       slack_user_id = excluded.slack_user_id,
       required_tools_json = excluded.required_tools_json,
+      expected_tools_json = excluded.expected_tools_json,
       route_id = excluded.route_id,
       policy_hash = excluded.policy_hash,
       capability_profile = excluded.capability_profile,
@@ -1534,6 +1584,7 @@ export function createTokenStore(path: string) {
       workspace_id AS workspaceId,
       slack_user_id AS slackUserId,
       required_tools_json AS requiredToolsJson,
+      expected_tools_json AS expectedToolsJson,
       route_id AS routeId,
       policy_hash AS policyHash,
       capability_profile AS capabilityProfile,
@@ -1554,6 +1605,7 @@ export function createTokenStore(path: string) {
       workspace_id AS workspaceId,
       slack_user_id AS slackUserId,
       required_tools_json AS requiredToolsJson,
+      expected_tools_json AS expectedToolsJson,
       route_id AS routeId,
       policy_hash AS policyHash,
       capability_profile AS capabilityProfile,
@@ -2422,6 +2474,36 @@ export function createTokenStore(path: string) {
       return record ? toAgentJobRunRecord(record) : null;
     },
 
+    findRecentNotifiedAgentJobRunFailureForPrincipal(input: {
+      workspaceId: string;
+      slackUserId: string;
+      jobId: string;
+      failureReason: string;
+      since: Date;
+    }): AgentJobRunRecord | null {
+      const record = findRecentNotifiedAgentJobRunFailureForPrincipal.get(
+        input.workspaceId,
+        input.slackUserId,
+        input.jobId,
+        input.failureReason,
+        input.since.toISOString()
+      );
+      return record ? toAgentJobRunRecord(record) : null;
+    },
+
+    markAgentJobRunFailureNotificationSent(
+      runId: string,
+      now = new Date()
+    ): AgentJobRunRecord | null {
+      const timestamp = now.toISOString();
+      const result = markAgentJobRunFailureNotificationSent.run(timestamp, runId);
+      if (result.changes === 0) {
+        return null;
+      }
+      const record = getAgentJobRun.get(runId);
+      return record ? toAgentJobRunRecord(record) : null;
+    },
+
     upsertAgentJobRunAudit(input: {
       runId: string;
       jobId: string;
@@ -2569,6 +2651,7 @@ export function createTokenStore(path: string) {
       workspaceId: string;
       slackUserId: string;
       requiredTools: string[];
+      expectedTools?: string[] | null;
       routeId?: string | null;
       policyHash?: string | null;
       capabilityProfile?: string | null;
@@ -2584,6 +2667,11 @@ export function createTokenStore(path: string) {
         input.workspaceId,
         input.slackUserId,
         stableJson(normalizeRequiredTools(input.requiredTools)),
+        input.expectedTools === undefined
+          ? (existing?.expectedToolsJson ?? null)
+          : input.expectedTools === null
+            ? null
+            : stableJson(normalizeRequiredTools(input.expectedTools)),
         input.routeId ?? null,
         input.policyHash ?? null,
         normalizeCapabilityProfile(input.capabilityProfile),
@@ -2896,6 +2984,20 @@ function ensureAgentRuntimeColumn(
   }
 }
 
+function ensureAgentJobRunColumn(
+  db: Database,
+  name: string,
+  definition: string
+): void {
+  const columns = db
+    .query<{ name: string }, []>("PRAGMA table_info(agent_job_runs)")
+    .all()
+    .map((column) => column.name);
+  if (!columns.includes(name)) {
+    db.exec(`ALTER TABLE agent_job_runs ADD COLUMN ${name} ${definition}`);
+  }
+}
+
 function migrateLegacyAgentRuntimeEngines(db: Database): void {
   db.exec(`
     UPDATE OR IGNORE agent_runtimes
@@ -3080,6 +3182,10 @@ function toAgentJobCapabilityRecord(
     workspaceId: row.workspaceId,
     slackUserId: row.slackUserId,
     requiredTools: requiredToolsFromJson(row.requiredToolsJson),
+    expectedTools:
+      row.expectedToolsJson === null
+        ? null
+        : requiredToolsFromJson(row.expectedToolsJson),
     routeId: row.routeId,
     policyHash: row.policyHash,
     capabilityProfile: normalizeCapabilityProfile(row.capabilityProfile),

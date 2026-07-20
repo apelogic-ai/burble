@@ -119,6 +119,7 @@ export type SchedulerTaskPreparationStep = {
 export type SchedulerTaskPlan = {
   steps: SchedulerTaskPlanStep[];
   preparation: SchedulerTaskPreparationStep[];
+  stateRefMode?: "merge" | "replace" | "clear";
 };
 
 export type SchedulerIntentResolverResult = {
@@ -137,6 +138,10 @@ export type SchedulerIntentResolver = (input: {
   text: string;
   recentMessages: string[];
   jobs: SchedulerJobSummary[];
+  repair?: {
+    jobId: string | null;
+    errors: string[];
+  };
 }) => Promise<SchedulerIntentResolverResult>;
 
 export type ConversationDeps = {

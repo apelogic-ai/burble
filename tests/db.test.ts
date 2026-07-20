@@ -1272,6 +1272,7 @@ describe("createTokenStore", () => {
         "github_search_issues",
         "github_search_issues"
       ],
+      expectedTools: ["github_search_issues"],
       routeId: "convrt_123",
       policyHash: "policy-a",
       capabilityProfile: "scheduled_job",
@@ -1294,6 +1295,7 @@ describe("createTokenStore", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["github_list_my_pull_requests"],
+      expectedTools: ["github_list_my_pull_requests"],
       routeId: "convrt_123",
       policyHash: "policy-b",
       capabilityProfile: "scheduled_job",
@@ -1311,6 +1313,7 @@ describe("createTokenStore", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["github_list_my_pull_requests", "github_search_issues"],
+      expectedTools: ["github_search_issues"],
       routeId: "convrt_123",
       policyHash: "policy-a",
       capabilityProfile: "scheduled_job",
@@ -1334,6 +1337,7 @@ describe("createTokenStore", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["github_list_my_pull_requests"],
+      expectedTools: ["github_list_my_pull_requests"],
       routeId: "convrt_123",
       policyHash: "policy-b",
       capabilityProfile: "scheduled_job",
@@ -1353,6 +1357,80 @@ describe("createTokenStore", () => {
 
     store.deleteAgentJobCapability("job-123");
     expect(store.getAgentJobCapability("job-123")).toBeNull();
+
+    store.close();
+  });
+
+  test("preserves resolved expected operations when a capability refresh omits them", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertAgentJobCapability({
+      jobId: "job-resolved",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_call_mcp_tool"],
+      expectedTools: ["github_search_issues"],
+      now: new Date("2026-07-19T16:00:00.000Z"),
+    });
+
+    const refreshed = store.upsertAgentJobCapability({
+      jobId: "job-resolved",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_call_mcp_tool"],
+      now: new Date("2026-07-19T16:01:00.000Z"),
+    });
+
+    expect(refreshed.expectedTools).toEqual(["github_search_issues"]);
+    store.close();
+  });
+
+  test("migrates scheduled job runs with failure notification tracking", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "burble-db-")), "burble.db");
+    const legacyDb = new Database(path);
+    legacyDb.exec(`
+      CREATE TABLE agent_job_runs (
+        run_id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        slack_user_id TEXT NOT NULL,
+        trigger_source TEXT NOT NULL,
+        status TEXT NOT NULL,
+        failure_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT
+      )
+    `);
+    legacyDb.close();
+
+    const store = createTokenStore(path);
+    const failedRun = store.createAgentJobRun({
+      runId: "jobrun-migrated",
+      jobId: "job-migrated",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "failed",
+      failureReason: "validation failed",
+      now: new Date("2026-06-24T12:00:00.000Z")
+    });
+
+    expect(
+      store.markAgentJobRunFailureNotificationSent(
+        failedRun.runId,
+        new Date("2026-06-24T12:01:00.000Z")
+      )?.runId
+    ).toBe(failedRun.runId);
+    expect(
+      store.findRecentNotifiedAgentJobRunFailureForPrincipal({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-migrated",
+        failureReason: "validation failed",
+        since: new Date("2026-06-24T11:59:00.000Z")
+      })?.runId
+    ).toBe(failedRun.runId);
 
     store.close();
   });
@@ -1436,6 +1514,34 @@ describe("createTokenStore", () => {
         since: new Date("2026-06-24T12:01:00.000Z")
       })
     ).toEqual(failedRun);
+    expect(
+      store.findRecentNotifiedAgentJobRunFailureForPrincipal({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "other-job",
+        failureReason: "validation failed",
+        since: new Date("2026-06-24T12:01:00.000Z")
+      })
+    ).toBeNull();
+    expect(
+      store.markAgentJobRunFailureNotificationSent(
+        failedRun.runId,
+        new Date("2026-06-24T12:01:45.000Z")
+      )
+    ).toMatchObject({
+      runId: failedRun.runId
+    });
+    expect(
+      store.findRecentNotifiedAgentJobRunFailureForPrincipal({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "other-job",
+        failureReason: "validation failed",
+        since: new Date("2026-06-24T12:01:00.000Z")
+      })
+    ).toMatchObject({
+      runId: failedRun.runId
+    });
     expect(store.listQueuedAgentJobRuns().map((record) => record.runId)).toEqual([
       "jobrun-123"
     ]);

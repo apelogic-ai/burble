@@ -1,4 +1,8 @@
 import type { AgentJobCapabilityRecord, ScheduledJobRecord } from "../db";
+import {
+  findProviderToolSpec,
+  providerToolCatalog,
+} from "../providers/catalog";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 
 export type SchedulerTaskValidationIssue = {
@@ -6,6 +10,7 @@ export type SchedulerTaskValidationIssue = {
   message: string;
   tool?: string;
   expectedTool?: string;
+  stateInput?: string;
 };
 
 export type SchedulerTaskValidation = {
@@ -39,41 +44,46 @@ export type SchedulerTaskRuntimeAdmission =
 
 export type SchedulerTaskGrant = Pick<
   AgentJobCapabilityRecord,
-  "requiredTools"
->;
+  "requiredTools" | "expectedTools"
+> &
+  Partial<Pick<AgentJobCapabilityRecord, "stateRefs">>;
 
 export function validateScheduledTask(
   record: ScheduledJobRecord,
   capability: SchedulerTaskGrant | null,
 ): SchedulerTaskValidation {
-  const expectedTools = inferAllowedToolsForScheduledJob(record);
+  const expectedTools = [
+    ...(capability?.expectedTools === null ||
+    capability?.expectedTools === undefined
+      ? inferAllowedToolsForScheduledJob(record)
+      : capability.expectedTools),
+  ].sort();
   const grantedTools = [...(capability?.requiredTools ?? [])].sort();
   const grantedToolSet = new Set(grantedTools);
   const errors: SchedulerTaskValidationIssue[] = [];
   const warnings: SchedulerTaskValidationIssue[] = [];
 
   for (const tool of expectedTools) {
-    if (!grantedToolSet.has(tool)) {
+    if (!isExpectedToolCovered(tool, grantedToolSet)) {
       errors.push({
         code: "missing_required_tool",
         message: `Task requires ${tool} but the grant does not include it.`,
         tool,
       });
     }
-  }
-
-  if (
-    expectedTools.includes("github_search_issues") &&
-    grantedToolSet.has("github_list_my_pull_requests") &&
-    !grantedToolSet.has("github_search_issues")
-  ) {
-    warnings.push({
-      code: "wrong_github_pr_scope",
-      message:
-        "github_list_my_pull_requests only lists the authenticated user's PRs; org-wide PR monitoring needs github_search_issues.",
-      tool: "github_list_my_pull_requests",
-      expectedTool: "github_search_issues",
-    });
+    const spec = findProviderToolSpec(tool);
+    for (const stateInput of spec?.stateRefRequired
+      ? (spec.stateRefInputs ?? [])
+      : []) {
+      if (!hasBoundProviderState(capability?.stateRefs, spec!.provider)) {
+        errors.push({
+          code: "missing_state_ref",
+          message: `Task requires a bound ${spec!.provider} state reference for ${tool}.${stateInput}.`,
+          tool,
+          stateInput,
+        });
+      }
+    }
   }
 
   return {
@@ -83,4 +93,41 @@ export function validateScheduledTask(
     errors,
     warnings,
   };
+}
+
+function hasBoundProviderState(
+  stateRefs: unknown[] | undefined,
+  provider: string,
+): boolean {
+  return Boolean(
+    stateRefs?.some(
+      (stateRef) =>
+        stateRef !== null &&
+        typeof stateRef === "object" &&
+        !Array.isArray(stateRef) &&
+        (stateRef as { provider?: unknown }).provider === provider &&
+        typeof (stateRef as { id?: unknown }).id === "string" &&
+        Boolean((stateRef as { id: string }).id.trim()),
+    ),
+  );
+}
+
+function isExpectedToolCovered(
+  expectedTool: string,
+  grantedToolSet: Set<string>,
+): boolean {
+  if (grantedToolSet.has(expectedTool)) {
+    return true;
+  }
+
+  const expectedSpec = findProviderToolSpec(expectedTool);
+  if (!expectedSpec) {
+    return false;
+  }
+  return providerToolCatalog.some(
+    (tool) =>
+      tool.provider === expectedSpec.provider &&
+      tool.grantCoverage === "provider" &&
+      grantedToolSet.has(tool.name),
+  );
 }

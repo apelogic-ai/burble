@@ -189,6 +189,89 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("accepts ordinary JSON identifiers in generic task plans", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        JSON.stringify({
+          intent: "update_job_prompt",
+          confidence: 0.99,
+          jobId: "job_pr_checker",
+          taskPlan: {
+            preparation: [
+              {
+                id: "createDedupState",
+                tool: "google_create_drive_text_file",
+                input: { name: "Open PR deduplication", text: "" },
+                saveAs: "dedupState",
+              },
+            ],
+            steps: [
+              {
+                id: "collectOpenPRs",
+                instruction: "Find open pull requests.",
+                tools: ["github_search_issues"],
+              },
+              {
+                id: "deduplicateAndRecord",
+                instruction:
+                  "Use {{resources.dedupState.fileId}} to deduplicate results.",
+                tools: [
+                  "google_get_drive_file",
+                  "google_append_to_drive_text_file",
+                ],
+              },
+            ],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      taskPlan: {
+        preparation: [
+          {
+            id: "createDedupState",
+            saveAs: "dedupState",
+          },
+        ],
+        steps: [
+          { id: "collectOpenPRs" },
+          {
+            id: "deduplicateAndRecord",
+            instruction:
+              "Use {{resources.dedupState.fileId}} to deduplicate results.",
+          },
+        ],
+      },
+    });
+  });
+
+  test("parses explicit generic state-reference mutation semantics", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        JSON.stringify({
+          intent: "update_job_prompt",
+          confidence: 0.98,
+          jobId: "job_stateful",
+          taskPlan: {
+            stateRefMode: "clear",
+            preparation: [],
+            steps: [
+              {
+                id: "report",
+                instruction: "Report current results without prior state.",
+                tools: [],
+              },
+            ],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      taskPlan: {
+        stateRefMode: "clear",
+        preparation: [],
+      },
+    });
+  });
+
   test("rejects malformed preparation plans instead of accepting unsafe partial plans", () => {
     expect(
       parseSchedulerIntentResponse(
@@ -296,6 +379,15 @@ describe("scheduler intent resolver", () => {
           state: "scheduled",
           runtimeType: "openclaw",
           requiredTools: ["github_list_my_pull_requests"],
+          expectedTools: ["github_search_issues"],
+          stateRefs: [
+            {
+              provider: "object-store",
+              kind: "checkpoint",
+              id: "state-123",
+              purpose: "Deduplicate prior results",
+            },
+          ],
           routeId: "convrt_123",
           updatedAt: "2026-06-24T12:00:00.000Z",
         },
@@ -311,10 +403,18 @@ describe("scheduler intent resolver", () => {
     expect(prompt).toContain(
       'requiredTools=["github_list_my_pull_requests"]',
     );
+    expect(prompt).toContain('expectedTools=["github_search_issues"]');
+    expect(prompt).toContain('"provider":"object-store"');
+    expect(prompt).toContain('"id":"state-123"');
     expect(system).toContain("Canonical provider tools");
     expect(system).toContain("github_search_issues");
     expect(system).toContain("google_get_drive_file");
     expect(system).toContain("google_append_to_drive_text_file");
+    expect(system).toContain("stateRefInputs=fileId");
+    expect(system).toContain(
+      "Recurring tools marked stateRefRequired require a matching durable stateRef",
+    );
+    expect(system).toContain("stateRefRequired=true");
     expect(system).toContain(
       "Use only the exact canonical tool names listed below",
     );
@@ -442,6 +542,156 @@ describe("scheduler intent resolver", () => {
     expect(result.taskPlan?.steps[0]?.instruction).toBe(
       "Find open pull requests in the example-org organization.",
     );
+  });
+
+  test("repairs one malformed scheduler mutation payload", async () => {
+    const prompts: string[] = [];
+    const warnings: string[] = [];
+    const resolver = createLlmSchedulerIntentResolver({
+      model: "openai:gpt-test",
+      resolveModel: () =>
+        ({ provider: "openai", modelId: "gpt-test" }) as never,
+      generateText: async (request) => {
+        prompts.push(request.prompt);
+        if (prompts.length === 1) {
+          return {
+            text: JSON.stringify({
+              intent: "update_job_prompt",
+              confidence: 0.99,
+              jobId: "job_pr_checker",
+              taskPlan: {
+                preparation: "invalid",
+                steps: [
+                  {
+                    id: "collect",
+                    instruction: "Find open pull requests.",
+                    tools: ["github_search_issues"],
+                  },
+                ],
+              },
+            }),
+          };
+        }
+        return {
+          text: JSON.stringify({
+            intent: "update_job_prompt",
+            confidence: 0.99,
+            jobId: "job_pr_checker",
+            taskPlan: {
+              preparation: [],
+              steps: [
+                {
+                  id: "collect",
+                  instruction: "Find open pull requests.",
+                  tools: ["github_search_issues"],
+                },
+              ],
+            },
+          }),
+        };
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    const result = await resolver({
+      text: "modify the open PR checker job",
+      recentMessages: [],
+      jobs: [],
+    });
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Repair this scheduler-intent JSON");
+    expect(prompts[1]).toContain("Preserve the original intent and jobId");
+    expect(warnings).toEqual([
+      "Scheduler intent resolver returned an incomplete or malformed mutation payload; attempting one structural repair.",
+    ]);
+    expect(result).toMatchObject({
+      intent: "update_job_prompt",
+      jobId: "job_pr_checker",
+      taskPlan: {
+        preparation: [],
+        steps: [{ id: "collect", tools: ["github_search_issues"] }],
+      },
+    });
+  });
+
+  test("rejects a structural repair that changes the selected job", async () => {
+    let calls = 0;
+    const resolver = createLlmSchedulerIntentResolver({
+      model: "openai:gpt-test",
+      resolveModel: () =>
+        ({ provider: "openai", modelId: "gpt-test" }) as never,
+      generateText: async () => {
+        calls += 1;
+        return {
+          text: JSON.stringify({
+            intent: "update_job_prompt",
+            confidence: 0.99,
+            jobId: calls === 1 ? "job_pr_checker" : "job_other",
+          }),
+        };
+      },
+    });
+
+    await expect(
+      resolver({
+        text: "modify the open PR checker job",
+        recentMessages: [],
+        jobs: [],
+      }),
+    ).resolves.toEqual({
+      intent: "none",
+      confidence: 0,
+      jobId: null,
+      failure: "invalid_response",
+    });
+    expect(calls).toBe(2);
+  });
+
+  test("includes deterministic pre-flight feedback in a bounded repair request", async () => {
+    let prompt = "";
+    const resolver = createLlmSchedulerIntentResolver({
+      model: "openai:gpt-test",
+      resolveModel: () =>
+        ({ provider: "openai", modelId: "gpt-test" }) as never,
+      generateText: async (request) => {
+        prompt = request.prompt;
+        return {
+          text: JSON.stringify({
+            intent: "update_job_prompt",
+            confidence: 0.99,
+            jobId: "job_stateful",
+            taskPlan: {
+              preparation: [],
+              steps: [
+                {
+                  id: "read",
+                  instruction: "Read the configured state.",
+                  tools: ["google_get_drive_file"],
+                },
+              ],
+            },
+          }),
+        };
+      },
+    });
+
+    await resolver({
+      text: "Update the stateful task.",
+      recentMessages: [],
+      jobs: [],
+      repair: {
+        jobId: "job_stateful",
+        errors: [
+          "missing_required_tool: Task requires google_get_drive_file but the grant does not include it.",
+        ],
+      },
+    });
+
+    expect(prompt).toContain("Pre-flight repair request");
+    expect(prompt).toContain("job_stateful");
+    expect(prompt).toContain("missing_required_tool");
+    expect(prompt).toContain("Return one corrected candidate");
   });
 
   test("returns none when the LLM intent resolver times out", async () => {

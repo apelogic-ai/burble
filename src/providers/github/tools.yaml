@@ -476,6 +476,7 @@ tools:
   - name: github_call_mcp_tool
     alias: github.callMcpTool
     implementation: callMcpTool
+    grantCoverage: provider
     title: GitHub MCP tool call
     description: Call any official or GitHub-namespaced tool advertised by the centralized MCP gateway with this user's connected GitHub identity.
     risk: high_write
