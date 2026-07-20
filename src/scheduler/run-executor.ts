@@ -52,6 +52,7 @@ import type { TaskWorkflowEventStore } from "../workflow/task-workflow-store";
 import { markdownToSlackMrkdwn } from "../slack-mrkdwn";
 import { validateScheduledTask } from "./task-validation";
 import { formatScheduledTaskValidationFailureReason } from "./task-validation-format";
+import { AsyncKeyedLock } from "../async-keyed-lock";
 
 type SlackPostClient = {
   chat: {
@@ -71,6 +72,7 @@ type ScheduledRunExecutionContext = {
   toolGroups: ReturnType<typeof selectRuntimeToolGroups>;
   scheduledJobContext: ScheduledJobContext | undefined;
   requiredExecutionTools: string[];
+  stateResourceKeys: string[];
 };
 
 type ScheduledRunAttemptResult = {
@@ -152,6 +154,7 @@ export function createSchedulerRunExecutor(input: {
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }): SchedulerRunExecutor {
+  const stateResourceLock = new AsyncKeyedLock();
   return {
     async notifyFailedRun(runId) {
       const run = input.store.getAgentJobRun(runId);
@@ -230,6 +233,7 @@ export function createSchedulerRunExecutor(input: {
         return;
       }
       let executionContext: ScheduledRunExecutionContext | null = null;
+      let releaseStateResources: (() => void) | null = null;
 
       try {
         const preparedExecutionContext = prepareScheduledRunExecution(
@@ -238,6 +242,9 @@ export function createSchedulerRunExecutor(input: {
         );
         executionContext = preparedExecutionContext;
         assertScheduledRunDestinationAvailable(preparedExecutionContext);
+        releaseStateResources = await stateResourceLock.acquire(
+          preparedExecutionContext.stateResourceKeys,
+        );
 
         input.logInfo?.(
           `Scheduled job run start runId=${run.runId} jobId=${preparedExecutionContext.job.jobId}`,
@@ -361,6 +368,8 @@ export function createSchedulerRunExecutor(input: {
             );
           }
         }
+      } finally {
+        releaseStateResources?.();
       }
     },
   };
@@ -411,7 +420,28 @@ function prepareScheduledRunExecution(
       toolGroups.groups,
     ),
     requiredExecutionTools: resolvedExecutionToolsForRun(store, job),
+    stateResourceKeys: stateResourceKeysForRun(store, job),
   };
+}
+
+function stateResourceKeysForRun(
+  store: Pick<TokenStore, "getAgentJobCapability">,
+  job: ScheduledJobRecord,
+): string[] {
+  const capability = store.getAgentJobCapability(job.jobId);
+  const stateRefs = capability
+    ? buildScheduledJobContext(capability).stateRefs
+    : [];
+  return stateRefs
+    .filter((stateRef) => stateRef.id || stateRef.name)
+    .map((stateRef) =>
+      JSON.stringify([
+        stateRef.provider,
+        stateRef.kind,
+        stateRef.id ?? null,
+        stateRef.name ?? null,
+      ]),
+    );
 }
 
 function assertScheduledRunDestinationAvailable(
