@@ -48,6 +48,7 @@ const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 250;
 const MAX_TOOL_LOOP_STEPS = 4;
 const MAX_PROMPT_TOOLS = 24;
 const MAX_MODEL_TOOL_OUTPUT_CHARS = 12_000;
+const TRUNCATED_TOOL_OUTPUT_EDGE_CHARS = 4_000;
 const MAX_ATTACHMENT_NAME_CHARS = 120;
 const BURBLE_PROVIDER_TOOL_NAME = "burble_provider_call";
 
@@ -291,7 +292,8 @@ async function* runNativeTurn(
         type: "tool_result",
         toolName: toolCall.toolName,
         callId: toolCall.callId,
-        classification: readToolResultClassification(toolResult)
+        classification: readToolResultClassification(toolResult),
+        status: toolResultHasError(toolResult) ? "error" : "ok"
       };
       toolOutputs.push({
         type: "function_call_output",
@@ -626,7 +628,12 @@ function serializeToolOutputForModel(toolResult: unknown): string {
     content: {
       truncated: true,
       originalChars: serialized.length,
-      preview: serialized.slice(0, Math.max(0, MAX_MODEL_TOOL_OUTPUT_CHARS - 1000))
+      omittedChars: Math.max(
+        0,
+        serialized.length - TRUNCATED_TOOL_OUTPUT_EDGE_CHARS * 2
+      ),
+      head: serialized.slice(0, TRUNCATED_TOOL_OUTPUT_EDGE_CHARS),
+      tail: serialized.slice(-TRUNCATED_TOOL_OUTPUT_EDGE_CHARS)
     }
   });
 }
@@ -1251,6 +1258,24 @@ function readToolResultClassification(
     return value.classification;
   }
   return "user_private";
+}
+
+function toolResultHasError(value: unknown, depth = 0): boolean {
+  if (depth > 5 || !isRecord(value)) {
+    return false;
+  }
+  if (
+    value.isError === true ||
+    typeof value.error === "string" ||
+    value.error === true
+  ) {
+    return true;
+  }
+  return Object.values(value).some((entry) =>
+    Array.isArray(entry)
+      ? entry.some((item) => toolResultHasError(item, depth + 1))
+      : toolResultHasError(entry, depth + 1)
+  );
 }
 
 function mergeUsage(

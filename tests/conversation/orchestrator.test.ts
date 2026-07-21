@@ -1232,8 +1232,14 @@ describe("handleConversation", () => {
             }
             expect(input.prompt).toBe("1. Append new results to state-456.");
             expect(input.capability).toEqual({
-              expectedTools: ["google_append_to_drive_text_file"],
-              requiredTools: ["google_append_to_drive_text_file"],
+              expectedTools: [
+                "google_append_to_drive_text_file",
+                "google_get_drive_file",
+              ],
+              requiredTools: [
+                "google_append_to_drive_text_file",
+                "google_get_drive_file",
+              ],
               stateRefMode: "merge",
               stateRefs: [
                 {
@@ -2029,6 +2035,104 @@ describe("handleConversation", () => {
     expect(response.text).toContain(
       "<https://docs.google.com/document/d/doc-123/edit|AI news topic history>",
     );
+  });
+
+  test("repairs an invalid task plan before executing preparation", async () => {
+    let resolverCalls = 0;
+    let preparationCalls = 0;
+    const updates: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Modify the report task to use durable state.",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [aiNewsJob()],
+          updateJobPrompt: (input) => {
+            updates.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job_ai_news",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Hourly AI news summary",
+                prompt: input.prompt,
+                schedule: aiNewsJob().schedule,
+                routeId: "convrt_news",
+                state: "scheduled",
+                runtimeType: "burble-native",
+                createdAt: "2026-07-19T16:00:00.000Z",
+                updatedAt: "2026-07-19T16:01:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async (input) => {
+          resolverCalls += 1;
+          if (resolverCalls === 1) {
+            return {
+              intent: "update_job_prompt",
+              confidence: 0.99,
+              jobId: "job_ai_news",
+              taskPlan: {
+                preparation: [
+                  {
+                    id: "prepare_state",
+                    tool: "unknown_create_state",
+                    input: {},
+                    saveAs: "state",
+                  },
+                ],
+                steps: [
+                  {
+                    id: "report",
+                    instruction: "Read {{resources.state.id}}.",
+                    tools: [],
+                  },
+                ],
+              },
+            };
+          }
+          expect(input.repair).toEqual({
+            jobId: "job_ai_news",
+            errors: [
+              "Task plan validation failed: Preparation step prepare_state references unknown provider tool unknown_create_state.",
+            ],
+          });
+          return {
+            intent: "update_job_prompt",
+            confidence: 0.99,
+            jobId: "job_ai_news",
+            taskPlan: {
+              preparation: [],
+              steps: [
+                {
+                  id: "report",
+                  instruction: "Report the current state.",
+                  tools: [],
+                },
+              ],
+            },
+          };
+        },
+        scheduledTaskPreparationExecutor: async () => {
+          preparationCalls += 1;
+          throw new Error("invalid preparation must not execute");
+        },
+      }),
+    );
+
+    expect(resolverCalls).toBe(2);
+    expect(preparationCalls).toBe(0);
+    expect(updates).toEqual([
+      expect.objectContaining({
+        jobId: "job_ai_news",
+        prompt: "1. Report the current state.",
+      }),
+    ]);
+    expect(response.text).toContain("Updated scheduled job job_ai_news task.");
   });
 
   test("preserves existing generic state bindings for a resolved plan without preparation", async () => {

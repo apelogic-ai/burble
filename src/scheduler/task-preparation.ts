@@ -3,7 +3,10 @@ import type {
   SchedulerTaskPlan,
   SchedulerTaskPreparationStep,
 } from "../conversation/types";
-import { findProviderToolSpec } from "../providers/catalog";
+import {
+  expandProviderToolDependencies,
+  findProviderToolSpec,
+} from "../providers/catalog";
 import { providerToolInputSchema } from "../providers/tool-specs";
 import type { ScheduledJobStateRef } from "../agent/scheduled-job-context";
 
@@ -35,8 +38,18 @@ export function validateScheduledTaskPlan(
   plan: SchedulerTaskPlan,
 ): ScheduledTaskPlanValidation {
   const errors: string[] = [];
+  const stepIds = new Set<string>();
+  const preparationBindings = new Set<string>();
 
   for (const step of plan.preparation) {
+    if (stepIds.has(step.id)) {
+      errors.push(`Task plan step id ${step.id} is duplicated.`);
+    }
+    stepIds.add(step.id);
+    if (preparationBindings.has(step.saveAs)) {
+      errors.push(`Preparation binding ${step.saveAs} is duplicated.`);
+    }
+    preparationBindings.add(step.saveAs);
     const tool = findProviderToolSpec(step.tool);
     if (!tool) {
       errors.push(
@@ -58,10 +71,21 @@ export function validateScheduledTaskPlan(
   }
 
   for (const step of plan.steps) {
+    if (stepIds.has(step.id)) {
+      errors.push(`Task plan step id ${step.id} is duplicated.`);
+    }
+    stepIds.add(step.id);
     for (const toolName of step.tools) {
       if (!findProviderToolSpec(toolName)) {
         errors.push(
           `Recurring step ${step.id} references unknown provider tool ${toolName}.`,
+        );
+      }
+    }
+    for (const binding of resourceBindings(step.instruction)) {
+      if (!preparationBindings.has(binding)) {
+        errors.push(
+          `Recurring step ${step.id} references unknown preparation binding ${binding}.`,
         );
       }
     }
@@ -70,6 +94,14 @@ export function validateScheduledTaskPlan(
   return errors.length > 0
     ? { ok: false, errors: [...new Set(errors)] }
     : { ok: true, errors: [] };
+}
+
+function resourceBindings(instruction: string): string[] {
+  return [
+    ...instruction.matchAll(
+      /\{\{resources\.([A-Za-z][A-Za-z0-9_]{0,63})\.[a-zA-Z0-9_.]+\}\}/g,
+    ),
+  ].map((match) => match[1]!);
 }
 
 export async function executeScheduledTaskPreparation(input: {
@@ -87,7 +119,7 @@ export async function executeScheduledTaskPreparation(input: {
   const stateRefs: ScheduledJobStateRef[] = [];
   for (const step of input.plan.preparation) {
     const result = await executePreparationStep(input, step);
-    resources[step.saveAs] = result.value;
+    resources[step.saveAs] = bindPreparationResource(result);
     if (result.stateRef) {
       stateRefs.push(normalizeStateRef(result.stateRef, step));
     }
@@ -103,6 +135,25 @@ export async function executeScheduledTaskPreparation(input: {
     requiredTools: canonicalRecurringTools(input.plan),
     stateRefs: dedupeStateRefs(stateRefs),
     resources,
+  };
+}
+
+function bindPreparationResource(
+  result: ScheduledTaskPreparationToolResult,
+): unknown {
+  if (!result.stateRef) {
+    return result.value;
+  }
+  const resource: Record<string, unknown> = isRecord(result.value)
+    ? { ...result.value }
+    : { value: result.value };
+  const stateRef = result.stateRef;
+  return {
+    ...resource,
+    ...(resource.id === undefined && stateRef.id ? { id: stateRef.id } : {}),
+    ...(resource.name === undefined && stateRef.name
+      ? { name: stateRef.name }
+      : {}),
   };
 }
 
@@ -128,15 +179,9 @@ async function executePreparationStep(
 }
 
 function canonicalRecurringTools(plan: SchedulerTaskPlan): string[] {
-  return [
-    ...new Set(
-      plan.steps.flatMap((step) =>
-        step.tools.map(
-          (toolName) => findProviderToolSpec(toolName)?.name ?? toolName,
-        ),
-      ),
-    ),
-  ].sort();
+  return expandProviderToolDependencies(
+    plan.steps.flatMap((step) => step.tools),
+  );
 }
 
 function renderResourceBindings(

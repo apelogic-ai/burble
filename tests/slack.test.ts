@@ -262,7 +262,7 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
     store.close();
   });
 
-  test("stops another active runtime before switching engines for a user", async () => {
+  test("keeps engine-specific runtimes active for the same user", async () => {
     const store = createTokenStore(":memory:");
     const sandboxProvider = createSlackRuntimeSandboxProvider();
     store.upsertWorkspacePolicy({
@@ -298,7 +298,7 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
 
     expect(hermes?.engine).toBe("hermes");
     expect(openclaw?.engine).toBe("openclaw");
-    expect(store.getAgentRuntime(hermes?.id ?? "")?.status).toBe("stopped");
+    expect(store.getAgentRuntime(hermes?.id ?? "")?.status).toBe("ready");
     expect(store.getAgentRuntime(openclaw?.id ?? "")?.status).toBe("ready");
     expect(
       store
@@ -307,7 +307,8 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
           ["provisioning", "ready", "busy", "idle"].includes(runtime.status)
         )
         .map((runtime) => runtime.engine)
-    ).toEqual(["openclaw"]);
+        .sort()
+    ).toEqual(["hermes", "openclaw"]);
     store.close();
   });
 });

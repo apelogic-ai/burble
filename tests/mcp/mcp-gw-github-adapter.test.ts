@@ -383,4 +383,136 @@ describe("MCP-GW GitHub adapter", () => {
       },
     });
   });
+
+  test("compacts search results to canonical records without issue bodies", () => {
+    const plan = adaptMcpGwGitHubToolCall("github_search_issues", {
+      query: "org:apelogic-ai is:pr is:open",
+    });
+    if (!plan.ok) throw new Error("expected adapted plan");
+
+    const result = mcpGwGitHubToolResult(plan, {
+      status: "ok",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              total_count: 1,
+              incomplete_results: false,
+              items: [
+                {
+                  number: 22,
+                  state: "open",
+                  title: "Fix CI dependencies",
+                  body: "This also changes fm-app and db-meta.",
+                  html_url:
+                    "https://github.com/apelogic-ai/semantic-grid/pull/22",
+                  repository_url:
+                    "https://api.github.com/repos/apelogic-ai/semantic-grid",
+                  draft: true,
+                  created_at: "2026-07-20T23:00:00Z",
+                  updated_at: "2026-07-20T23:30:00Z",
+                  closed_at: null,
+                  comments: 3,
+                  user: { login: "octocat", avatar_url: "ignored" },
+                  labels: [{ name: "ci" }, { name: "bug" }],
+                  pull_request: {
+                    html_url:
+                      "https://github.com/apelogic-ai/semantic-grid/pull/22",
+                    diff_url: "ignored",
+                  },
+                },
+              ],
+            }),
+          },
+        ],
+      },
+    });
+
+    if (!("content" in result) || !result.content || typeof result.content !== "object") {
+      throw new Error("expected normalized content");
+    }
+    const normalized = result.content as {
+      result: { content: Array<{ type: string; text: string }> };
+    };
+    expect(JSON.parse(normalized.result.content[0]!.text)).toEqual({
+      total_count: 1,
+      incomplete_results: false,
+      items: [
+        {
+          number: 22,
+          state: "open",
+          title: "Fix CI dependencies",
+          html_url: "https://github.com/apelogic-ai/semantic-grid/pull/22",
+          repository: "apelogic-ai/semantic-grid",
+          draft: true,
+          created_at: "2026-07-20T23:00:00Z",
+          updated_at: "2026-07-20T23:30:00Z",
+          closed_at: null,
+          comments: 3,
+          author: "octocat",
+          labels: ["ci", "bug"],
+        },
+      ],
+    });
+    expect(normalized.result.content[0]!.text).not.toContain("fm-app");
+    expect(normalized.result.content[0]!.text).not.toContain("db-meta");
+
+    const prefixed = mcpGwGitHubToolResult(
+      {
+        ok: true,
+        kind: "call",
+        burbleToolName: "github_call_mcp_tool",
+        call: {
+          name: "github_github_search_pull_requests",
+          arguments: { query: "org:apelogic-ai is:pr is:open" },
+        },
+      },
+      {
+        status: "ok",
+        result: {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                items: [
+                  {
+                    number: 106,
+                    state: "open",
+                    title: "Harden scheduled task operations",
+                    body: "References a different repository in prose.",
+                    html_url: "https://github.com/apelogic-ai/burble/pull/106",
+                    repository_url:
+                      "https://api.github.com/repos/apelogic-ai/burble",
+                  },
+                ],
+              }),
+            },
+          ],
+        },
+      },
+    );
+    if (
+      !("content" in prefixed) ||
+      !prefixed.content ||
+      typeof prefixed.content !== "object"
+    ) {
+      throw new Error("expected normalized prefixed content");
+    }
+    const prefixedContent = prefixed.content as {
+      result: { content: Array<{ type: string; text: string }> };
+    };
+    expect(JSON.parse(prefixedContent.result.content[0]!.text)).toEqual({
+      items: [
+        {
+          number: 106,
+          state: "open",
+          title: "Harden scheduled task operations",
+          html_url: "https://github.com/apelogic-ai/burble/pull/106",
+          repository: "apelogic-ai/burble",
+          labels: [],
+        },
+      ],
+    });
+  });
 });

@@ -155,7 +155,6 @@ import type { SandboxProvider } from "./agent/sandbox-provider";
 import { modelProviderUrlsForRuntimeModel } from "./agent/runtime-env";
 import {
   buildRuntimeManifestForPrincipal,
-  isActiveAgentRuntime,
   RuntimeEngineSelectionError,
   resolveRuntimeEngineForPrincipal,
   type RuntimeEngineSelection
@@ -2608,25 +2607,9 @@ export function createManagedRuntimeFactory(
       principal,
       requirements
     }).effectiveEngine;
-  const stopOtherActiveRuntimes = async (
-    principal: { workspaceId: string; slackUserId: string },
-    selectedEngine: ReturnType<typeof resolveEngine>
-  ) => {
-    for (const runtime of store.listAgentRuntimesForPrincipal(principal)) {
-      if (
-        runtime.engine === selectedEngine ||
-        !isActiveAgentRuntime(runtime)
-      ) {
-        continue;
-      }
-      await delegateForEngine(runtime.engine).stopRuntime(runtime.id);
-    }
-  };
-
   return {
     async getOrCreateRuntime(principal, requirements) {
       const engine = resolveEngine(principal, requirements);
-      await stopOtherActiveRuntimes(principal, engine);
       return delegateForEngine(engine).getOrCreateRuntime(
         principal,
         requirements

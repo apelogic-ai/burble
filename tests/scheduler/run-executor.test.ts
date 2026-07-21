@@ -5,16 +5,156 @@ import { createTokenStore } from "../../src/db";
 import {
   createSchedulerRunExecutor,
   scheduledRuntimeRetryDelayMs,
+  validateScheduledRunToolEvidence,
 } from "../../src/scheduler/run-executor";
 import type { AgentRunner } from "../../src/agent/types";
 import { createInMemoryTaskWorkflowEventStore } from "../../src/workflow/task-workflow-store";
 
 describe("scheduler run executor", () => {
+  test("requires resolved read capabilities and rejects failed mutations", () => {
+    expect(
+      validateScheduledRunToolEvidence({
+        requiredTools: ["github_search_issues"],
+        events: [],
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Scheduled run did not complete required tool github_search_issues.",
+    });
+
+    expect(
+      validateScheduledRunToolEvidence({
+        requiredTools: ["github_search_issues"],
+        events: [
+          {
+            type: "tool_call",
+            toolName: "github.callMcpTool",
+            callId: "call-github",
+          },
+          {
+            type: "tool_result",
+            toolName: "github.callMcpTool",
+            callId: "call-github",
+            classification: "user_private",
+            status: "ok",
+          },
+        ],
+      }),
+    ).toEqual({ ok: true });
+
+    expect(
+      validateScheduledRunToolEvidence({
+        requiredTools: [],
+        events: [
+          {
+            type: "tool_call",
+            toolName: "google.appendDriveTextFile",
+            callId: "call-write",
+          },
+          {
+            type: "tool_result",
+            toolName: "google.appendDriveTextFile",
+            callId: "call-write",
+            classification: "user_private",
+            status: "error",
+          },
+        ],
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Scheduled run tool google_append_to_drive_text_file failed before delivery.",
+    });
+  });
+
   test("uses bounded exponential backoff with jitter for runtime retries", () => {
     expect(scheduledRuntimeRetryDelayMs(1, () => 0)).toBe(5_000);
     expect(scheduledRuntimeRetryDelayMs(1, () => 1)).toBe(7_500);
     expect(scheduledRuntimeRetryDelayMs(2, () => 1)).toBe(15_000);
     expect(scheduledRuntimeRetryDelayMs(4, () => 1)).toBe(30_000);
+  });
+
+  test("serializes scheduled runs that share durable state", async () => {
+    const store = createTokenStore(":memory:");
+    const principal = { workspaceId: "T123", slackUserId: "U123" };
+    for (const suffix of ["one", "two"]) {
+      store.upsertScheduledJob({
+        jobId: `job-${suffix}`,
+        ...principal,
+        title: `Stateful job ${suffix}`,
+        prompt: "Read, update, and report durable state.",
+        schedule: { kind: "interval", every: { hours: 1 } },
+        runtimeType: "burble-native",
+        state: "scheduled",
+      });
+      store.upsertAgentJobCapability({
+        jobId: `job-${suffix}`,
+        ...principal,
+        expectedTools: [],
+        requiredTools: ["web_search"],
+        stateRefs: [
+          {
+            provider: "state-provider",
+            kind: "checkpoint",
+            id: "shared-state",
+          },
+        ],
+      });
+      store.createAgentJobRun({
+        runId: `run-${suffix}`,
+        jobId: `job-${suffix}`,
+        ...principal,
+        triggerSource: "manual",
+        status: "queued",
+      });
+    }
+
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const startedJobs: string[] = [];
+    const runner: AgentRunner = {
+      name: "state-lock-runner",
+      capabilities: { streaming: true, toolEvents: true, remote: true },
+      async *run(input) {
+        const jobId = input.scheduledJob?.jobId ?? "unknown";
+        startedJobs.push(jobId);
+        if (jobId === "job-one") {
+          markFirstStarted();
+          await firstBlocked;
+        }
+        yield {
+          type: "final",
+          response: { classification: "public", text: `Finished ${jobId}.` },
+        };
+      },
+    };
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: { chat: { postMessage: async () => ({}) } },
+    });
+
+    const firstRun = executor.executeRun("run-one");
+    await firstStarted;
+    const secondRun = executor.executeRun("run-two");
+    await Bun.sleep(10);
+
+    expect(startedJobs).toEqual(["job-one"]);
+
+    releaseFirst();
+    await Promise.all([firstRun, secondRun]);
+    expect(startedJobs).toEqual(["job-one", "job-two"]);
+    expect(store.getAgentJobRun("run-one")?.status).toBe("succeeded");
+    expect(store.getAgentJobRun("run-two")?.status).toBe("succeeded");
+
+    store.close();
   });
 
   test("delivers a pre-runtime failed run through its configured route", async () => {
@@ -137,6 +277,18 @@ describe("scheduler run executor", () => {
       async *run(input) {
         runnerInputs.push(input);
         yield {
+          type: "tool_call",
+          toolName: "web.search",
+          callId: "call-news",
+          input: { query: "fresh AI news" },
+        };
+        yield {
+          type: "tool_result",
+          toolName: "web.search",
+          callId: "call-news",
+          classification: "public",
+        };
+        yield {
           type: "final",
           response: {
             classification: "public",
@@ -230,6 +382,21 @@ describe("scheduler run executor", () => {
       },
       telemetry: {
         promptChars: 512,
+        scheduledRun: {
+          toolEvents: [
+            {
+              type: "tool_call",
+              toolName: "web.search",
+              callId: "call-news",
+            },
+            {
+              type: "tool_result",
+              toolName: "web.search",
+              callId: "call-news",
+              classification: "public",
+            },
+          ],
+        },
       },
       visibility: {
         destination: "slack",

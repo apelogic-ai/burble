@@ -789,6 +789,13 @@
                 "restricted"
               ]
             },
+            "status": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "error"
+              ]
+            },
             "content": {}
           },
           "required": [

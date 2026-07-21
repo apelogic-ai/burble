@@ -41,6 +41,7 @@ import { isAgentRuntimeEngine } from "@burble/runtime-sdk/runtime-engines";
 import {
   executeScheduledTaskPreparation,
   type ScheduledTaskPreparationResult,
+  validateScheduledTaskPlan,
 } from "../scheduler/task-preparation";
 
 export async function handleConversation(
@@ -70,10 +71,31 @@ async function handleConversationInternal(
   const intent = classifyDeterministicIntent(request.text);
   const forceAgent = shouldForceAgentDelegation(request.text);
   const fastTrackEnabled = shouldUseFastTrack(deps);
-  const schedulerResolution = await resolveSchedulerControlIntent(
+  let schedulerResolution = await resolveSchedulerControlIntent(
     request,
     deps,
   );
+  const taskPlanValidation = schedulerResolution.taskPlan
+    ? validateScheduledTaskPlan(schedulerResolution.taskPlan)
+    : null;
+  if (taskPlanValidation && !taskPlanValidation.ok) {
+    const repaired = await resolveSchedulerControlIntent(request, deps, {
+      repair: {
+        jobId: schedulerResolution.jobId ?? null,
+        errors: taskPlanValidation.errors.map(
+          (error) => `Task plan validation failed: ${error}`,
+        ),
+      },
+    });
+    if (
+      repaired.intent === schedulerResolution.intent &&
+      repaired.jobId === schedulerResolution.jobId &&
+      repaired.taskPlan &&
+      validateScheduledTaskPlan(repaired.taskPlan).ok
+    ) {
+      schedulerResolution = repaired;
+    }
+  }
   const schedulerControlIntent = schedulerResolution.intent;
   const schedulerJobIdHint = schedulerResolution.jobId;
   const schedulerCreateRequest =
@@ -723,6 +745,12 @@ function scheduledJobRuntimeType(
 async function resolveSchedulerControlIntent(
   request: ConversationRequest,
   deps: ConversationDeps,
+  options: {
+    repair?: {
+      jobId: string | null;
+      errors: string[];
+    };
+  } = {},
 ): Promise<{
   intent: SchedulerControlIntent;
   jobId: string | null;
@@ -745,6 +773,7 @@ async function resolveSchedulerControlIntent(
         text: request.text,
         recentMessages: recentConversationTexts(request),
         jobs,
+        ...(options.repair ? { repair: options.repair } : {}),
       });
       if (resolved.failure) {
         return {

@@ -706,7 +706,8 @@ describe("Burble Native runtime server", () => {
         type: "tool_result",
         toolName: "github.getAuthenticatedUser",
         callId: "call_123",
-        classification: "user_private"
+        classification: "user_private",
+        status: "ok"
       },
       { type: "message_delta", text: "Authenticated as octocat." },
       {
@@ -1348,7 +1349,8 @@ describe("Burble Native runtime server", () => {
       type: "tool_result",
       toolName: "conversation.getAttachment",
       callId: "call_attachment",
-      classification: "user_private"
+      classification: "user_private",
+      status: "ok"
     });
     expect(events.at(-1)).toMatchObject({
       type: "final",
@@ -1499,7 +1501,8 @@ describe("Burble Native runtime server", () => {
       type: "tool_result",
       toolName: "github.listMyPullRequests",
       callId: "call_123",
-      classification: "user_private"
+      classification: "user_private",
+      status: "error"
     });
     const secondProviderBody = JSON.parse(
       String(
@@ -1569,7 +1572,7 @@ describe("Burble Native runtime server", () => {
                 pullRequests: [
                   {
                     title: "Huge result",
-                    body: "x".repeat(40_000)
+                    body: `${"x".repeat(40_000)}LATEST-CHECKPOINT`
                   }
                 ]
               }
@@ -1642,6 +1645,9 @@ describe("Burble Native runtime server", () => {
     expect(toolOutput.output.length).toBeLessThan(12_500);
     expect(toolOutput.output).toContain("\"truncated\":true");
     expect(toolOutput.output).toContain("\"originalChars\"");
+    expect(toolOutput.output).toContain("\"head\"");
+    expect(toolOutput.output).toContain("\"tail\"");
+    expect(toolOutput.output).toContain("LATEST-CHECKPOINT");
   });
 
   test("does not expose the generic tool function without a selected tool catalog", async () => {

@@ -16,6 +16,10 @@ import { shouldNotifyScheduledRunFailure } from "./failure-notification-policy";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 import { findProviderToolSpec } from "../providers/catalog";
 import {
+  expandProviderToolDependencies,
+  providerToolCovers,
+} from "../providers/catalog";
+import {
   formatScheduledJobFailureMessage,
   scheduledTaskRuntimePrompt,
   validateScheduledJobOutput,
@@ -48,6 +52,7 @@ import type { TaskWorkflowEventStore } from "../workflow/task-workflow-store";
 import { markdownToSlackMrkdwn } from "../slack-mrkdwn";
 import { validateScheduledTask } from "./task-validation";
 import { formatScheduledTaskValidationFailureReason } from "./task-validation-format";
+import { AsyncKeyedLock } from "../async-keyed-lock";
 
 type SlackPostClient = {
   chat: {
@@ -66,11 +71,19 @@ type ScheduledRunExecutionContext = {
   runtimePrompt: string;
   toolGroups: ReturnType<typeof selectRuntimeToolGroups>;
   scheduledJobContext: ScheduledJobContext | undefined;
+  requiredExecutionTools: string[];
+  stateResourceKeys: string[];
 };
 
 type ScheduledRunAttemptResult = {
   text: string;
   output: AgentOutput;
+  events: AgentRunEvent[];
+};
+
+type ScheduledAgentRunCollection = {
+  output: AgentOutput;
+  events: AgentRunEvent[];
 };
 
 const DEFAULT_WORKFLOW_ATTEMPT_HEARTBEAT_INTERVAL_MS = 60_000;
@@ -141,6 +154,7 @@ export function createSchedulerRunExecutor(input: {
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }): SchedulerRunExecutor {
+  const stateResourceLock = new AsyncKeyedLock();
   return {
     async notifyFailedRun(runId) {
       const run = input.store.getAgentJobRun(runId);
@@ -219,6 +233,7 @@ export function createSchedulerRunExecutor(input: {
         return;
       }
       let executionContext: ScheduledRunExecutionContext | null = null;
+      let releaseStateResources: (() => void) | null = null;
 
       try {
         const preparedExecutionContext = prepareScheduledRunExecution(
@@ -227,6 +242,9 @@ export function createSchedulerRunExecutor(input: {
         );
         executionContext = preparedExecutionContext;
         assertScheduledRunDestinationAvailable(preparedExecutionContext);
+        releaseStateResources = await stateResourceLock.acquire(
+          preparedExecutionContext.stateResourceKeys,
+        );
 
         input.logInfo?.(
           `Scheduled job run start runId=${run.runId} jobId=${preparedExecutionContext.job.jobId}`,
@@ -350,6 +368,8 @@ export function createSchedulerRunExecutor(input: {
             );
           }
         }
+      } finally {
+        releaseStateResources?.();
       }
     },
   };
@@ -399,7 +419,29 @@ function prepareScheduledRunExecution(
       job,
       toolGroups.groups,
     ),
+    requiredExecutionTools: resolvedExecutionToolsForRun(store, job),
+    stateResourceKeys: stateResourceKeysForRun(store, job),
   };
+}
+
+function stateResourceKeysForRun(
+  store: Pick<TokenStore, "getAgentJobCapability">,
+  job: ScheduledJobRecord,
+): string[] {
+  const capability = store.getAgentJobCapability(job.jobId);
+  const stateRefs = capability
+    ? buildScheduledJobContext(capability).stateRefs
+    : [];
+  return stateRefs
+    .filter((stateRef) => stateRef.id || stateRef.name)
+    .map((stateRef) =>
+      JSON.stringify([
+        stateRef.provider,
+        stateRef.kind,
+        stateRef.id ?? null,
+        stateRef.name ?? null,
+      ]),
+    );
 }
 
 function assertScheduledRunDestinationAvailable(
@@ -464,7 +506,7 @@ async function executeScheduledRunAttempt(input: {
   logWarn?: (message: string) => void;
 }): Promise<ScheduledRunAttemptResult> {
   assertScheduledRunDestinationAvailable(input.executionContext);
-  const result = await collectScheduledAgentRunWithProgressRetry({
+  const collected = await collectScheduledAgentRunWithProgressRetry({
     runner: input.runner,
     agentInput: buildScheduledRunAgentInput({
       store: input.store,
@@ -477,13 +519,21 @@ async function executeScheduledRunAttempt(input: {
     scheduledRuntimeRetrySleep: input.scheduledRuntimeRetrySleep,
     logWarn: input.logWarn,
   });
-  const output = validateScheduledJobOutput(result);
+  const evidence = validateScheduledRunToolEvidence({
+    requiredTools: input.executionContext.requiredExecutionTools,
+    events: collected.events,
+  });
+  if (!evidence.ok) {
+    throw new Error(evidence.reason);
+  }
+  const output = validateScheduledJobOutput(collected.output);
   if (!output.ok) {
     throw new Error(output.reason);
   }
   return {
     text: output.text,
-    output: result,
+    output: collected.output,
+    events: collected.events,
   };
 }
 
@@ -559,7 +609,10 @@ function recordScheduledRunAudit(input: {
       ),
       telemetry: auditJsonField(
         "telemetry",
-        input.attemptResult.output.telemetry ?? null,
+        scheduledRunAuditTelemetry(
+          input.attemptResult.output.telemetry,
+          input.attemptResult.events,
+        ),
         input,
       ),
       visibility: auditJsonField(
@@ -1086,16 +1139,11 @@ async function collectScheduledAgentRunWithProgressRetry(input: {
   scheduledRuntimeRetryDelayMs?: (attempt: number) => number;
   scheduledRuntimeRetrySleep?: (delayMs: number) => Promise<void>;
   logWarn?: (message: string) => void;
-}) {
-  const events: AgentRunEvent[] = [];
+}): Promise<ScheduledAgentRunCollection> {
+  const collected = collectAgentRunWithEvents(input.runner, input.agentInput);
+  const events = collected.events;
   try {
-    const result = await collectAgentRun(
-      input.runner,
-      input.agentInput,
-      (event) => {
-        events.push(event);
-      },
-    );
+    const result = await collected.output;
     const retryContext = progressOnlyScheduledRunRetryContext(
       events,
       input.scheduledJobContext,
@@ -1114,7 +1162,7 @@ async function collectScheduledAgentRunWithProgressRetry(input: {
         "Managed runtime final response contained only runtime-control/progress text",
       );
     }
-    return result;
+    return { output: result, events };
   } catch (error) {
     const retryContext = progressOnlyScheduledRunRetryContext(
       events,
@@ -1236,23 +1284,24 @@ async function collectScheduledAgentRunProgressRetry(input: {
   job: ScheduledJobRecord;
   scheduledJobContext: ScheduledJobContext;
   logWarn?: (message: string) => void;
-}) {
+}): Promise<ScheduledAgentRunCollection> {
   input.logWarn?.(
     `Scheduled job runtime returned progress-only output before tool call; retrying run jobId=${input.job.jobId}`,
   );
-  const result = await collectAgentRun(input.runner, {
+  const collected = collectAgentRunWithEvents(input.runner, {
     ...input.agentInput,
     text: buildScheduledProgressRetryPrompt(
       input.job.prompt,
       input.scheduledJobContext.allowedTools,
     ),
   });
+  const result = await collected.output;
   if (isRuntimeProgressOnlyResponseText(result.text)) {
     throw new Error(
       "Managed runtime final response contained only runtime-control/progress text after scheduled task retry",
     );
   }
-  return result;
+  return { output: result, events: collected.events };
 }
 
 async function collectScheduledAgentRunTransientRetry(input: {
@@ -1264,7 +1313,7 @@ async function collectScheduledAgentRunTransientRetry(input: {
   scheduledRuntimeRetryDelayMs?: (attempt: number) => number;
   scheduledRuntimeRetrySleep?: (delayMs: number) => Promise<void>;
   logWarn?: (message: string) => void;
-}) {
+}): Promise<ScheduledAgentRunCollection> {
   const delayMs = Math.max(
     0,
     Math.round(
@@ -1276,7 +1325,7 @@ async function collectScheduledAgentRunTransientRetry(input: {
     `Scheduled job runtime failed with retryable error; retrying run jobId=${input.job.jobId} delayMs=${delayMs} error=${scheduledRunErrorMessage(input.error)}`,
   );
   await (input.scheduledRuntimeRetrySleep ?? sleepFor)(delayMs);
-  return collectAgentRun(input.runner, {
+  const collected = collectAgentRunWithEvents(input.runner, {
     ...input.agentInput,
     text: buildScheduledRuntimeRetryPrompt(
       input.job.prompt,
@@ -1284,6 +1333,104 @@ async function collectScheduledAgentRunTransientRetry(input: {
       scheduledRunErrorMessage(input.error),
     ),
   });
+  return { output: await collected.output, events: collected.events };
+}
+
+function collectAgentRunWithEvents(
+  runner: AgentRunner,
+  input: AgentInput,
+): { output: Promise<AgentOutput>; events: AgentRunEvent[] } {
+  const events: AgentRunEvent[] = [];
+  return {
+    output: collectAgentRun(runner, input, (event) => {
+      events.push(event);
+    }),
+    events,
+  };
+}
+
+function scheduledRunAuditTelemetry(
+  telemetry: AgentOutput["telemetry"],
+  events: AgentRunEvent[],
+): Record<string, unknown> {
+  return {
+    ...(telemetry ?? {}),
+    scheduledRun: {
+      toolEvents: events.flatMap(sanitizeScheduledRunToolEvent),
+    },
+  };
+}
+
+function sanitizeScheduledRunToolEvent(
+  event: AgentRunEvent,
+): Array<Record<string, unknown>> {
+  if (event.type === "tool_call") {
+    return [
+      {
+        type: event.type,
+        toolName: event.toolName,
+        callId: event.callId,
+      },
+    ];
+  }
+  if (event.type === "tool_result") {
+    return [
+      {
+        type: event.type,
+        toolName: event.toolName,
+        callId: event.callId,
+        classification: event.classification,
+        ...(event.status ? { status: event.status } : {}),
+      },
+    ];
+  }
+  return [];
+}
+
+export function validateScheduledRunToolEvidence(input: {
+  requiredTools: readonly string[];
+  events: readonly AgentRunEvent[];
+}): { ok: true } | { ok: false; reason: string } {
+  const successfulResults = input.events.filter(
+    (event): event is Extract<AgentRunEvent, { type: "tool_result" }> =>
+      event.type === "tool_result" && event.status !== "error",
+  );
+  for (const requiredTool of input.requiredTools) {
+    const spec = findProviderToolSpec(requiredTool);
+    if (spec?.risk !== "read") {
+      continue;
+    }
+    if (
+      !successfulResults.some((event) =>
+        providerToolCovers(event.toolName, requiredTool),
+      )
+    ) {
+      return {
+        ok: false,
+        reason: `Scheduled run did not complete required tool ${spec.name}.`,
+      };
+    }
+  }
+
+  const calls = new Map(
+    input.events.flatMap((event) =>
+      event.type === "tool_call" ? [[event.callId, event.toolName] as const] : [],
+    ),
+  );
+  for (const event of input.events) {
+    if (event.type !== "tool_result" || event.status !== "error") {
+      continue;
+    }
+    const toolName = calls.get(event.callId) ?? event.toolName;
+    const spec = findProviderToolSpec(toolName);
+    if (spec && spec.risk !== "read") {
+      return {
+        ok: false,
+        reason: `Scheduled run tool ${spec.name} failed before delivery.`,
+      };
+    }
+  }
+  return { ok: true };
 }
 
 export function scheduledRuntimeRetryDelayMs(
@@ -1474,6 +1621,14 @@ function scheduledJobContextForRun(
     stateRefs: [],
     visibilityPolicy: {},
   };
+}
+
+function resolvedExecutionToolsForRun(
+  store: Pick<TokenStore, "getAgentJobCapability">,
+  job: ScheduledJobRecord,
+): string[] {
+  const expectedTools = store.getAgentJobCapability(job.jobId)?.expectedTools;
+  return expectedTools ? expandProviderToolDependencies(expectedTools) : [];
 }
 
 function isDeliveryOnlyScheduledJobContext(

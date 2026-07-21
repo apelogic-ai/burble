@@ -313,6 +313,7 @@ export const runtimeRunEventSchema = z.discriminatedUnion("type", [
       toolName: z.string().min(1),
       callId: z.string().min(1),
       classification: toolClassificationSchema,
+      status: z.enum(["ok", "error"]).optional(),
       content: z.unknown().optional()
     })
     .strict(),

@@ -1,5 +1,6 @@
 import type { AgentJobCapabilityRecord, ScheduledJobRecord } from "../db";
 import {
+  expandProviderToolDependencies,
   findProviderToolSpec,
   providerToolCatalog,
 } from "../providers/catalog";
@@ -52,12 +53,12 @@ export function validateScheduledTask(
   record: ScheduledJobRecord,
   capability: SchedulerTaskGrant | null,
 ): SchedulerTaskValidation {
-  const expectedTools = [
-    ...(capability?.expectedTools === null ||
-    capability?.expectedTools === undefined
+  const expectedTools = expandProviderToolDependencies(
+    capability?.expectedTools === null ||
+      capability?.expectedTools === undefined
       ? inferAllowedToolsForScheduledJob(record)
-      : capability.expectedTools),
-  ].sort();
+      : capability.expectedTools,
+  );
   const grantedTools = [...(capability?.requiredTools ?? [])].sort();
   const grantedToolSet = new Set(grantedTools);
   const errors: SchedulerTaskValidationIssue[] = [];

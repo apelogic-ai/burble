@@ -93,6 +93,37 @@ describe("scheduled task validation", () => {
     });
   });
 
+  test("validates transitive catalog-declared capability dependencies", () => {
+    const validation = validateScheduledTask(
+      scheduledJob("Append the next durable checkpoint."),
+      {
+        expectedTools: ["google_append_to_drive_text_file"],
+        requiredTools: ["google_append_to_drive_text_file"],
+        stateRefs: [
+          {
+            provider: "google",
+            kind: "document",
+            id: "dedupe-state",
+          },
+        ],
+      },
+    );
+
+    expect(validation.expectedTools).toEqual([
+      "google_append_to_drive_text_file",
+      "google_get_drive_file",
+    ]);
+    expect(validation).toMatchObject({
+      ok: false,
+      errors: [
+        {
+          code: "missing_required_tool",
+          tool: "google_get_drive_file",
+        },
+      ],
+    });
+  });
+
   test("rejects state-consuming operations without a bound provider reference", () => {
     const validation = validateScheduledTask(
       scheduledJob("Read and update the configured checkpoint."),
