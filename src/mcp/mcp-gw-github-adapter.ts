@@ -1,5 +1,6 @@
 import type { ToolResult } from "../tools/types";
 import type { McpGwToolCallResult } from "./mcp-gw-client";
+import type { UpstreamMcpToolResult } from "./upstream-http-client";
 
 type McpGwGitHubCall = {
   name: string;
@@ -265,7 +266,7 @@ export function mcpGwGitHubToolResult(
       mcpGw: true,
       toolName: resultToolName(plan),
       burbleToolName: plan.burbleToolName,
-      result: result.result,
+      result: compactGitHubSearchResult(plan, result.result),
     },
   };
 }
@@ -459,6 +460,153 @@ function resultToolName(plan: McpGwGitHubToolPlan): string {
   if (plan.kind === "call") return plan.call.name;
   if (plan.kind === "labels") return "github_issue_write";
   return "github_create_or_update_file";
+}
+
+function compactGitHubSearchResult(
+  plan: McpGwGitHubToolPlan,
+  result: UpstreamMcpToolResult,
+): typeof result {
+  if (
+    plan.kind !== "call" ||
+    !isGitHubSearchToolName(plan.call.name)
+  ) {
+    return result;
+  }
+
+  return {
+    ...result,
+    content: (result.content ?? []).map((item) => compactSearchContentItem(item)),
+  };
+}
+
+function isGitHubSearchToolName(name: string): boolean {
+  return (
+    name === "search_issues" ||
+    name === "search_pull_requests" ||
+    name === "github_search_issues" ||
+    name === "github_search_pull_requests" ||
+    name.endsWith("_github_search_issues") ||
+    name.endsWith("_github_search_pull_requests")
+  );
+}
+
+function compactSearchContentItem(item: unknown): unknown {
+  if (!isRecord(item) || typeof item.text !== "string") return item;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(item.text) as unknown;
+  } catch {
+    return item;
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.items)) return item;
+
+  return {
+    ...item,
+    text: JSON.stringify({
+      ...(typeof parsed.total_count === "number"
+        ? { total_count: parsed.total_count }
+        : {}),
+      ...(typeof parsed.incomplete_results === "boolean"
+        ? { incomplete_results: parsed.incomplete_results }
+        : {}),
+      items: parsed.items.flatMap((candidate) => {
+        const compacted = compactSearchItem(candidate);
+        return compacted ? [compacted] : [];
+      }),
+    }),
+  };
+}
+
+function compactSearchItem(
+  candidate: unknown,
+): Record<string, unknown> | null {
+  if (!isRecord(candidate)) return null;
+
+  const repository = readSearchRepository(candidate);
+  const number = candidate.number;
+  const title = candidate.title;
+  const state = candidate.state;
+  const htmlUrl = candidate.html_url;
+  if (
+    typeof number !== "number" ||
+    !Number.isFinite(number) ||
+    typeof title !== "string" ||
+    typeof state !== "string" ||
+    typeof htmlUrl !== "string" ||
+    !repository
+  ) {
+    return null;
+  }
+
+  return {
+    number,
+    state,
+    title,
+    html_url: htmlUrl,
+    repository,
+    ...booleanField(candidate, "draft"),
+    ...stringField(candidate, "created_at"),
+    ...stringField(candidate, "updated_at"),
+    ...(candidate.closed_at === null
+      ? { closed_at: null }
+      : stringField(candidate, "closed_at")),
+    ...numberField(candidate, "comments"),
+    ...(isRecord(candidate.user) && typeof candidate.user.login === "string"
+      ? { author: candidate.user.login }
+      : {}),
+    labels: readSearchLabels(candidate.labels),
+  };
+}
+
+function readSearchRepository(candidate: Record<string, unknown>): string | null {
+  if (typeof candidate.repository_url === "string") {
+    const match = candidate.repository_url.match(
+      /^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/?$/i,
+    );
+    if (match) return `${match[1]}/${match[2]}`;
+  }
+  if (typeof candidate.html_url === "string") {
+    const match = candidate.html_url.match(
+      /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/(?:issues|pull)\/\d+\/?$/i,
+    );
+    if (match) return `${match[1]}/${match[2]}`;
+  }
+  return null;
+}
+
+function readSearchLabels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((label) => {
+    if (typeof label === "string" && label.trim()) return [label.trim()];
+    if (isRecord(label) && typeof label.name === "string" && label.name.trim()) {
+      return [label.name.trim()];
+    }
+    return [];
+  });
+}
+
+function stringField(
+  value: Record<string, unknown>,
+  key: string,
+): Record<string, string> {
+  return typeof value[key] === "string" ? { [key]: value[key] } : {};
+}
+
+function numberField(
+  value: Record<string, unknown>,
+  key: string,
+): Record<string, number> {
+  return typeof value[key] === "number" && Number.isFinite(value[key])
+    ? { [key]: value[key] }
+    : {};
+}
+
+function booleanField(
+  value: Record<string, unknown>,
+  key: string,
+): Record<string, boolean> {
+  return typeof value[key] === "boolean" ? { [key]: value[key] } : {};
 }
 
 function readMcpToolResultText(result: { content?: unknown[] }): string {
