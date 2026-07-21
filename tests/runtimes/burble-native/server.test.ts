@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { parseRuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
-import { handleRuntimeRequest as handleRuntimeRequestRaw } from "../../../runtimes/burble-native/src/server";
+import {
+  DEFAULT_TURN_TIMEOUT_MS,
+  handleRuntimeRequest as handleRuntimeRequestRaw
+} from "../../../runtimes/burble-native/src/server";
 import { createBurbleNativeToolExecutor } from "../../../runtimes/burble-native/src/tools";
 
 const runtimeToken = "runtime-token";
@@ -31,6 +34,11 @@ function withRuntimeAuthorization(request: Request, token: string): Request {
 }
 
 describe("Burble Native runtime server", () => {
+  test("keeps its default turn deadline below the managed runtime watchdog", () => {
+    expect(DEFAULT_TURN_TIMEOUT_MS).toBe(150_000);
+    expect(DEFAULT_TURN_TIMEOUT_MS).toBeLessThan(180_000);
+  });
+
   test("requires runtime bearer auth for run endpoints", async () => {
     const response = await handleRuntimeRequestRaw(
       new Request("http://runtime/runs", {
@@ -1911,6 +1919,7 @@ describe("Burble Native runtime server", () => {
 
   test("finishes when response.completed arrives before the SSE transport closes", async () => {
     let streamCancelled = false;
+    const logs: string[] = [];
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {
         method: "POST",
@@ -1927,6 +1936,7 @@ describe("Burble Native runtime server", () => {
           BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "50",
           BURBLE_NATIVE_PROVIDER_MAX_ATTEMPTS: "1"
         },
+        logInfo: (message) => logs.push(message),
         fetch: async () =>
           new Response(
             new ReadableStream<Uint8Array>({
@@ -1980,6 +1990,17 @@ describe("Burble Native runtime server", () => {
       }
     ]);
     expect(streamCancelled).toBe(true);
+    expect(logs).toEqual([
+      expect.stringMatching(
+        /event=request_started attempt=1 timeoutMs=50$/
+      ),
+      expect.stringMatching(
+        /event=terminal_received attempt=1 elapsedMs=\d+ terminalType=response\.completed$/
+      ),
+      expect.stringMatching(
+        /event=stream_closed attempt=1 elapsedMs=\d+ reason=consumer_stopped$/
+      )
+    ]);
   });
 
   test.each([

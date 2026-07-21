@@ -23,6 +23,7 @@ import type {
 type RuntimeServerContext = {
   env?: Record<string, string | undefined>;
   fetch?: RuntimeFetch;
+  logInfo?: (message: string) => void;
 };
 
 type RuntimeRequestOptions = RuntimeServerContext;
@@ -40,7 +41,7 @@ type OpenAiFunctionToolCall = {
 const DEFAULT_PROVIDER_TIMEOUT_MS = 120_000;
 const MIN_PROVIDER_TIMEOUT_MS = 1;
 const MAX_PROVIDER_TIMEOUT_MS = 10 * 60_000;
-const DEFAULT_TURN_TIMEOUT_MS = 180_000;
+export const DEFAULT_TURN_TIMEOUT_MS = 150_000;
 const MIN_TURN_TIMEOUT_MS = 1;
 const MAX_TURN_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_PROVIDER_MAX_ATTEMPTS = 3;
@@ -443,7 +444,8 @@ async function collectOpenAiTurn(
         input,
         request,
         context,
-        turnDeadline
+        turnDeadline,
+        attempt + 1
       );
     } catch (error) {
       if (!shouldRetryProviderError(error) || attempt === maxAttempts - 1) {
@@ -462,7 +464,8 @@ async function collectOpenAiTurnAttempt(
   input: string | OpenAiInputItem[],
   request: RunRequest,
   context: RuntimeServerContext,
-  turnDeadline: TurnDeadline
+  turnDeadline: TurnDeadline,
+  attempt: number
 ): Promise<{
   deltas: string[];
   text: string;
@@ -491,6 +494,11 @@ async function collectOpenAiTurnAttempt(
   const timeout = setTimeout(() => {
     abortController.abort(timeoutError);
   }, timeoutMs);
+  const startedAt = Date.now();
+  logNativeProviderLifecycle(context, request, "request_started", {
+    attempt,
+    timeoutMs
+  });
 
   try {
     const response = await requestFetch(responsesUrl, {
@@ -519,7 +527,13 @@ async function collectOpenAiTurnAttempt(
     let completed = false;
     for await (const payload of readSseJsonPayloads(
       response.body,
-      abortController.signal
+      abortController.signal,
+      (reason) =>
+        logNativeProviderLifecycle(context, request, "stream_closed", {
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+          reason
+        })
     )) {
       throwIfProviderTimedOut(abortController.signal);
       throwIfTurnTimedOut(turnDeadline);
@@ -532,6 +546,11 @@ async function collectOpenAiTurnAttempt(
         continue;
       }
       if (type === "response.completed") {
+        logNativeProviderLifecycle(context, request, "terminal_received", {
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+          terminalType: type
+        });
         completed = true;
         const responsePayload = readRecord(payload, "response");
         completedText = extractOpenAiText(responsePayload) ?? completedText;
@@ -541,6 +560,11 @@ async function collectOpenAiTurnAttempt(
         break;
       }
       if (type === "response.failed" || type === "response.incomplete") {
+        logNativeProviderLifecycle(context, request, "terminal_received", {
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+          terminalType: type
+        });
         throw new ProviderTerminalResponseError(
           type,
           readProviderTerminalDetail(payload, type)
@@ -571,6 +595,20 @@ async function collectOpenAiTurnAttempt(
       // Ignore abort failures after the provider stream has already completed.
     }
   }
+}
+
+function logNativeProviderLifecycle(
+  context: RuntimeServerContext,
+  request: RunRequest,
+  event: "request_started" | "terminal_received" | "stream_closed",
+  fields: Record<string, string | number>
+): void {
+  const details = Object.entries(fields)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(" ");
+  context.logInfo?.(
+    `Burble Native provider lifecycle runId=${request.runId} event=${event}${details ? ` ${details}` : ""}`
+  );
 }
 
 async function executeBurbleProviderToolForModel(
@@ -1119,7 +1157,8 @@ function truncateForPrompt(value: string, maxLength: number): string {
 
 async function* readSseJsonPayloads(
   body: ReadableStream<Uint8Array>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  onClose?: (reason: "eof" | "aborted" | "consumer_stopped") => void
 ): AsyncIterable<Record<string, unknown>> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -1148,14 +1187,20 @@ async function* readSseJsonPayloads(
       yield payload;
     }
   } finally {
+    const closeReason = reachedEof
+      ? "eof"
+      : signal.aborted
+        ? "aborted"
+        : "consumer_stopped";
     if (!reachedEof) {
       try {
-        await reader.cancel("terminal SSE event received");
+        void reader.cancel("terminal SSE event received").catch(() => {});
       } catch {
         // A terminal protocol event is authoritative even if transport cleanup fails.
       }
     }
     reader.releaseLock();
+    onClose?.(closeReason);
   }
 }
 
