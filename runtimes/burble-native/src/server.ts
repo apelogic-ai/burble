@@ -538,6 +538,13 @@ async function collectOpenAiTurnAttempt(
         completedUsage = normalizeOpenAiUsage(readRecord(responsePayload, "usage"));
         outputItems = readOpenAiOutputItems(responsePayload);
         toolCalls = outputItems.flatMap(readOpenAiFunctionToolCall);
+        break;
+      }
+      if (type === "response.failed" || type === "response.incomplete") {
+        throw new ProviderTerminalResponseError(
+          type,
+          readProviderTerminalDetail(payload, type)
+        );
       }
     }
 
@@ -765,6 +772,32 @@ class ProviderStreamIncompleteError extends Error {
   constructor() {
     super("OpenAI Responses API stream ended before response.completed");
   }
+}
+
+class ProviderTerminalResponseError extends Error {
+  constructor(
+    readonly eventType: "response.failed" | "response.incomplete",
+    detail: string
+  ) {
+    super(`OpenAI Responses API ${eventType}: ${detail}`);
+  }
+}
+
+function readProviderTerminalDetail(
+  payload: Record<string, unknown>,
+  eventType: "response.failed" | "response.incomplete"
+): string {
+  const responsePayload = readRecord(payload, "response");
+  if (eventType === "response.failed") {
+    const error = readRecord(responsePayload, "error") ?? readRecord(payload, "error");
+    return sanitizeToolErrorMessage(readString(error, "message") ?? "unknown error");
+  }
+  const incompleteDetails =
+    readRecord(responsePayload, "incomplete_details") ??
+    readRecord(payload, "incomplete_details");
+  return sanitizeToolErrorMessage(
+    readString(incompleteDetails, "reason") ?? "unknown reason"
+  );
 }
 
 function shouldRetryProviderError(error: unknown): boolean {
@@ -1091,25 +1124,38 @@ async function* readSseJsonPayloads(
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  while (true) {
-    const { value, done } = await readStreamChunkWithAbort(reader, signal);
-    if (done) {
-      break;
-    }
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split(/\r?\n\r?\n/);
-    buffer = parts.pop() ?? "";
-    for (const part of parts) {
-      const payload = parseSseJsonPayload(part);
-      if (payload) {
-        yield payload;
+  let reachedEof = false;
+  try {
+    while (true) {
+      const { value, done } = await readStreamChunkWithAbort(reader, signal);
+      if (done) {
+        reachedEof = true;
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split(/\r?\n\r?\n/);
+      buffer = parts.pop() ?? "";
+      for (const part of parts) {
+        const payload = parseSseJsonPayload(part);
+        if (payload) {
+          yield payload;
+        }
       }
     }
-  }
-  buffer += decoder.decode();
-  const payload = parseSseJsonPayload(buffer);
-  if (payload) {
-    yield payload;
+    buffer += decoder.decode();
+    const payload = parseSseJsonPayload(buffer);
+    if (payload) {
+      yield payload;
+    }
+  } finally {
+    if (!reachedEof) {
+      try {
+        await reader.cancel("terminal SSE event received");
+      } catch {
+        // A terminal protocol event is authoritative even if transport cleanup fails.
+      }
+    }
+    reader.releaseLock();
   }
 }
 

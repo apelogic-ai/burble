@@ -1909,6 +1909,140 @@ describe("Burble Native runtime server", () => {
     ]);
   });
 
+  test("finishes when response.completed arrives before the SSE transport closes", async () => {
+    let streamCancelled = false;
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("hello"))
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "50",
+          BURBLE_NATIVE_PROVIDER_MAX_ATTEMPTS: "1"
+        },
+        fetch: async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    sseEvent({
+                      type: "response.completed",
+                      response: {
+                        output_text: "Completed before EOF.",
+                        usage: {
+                          input_tokens: 7,
+                          output_tokens: 3,
+                          total_tokens: 10
+                        }
+                      }
+                    })
+                  )
+                );
+              },
+              cancel() {
+                streamCancelled = true;
+              }
+            }),
+            { headers: { "content-type": "text/event-stream" } }
+          )
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    ).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      { type: "message_delta", text: "Completed before EOF." },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Completed before EOF.",
+          usage: {
+            inputTokens: 7,
+            outputTokens: 3,
+            totalTokens: 10,
+            usageSource: "provider-output"
+          }
+        }
+      }
+    ]);
+    expect(streamCancelled).toBe(true);
+  });
+
+  test.each([
+    ["response.failed", "Provider rejected the response."],
+    ["response.incomplete", "max_output_tokens"]
+  ])("stops on terminal %s events", async (eventType, detail) => {
+    let streamCancelled = false;
+    const terminalResponse =
+      eventType === "response.failed"
+        ? { error: { message: detail } }
+        : { incomplete_details: { reason: detail } };
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("hello"))
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "50",
+          BURBLE_NATIVE_PROVIDER_MAX_ATTEMPTS: "1"
+        },
+        fetch: async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    sseEvent({ type: eventType, response: terminalResponse })
+                  )
+                );
+              },
+              cancel() {
+                streamCancelled = true;
+              }
+            }),
+            { headers: { "content-type": "text/event-stream" } }
+          )
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toHaveLength(2);
+    expect(events[0]).toEqual({
+      type: "status",
+      text: "Burble Native accepted the turn."
+    });
+    expect(events[1]).toMatchObject({
+      type: "error",
+      message: expect.stringContaining(detail)
+    });
+    expect(streamCancelled).toBe(true);
+  });
+
   test("executes tools through the Burble tool gateway with runtime auth", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const executeTool = createBurbleNativeToolExecutor({
