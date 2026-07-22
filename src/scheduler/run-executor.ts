@@ -1479,6 +1479,24 @@ export function validateScheduledRunToolEvidence(input: {
     (event): event is Extract<AgentRunEvent, { type: "tool_result" }> =>
       event.type === "tool_result" && event.status !== "error",
   );
+  const calls = new Map(
+    input.events.flatMap((event) =>
+      event.type === "tool_call" ? [[event.callId, event.toolName] as const] : [],
+    ),
+  );
+  for (const event of input.events) {
+    if (event.type !== "tool_result" || event.status !== "error") {
+      continue;
+    }
+    const toolName = calls.get(event.callId) ?? event.toolName;
+    const spec = findProviderToolSpec(toolName);
+    if (spec && spec.risk !== "read") {
+      return {
+        ok: false,
+        reason: `Scheduled run tool ${spec.name} failed before delivery.`,
+      };
+    }
+  }
   const declaredNoChangeOutput = readDeclaredNoChangeOutput(input.prompt);
   const isDeclaredNoChange =
     declaredNoChangeOutput !== null &&
@@ -1500,24 +1518,6 @@ export function validateScheduledRunToolEvidence(input: {
     }
   }
 
-  const calls = new Map(
-    input.events.flatMap((event) =>
-      event.type === "tool_call" ? [[event.callId, event.toolName] as const] : [],
-    ),
-  );
-  for (const event of input.events) {
-    if (event.type !== "tool_result" || event.status !== "error") {
-      continue;
-    }
-    const toolName = calls.get(event.callId) ?? event.toolName;
-    const spec = findProviderToolSpec(toolName);
-    if (spec && spec.risk !== "read") {
-      return {
-        ok: false,
-        reason: `Scheduled run tool ${spec.name} failed before delivery.`,
-      };
-    }
-  }
   return { ok: true };
 }
 
