@@ -5076,6 +5076,55 @@ describe("handleToolGatewayRequest", () => {
     expect(JSON.stringify(observabilityEvents)).not.toContain("runtime-token-u123");
   });
 
+  test("classifies structured tool errors as failed gateway completions", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "github.searchIssues",
+      request(
+        "github.searchIssues",
+        { input: { query: "org:apelogic-ai is:pr is:open" } },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        observability: {
+          emit: (event) => {
+            observabilityEvents.push(event);
+          }
+        },
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => {
+          throw new McpGwProviderConnectionRequiredError("github");
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(observabilityEvents[1]).toMatchObject({
+      name: "tool.gateway.completed",
+      toolName: "github.searchIssues",
+      status: "error",
+      error: {
+        code: "github_not_connected",
+        message: expect.stringContaining("GitHub account is not connected")
+      },
+      attributes: {
+        toolErrorCode: "github_not_connected"
+      }
+    });
+  });
+
   test("lets a runtime send to its active conversation without provider credentials", async () => {
     const runtimeEvents: unknown[] = [];
     const response = await handleToolGatewayRequest(

@@ -1,4 +1,5 @@
 import type { Config } from "./config";
+import { readRuntimeToolErrorDiagnostic } from "@burble/runtime-sdk/runtime-contract";
 import type {
   AgentJobCapabilityRecord,
   AgentRuntimeEngine,
@@ -5396,6 +5397,7 @@ function jsonResponseWithAudit(
   result: ToolResult<unknown>,
   observabilityContext?: ToolGatewayObservabilityContext
 ): Response {
+  const toolError = readRuntimeToolErrorDiagnostic(result);
   if (auth.kind === "runtime") {
     store.recordAgentRuntimeEvent({
       runtimeId: auth.runtime.id,
@@ -5403,6 +5405,7 @@ function jsonResponseWithAudit(
       summary: {
         toolName,
         classification: result.classification,
+        ...(toolError ? { status: "error", ...toolError } : {}),
         itemCount: Array.isArray(result.content) ? result.content.length : null
       }
     });
@@ -5456,6 +5459,8 @@ function emitToolGatewayCompleted(
 ): void {
   try {
     const durationMs = context ? Date.now() - context.startedAt : null;
+    const toolError = readRuntimeToolErrorDiagnostic(result);
+    const status = toolError ? "error" : "ok";
     if (auth.kind === "runtime") {
       console.info(
         [
@@ -5465,7 +5470,15 @@ function emitToolGatewayCompleted(
           `toolName=${toolName}`,
           `provider=${readToolProviderForTelemetry(toolName)}`,
           `classification=${result.classification}`,
+          `status=${status}`,
           ...(durationMs !== null ? [`durationMs=${durationMs}`] : []),
+          ...(toolError?.errorCode ? [`code=${toolError.errorCode}`] : []),
+          ...(toolError?.operation
+            ? [`operation=${toolError.operation}`]
+            : []),
+          ...(toolError?.errorMessage
+            ? [`message=${toolError.errorMessage}`]
+            : []),
           `itemCount=${Array.isArray(result.content) ? result.content.length : "null"}`
         ].join(" ")
       );
@@ -5476,12 +5489,27 @@ function emitToolGatewayCompleted(
       toolName,
       classification: result.classification,
       durationMs: durationMs ?? 0,
-      status: "ok",
+      status,
       attributes: {
         authKind: auth.kind,
         provider: readToolProviderForTelemetry(toolName),
+        ...(toolError?.errorCode
+          ? { toolErrorCode: toolError.errorCode }
+          : {}),
+        ...(toolError?.operation
+          ? { toolOperation: toolError.operation }
+          : {}),
         itemCount: Array.isArray(result.content) ? result.content.length : null
-      }
+      },
+      ...(toolError
+        ? {
+            error: {
+              message:
+                toolError.errorMessage ?? "Tool returned a structured error.",
+              ...(toolError.errorCode ? { code: toolError.errorCode } : {})
+            }
+          }
+        : {})
     });
   } catch (emitError) {
     console.warn(
