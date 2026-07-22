@@ -23,6 +23,50 @@ function scheduledJob(prompt: string): ScheduledJobRecord {
 }
 
 describe("scheduled task validation", () => {
+  test("rejects legacy provider grants without resolved expected operations", () => {
+    const validation = validateScheduledTask(
+      {
+        ...scheduledJob("Process the configured external state."),
+        title: "Legacy external-state task",
+      },
+      {
+        expectedTools: null,
+        requiredTools: ["github_search_issues"],
+      },
+    );
+
+    expect(validation).toMatchObject({
+      ok: false,
+      expectedTools: [],
+      errors: [
+        {
+          code: "legacy_execution_contract",
+          message:
+            "This scheduled task uses a legacy capability contract without resolved expected operations. Recreate or re-save the scheduled task before running it.",
+        },
+      ],
+    });
+  });
+
+  test("keeps literal delivery jobs valid without expected operations", () => {
+    const validation = validateScheduledTask(
+      {
+        ...scheduledJob("Post exactly this message: :heart:"),
+        title: "Heart",
+      },
+      {
+        expectedTools: [],
+        requiredTools: ["conversation.sendMessage"],
+      },
+    );
+
+    expect(validation).toMatchObject({
+      ok: true,
+      expectedTools: [],
+      errors: [],
+    });
+  });
+
   test("uses resolved task operations instead of re-inferring discovery from prompt wording", () => {
     const validation = validateScheduledTask(
       scheduledJob(
@@ -196,6 +240,7 @@ describe("scheduled task validation", () => {
         "Find open pull requests in repositories under the apelogic-ai GitHub organization.",
       ),
       {
+        expectedTools: ["github_search_issues"],
         requiredTools: ["github_call_mcp_tool"],
       },
     );
@@ -229,6 +274,7 @@ describe("scheduled task validation", () => {
         "Find open pull requests in repositories under the apelogic-ai GitHub organization.",
       ),
       {
+        expectedTools: ["github_search_issues"],
         requiredTools: ["github_create_issue"],
       },
     );
@@ -237,6 +283,7 @@ describe("scheduled task validation", () => {
         "Find open pull requests in repositories under the apelogic-ai GitHub organization.",
       ),
       {
+        expectedTools: ["github_search_issues"],
         requiredTools: [
           "github_create_issue",
           "github_list_my_pull_requests",
@@ -261,6 +308,7 @@ describe("scheduled task validation", () => {
     const validation = validateScheduledTask(
       scheduledJob("Find the latest AI news on the web."),
       {
+        expectedTools: ["web_search"],
         requiredTools: ["github_call_mcp_tool"],
       },
     );

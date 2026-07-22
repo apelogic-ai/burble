@@ -266,6 +266,59 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("fails legacy execution contracts before invoking the runtime", async () => {
+    const store = createTokenStore(":memory:");
+    const job = store.upsertScheduledJob({
+      jobId: "job-legacy-provider",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Legacy provider task",
+      prompt: "Review open pull requests.",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      runtimeType: "burble-native",
+      state: "scheduled",
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      expectedTools: null,
+      requiredTools: ["github_search_issues"],
+      runtimeType: "burble-native",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-legacy-provider",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+    });
+    let runnerCalled = false;
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: {
+        name: "test-runner",
+        capabilities: { streaming: true, toolEvents: true, remote: true },
+        async *run() {
+          runnerCalled = true;
+        },
+      },
+      slackClient: { chat: { postMessage: async () => ({}) } },
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(runnerCalled).toBe(false);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "failed",
+      failureReason:
+        "This scheduled task uses a legacy capability contract without resolved expected operations. Recreate or re-save the scheduled task before running it.",
+    });
+
+    store.close();
+  });
+
   test("claims a queued run, executes the job prompt, delivers to the route, and marks success", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();
@@ -940,7 +993,7 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
-  test("manual workflow authority records validation failures in the driver", async () => {
+  test("manual workflow authority records legacy contract failures in the driver", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();
     const route = store.upsertConversationRoute({
@@ -1008,7 +1061,7 @@ describe("scheduler run executor", () => {
     expect(store.getAgentJobRun(run.runId)).toMatchObject({
       status: "failed",
       failureReason: expect.stringContaining(
-        "missing_required_tool: Task requires github_search_issues",
+        "This scheduled task uses a legacy capability contract without resolved expected operations",
       ),
     });
     expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
@@ -1051,6 +1104,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: [],
       requiredTools: ["github_search_issues", "slack_search_messages"],
       routeId: route.id,
       runtimeType: "openclaw",
@@ -1160,6 +1214,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: [
         "github_search_issues",
         "slack_search_messages",
@@ -1611,6 +1666,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: [],
       requiredTools: ["google_get_drive_file", "google_search_drive_files"],
       routeId: route.id,
       runtimeType: "hermes",
@@ -2245,6 +2301,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: [],
       requiredTools: ["web_search", "slack_search_messages"],
       routeId: route.id,
       runtimeType: "openclaw",
@@ -2358,6 +2415,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["google_create_drive_text_file"],
       requiredTools: ["web_search", "google_create_drive_text_file"],
       routeId: route.id,
       runtimeType: "openclaw",
@@ -2445,6 +2503,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: ["github_search_issues", "conversation.sendMessage"],
       routeId: route.id,
       runtimeType: "openclaw",
@@ -2552,6 +2611,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["google_create_drive_text_file"],
       requiredTools: ["google_create_drive_text_file"],
       routeId: route.id,
       runtimeType: "hermes",

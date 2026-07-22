@@ -655,8 +655,10 @@ export function createSchedulerControlPlane(
         );
         if (!capability) {
           ensureScheduledJobCapability(store, record, timestamp);
+          const inferredTools = inferAllowedToolsForScheduledJob(record);
           capability = {
-            requiredTools: inferAllowedToolsForScheduledJob(record),
+            requiredTools: inferredTools,
+            expectedTools: inferredTools,
           };
         }
         const validation = validateScheduledTask(record, capability);
@@ -1171,12 +1173,13 @@ function ensureScheduledJobCapability(
   job: ScheduledJobRecord,
   now: Date,
 ): void {
+  const inferredTools = inferAllowedToolsForScheduledJob(job);
   store.upsertAgentJobCapability({
     jobId: job.jobId,
     workspaceId: job.workspaceId,
     slackUserId: job.slackUserId,
-    requiredTools: inferAllowedToolsForScheduledJob(job),
-    expectedTools: null,
+    requiredTools: inferredTools,
+    expectedTools: inferredTools,
     routeId: job.routeId,
     runtimeType: job.runtimeType,
     capabilityProfile: "scheduled_job",
@@ -1225,7 +1228,7 @@ function resolveScheduledJobCapability(
     ? [...new Set(capability.expectedTools ?? capability.requiredTools)].sort()
     : options.preserveExistingRequiredTools
       ? (existing?.expectedTools ?? null)
-      : null;
+      : requiredTools;
   return {
     jobId: job.jobId,
     workspaceId: job.workspaceId,

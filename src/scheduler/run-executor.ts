@@ -51,7 +51,10 @@ import {
 } from "../workflow/task-workflow-driver";
 import type { TaskWorkflowEventStore } from "../workflow/task-workflow-store";
 import { markdownToSlackMrkdwn } from "../slack-mrkdwn";
-import { validateScheduledTask } from "./task-validation";
+import {
+  legacyScheduledTaskContractIssue,
+  validateScheduledTask,
+} from "./task-validation";
 import { formatScheduledTaskValidationFailureReason } from "./task-validation-format";
 import { AsyncKeyedLock } from "../async-keyed-lock";
 
@@ -400,6 +403,11 @@ function prepareScheduledRunExecution(
   const job = preloadedJob ?? store.getScheduledJob(run.jobId);
   if (!job) {
     throw new Error("Scheduled job not found");
+  }
+  const capability = store.getAgentJobCapability(job.jobId);
+  const legacyContractIssue = legacyScheduledTaskContractIssue(job, capability);
+  if (legacyContractIssue) {
+    throw new Error(legacyContractIssue.message);
   }
   const route = job.routeId ? store.getConversationRoute(job.routeId) : null;
   const destination = route ? readSlackRouteDestination(route) : null;
