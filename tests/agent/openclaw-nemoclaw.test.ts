@@ -4,6 +4,7 @@ import { parseRuntimeRunRequest } from "@burble/runtime-sdk/runtime-contract";
 import type { RuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
 import type { RuntimeManifest } from "../../src/agent/runtime-manifest";
 import { collectAgentRun } from "../../src/agent/types";
+import type { AgentRunEvent } from "../../src/agent/types";
 import type { ProviderConnection } from "../../src/db";
 import type { ObservabilityEventInput } from "../../src/observability";
 
@@ -1368,6 +1369,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
   test("recovers a committed run snapshot when an HTTP event stream times out", async () => {
     const calls: string[] = [];
     const logs: string[] = [];
+    const events: AgentRunEvent[] = [];
     const encoder = new TextEncoder();
     const runner = createOpenClawNemoClawAgentRunner({
       baseUrl: "http://openclaw-runtime:8080",
@@ -1388,7 +1390,11 @@ describe("createOpenClawNemoClawAgentRunner", () => {
               start(controller) {
                 controller.enqueue(
                   encoder.encode(
-                    `${JSON.stringify({ type: "status", text: "Still working..." })}\n`
+                    `${JSON.stringify({ type: "status", text: "Still working..." })}\n${JSON.stringify({
+                      type: "tool_call",
+                      toolName: "google.updateDriveTextFile",
+                      callId: "replace-state"
+                    })}\n`
                   )
                 );
               }
@@ -1405,7 +1411,32 @@ describe("createOpenClawNemoClawAgentRunner", () => {
             response: {
               classification: "user_private",
               text: "Recovered final answer"
-            }
+            },
+            events: [
+              {
+                type: "status",
+                text: "Still working..."
+              },
+              {
+                type: "tool_call",
+                toolName: "google.updateDriveTextFile",
+                callId: "replace-state"
+              },
+              {
+                type: "tool_result",
+                toolName: "google.updateDriveTextFile",
+                callId: "replace-state",
+                classification: "user_private",
+                status: "ok"
+              },
+              {
+                type: "final",
+                response: {
+                  classification: "user_private",
+                  text: "Recovered final answer"
+                }
+              }
+            ]
           });
         }
         throw new Error(`Unexpected request ${url}`);
@@ -1413,12 +1444,18 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
 
     await expect(
-      collectAgentRun(runner, {
-        principal,
-        conversation,
-        text: "summarize my GitHub work",
-        connections: { github: connection }
-      })
+      collectAgentRun(
+        runner,
+        {
+          principal,
+          conversation,
+          text: "summarize my GitHub work",
+          connections: { github: connection }
+        },
+        (event) => {
+          events.push(event);
+        }
+      )
     ).resolves.toEqual({
       classification: "user_private",
       text: "Recovered final answer"
@@ -1430,6 +1467,24 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(logs).toContainEqual(
       expect.stringContaining("Managed runtime final snapshot recovered")
     );
+    expect(events).toContainEqual({
+      type: "tool_call",
+      toolName: "google.updateDriveTextFile",
+      callId: "replace-state"
+    });
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "tool_call" && event.callId === "replace-state"
+      )
+    ).toHaveLength(1);
+    expect(events).toContainEqual({
+      type: "tool_result",
+      toolName: "google.updateDriveTextFile",
+      callId: "replace-state",
+      classification: "user_private",
+      status: "ok"
+    });
   });
 
   test("stops managed runtimes after final response timeouts", async () => {

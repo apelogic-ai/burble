@@ -101,6 +101,11 @@ type RemoteRunResponse = {
   response?: AgentOutput;
 };
 
+type RecoveredRuntimeSnapshot = {
+  output: AgentOutput;
+  toolEvents: AgentRunEvent[];
+};
+
 type RemoteRunStartResponse = {
   runId?: string;
   eventsUrl?: string;
@@ -435,7 +440,12 @@ export function createManagedRuntimeAdapter(
           },
         });
 
+        const observedToolEventKeys = new Set<string>();
         const observeEvent = (event: AgentRunEvent) => {
+          const eventKey = runtimeToolEventKey(event);
+          if (eventKey) {
+            observedToolEventKeys.add(eventKey);
+          }
           const eventDetails =
             event.type === "tool_call"
               ? [
@@ -492,7 +502,15 @@ export function createManagedRuntimeAdapter(
             if (!recovered) {
               throw error;
             }
-            agentResponse = recovered;
+            for (const event of recovered.toolEvents) {
+              const eventKey = runtimeToolEventKey(event);
+              if (eventKey && observedToolEventKeys.has(eventKey)) {
+                continue;
+              }
+              observeEvent(event);
+              yield event;
+            }
+            agentResponse = recovered.output;
           }
         } else {
           const startPayload = (await response.json()) as RemoteRunResponse &
@@ -1042,14 +1060,14 @@ async function recoverRuntimeSnapshotAfterStreamTimeout(input: {
   runId: string;
   timeoutMs: number;
   logInfo: (message: string) => void;
-}): Promise<AgentOutput | null> {
+}): Promise<RecoveredRuntimeSnapshot | null> {
   const controller = new AbortController();
   let response: Response | null = null;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const recovery = (async (): Promise<{
       status: number;
-      output: AgentOutput | null;
+      snapshot: RecoveredRuntimeSnapshot | null;
     }> => {
       response = await getRuntimeRun(
         input.requestFetch,
@@ -1058,17 +1076,17 @@ async function recoverRuntimeSnapshotAfterStreamTimeout(input: {
         controller.signal,
       );
       if (!response.ok) {
-        return { status: response.status, output: null };
+        return { status: response.status, snapshot: null };
       }
       return {
         status: response.status,
-        output: await readJsonRunResponse(response),
+        snapshot: await readJsonRunSnapshot(response),
       };
     })();
     recovery.catch(() => undefined);
     const timedOut = new Promise<{
       status: number;
-      output: AgentOutput | null;
+      snapshot: RecoveredRuntimeSnapshot | null;
     }>((_, reject) => {
       timeout = setTimeout(() => {
         controller.abort();
@@ -1092,7 +1110,7 @@ async function recoverRuntimeSnapshotAfterStreamTimeout(input: {
       );
       return null;
     }
-    const recovered = snapshot.output;
+    const recovered = snapshot.snapshot;
     if (!recovered) {
       input.logInfo(
         [
@@ -1336,6 +1354,33 @@ async function readJsonRunResponse(
 ): Promise<AgentOutput | null> {
   const payload = (await response.json()) as RemoteRunResponse;
   return validateRemoteRunResponse(payload);
+}
+
+async function readJsonRunSnapshot(
+  response: Response,
+): Promise<RecoveredRuntimeSnapshot | null> {
+  const payload = (await response.json()) as RemoteRunResponse & {
+    events?: unknown;
+  };
+  const output = validateRemoteRunResponse(payload);
+  if (!output) {
+    return null;
+  }
+  const toolEvents = Array.isArray(payload.events)
+    ? payload.events
+        .map(validateRemoteRunEvent)
+        .filter(
+          (event): event is AgentRunEvent =>
+            event?.type === "tool_call" || event?.type === "tool_result",
+        )
+    : [];
+  return { output, toolEvents };
+}
+
+function runtimeToolEventKey(event: AgentRunEvent): string | null {
+  return event.type === "tool_call" || event.type === "tool_result"
+    ? `${event.type}:${event.toolName}:${event.callId}`
+    : null;
 }
 
 function assertManagedRuntimeFinalResponse(response: AgentOutput): void {
