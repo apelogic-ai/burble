@@ -507,13 +507,14 @@ async function executeScheduledRunAttempt(input: {
   logWarn?: (message: string) => void;
 }): Promise<ScheduledRunAttemptResult> {
   assertScheduledRunDestinationAvailable(input.executionContext);
+  const agentInput = buildScheduledRunAgentInput({
+    store: input.store,
+    run: input.run,
+    executionContext: input.executionContext,
+  });
   const collected = await collectScheduledAgentRunWithProgressRetry({
     runner: input.runner,
-    agentInput: buildScheduledRunAgentInput({
-      store: input.store,
-      run: input.run,
-      executionContext: input.executionContext,
-    }),
+    agentInput,
     job: input.executionContext.job,
     scheduledJobContext: input.executionContext.scheduledJobContext,
     scheduledRuntimeRetryDelayMs: input.scheduledRuntimeRetryDelayMs,
@@ -531,6 +532,44 @@ async function executeScheduledRunAttempt(input: {
     outputText: output.text,
   });
   if (!evidence.ok) {
+    if (canRepairMissingScheduledOperations(evidence, collected.events)) {
+      input.logWarn?.(
+        `Scheduled run retrying omitted required operations runId=${input.run.runId} reason=${evidence.reason}`,
+      );
+      const repaired = await collectScheduledAgentRunWithProgressRetry({
+        runner: input.runner,
+        agentInput: {
+          ...agentInput,
+          text: scheduledExecutionContractRepairPrompt(
+            agentInput.text,
+            evidence.reason,
+          ),
+        },
+        job: input.executionContext.job,
+        scheduledJobContext: input.executionContext.scheduledJobContext,
+        scheduledRuntimeRetryDelayMs: input.scheduledRuntimeRetryDelayMs,
+        scheduledRuntimeRetrySleep: input.scheduledRuntimeRetrySleep,
+        logWarn: input.logWarn,
+      });
+      const repairedOutput = validateScheduledJobOutput(repaired.output);
+      if (!repairedOutput.ok) {
+        throw new Error(repairedOutput.reason);
+      }
+      const repairedEvidence = validateScheduledRunToolEvidence({
+        requiredTools: input.executionContext.requiredExecutionTools,
+        events: repaired.events,
+        prompt: input.executionContext.job.prompt,
+        outputText: repairedOutput.text,
+      });
+      if (!repairedEvidence.ok) {
+        throw new Error(repairedEvidence.reason);
+      }
+      return {
+        text: repairedOutput.text,
+        output: repaired.output,
+        events: repaired.events,
+      };
+    }
     throw new Error(evidence.reason);
   }
   return {
@@ -538,6 +577,38 @@ async function executeScheduledRunAttempt(input: {
     output: collected.output,
     events: collected.events,
   };
+}
+
+function canRepairMissingScheduledOperations(
+  evidence: { ok: true } | { ok: false; reason: string },
+  events: readonly AgentRunEvent[],
+): boolean {
+  return (
+    !evidence.ok &&
+    evidence.reason.startsWith(
+      "Scheduled run did not complete required tool ",
+    ) &&
+    !events.some((event) => {
+      if (event.type !== "tool_result" || event.status === "error") {
+        return false;
+      }
+      const spec = findProviderToolSpec(event.toolName);
+      return spec?.risk !== "read";
+    })
+  );
+}
+
+function scheduledExecutionContractRepairPrompt(
+  originalPrompt: string,
+  reason: string,
+): string {
+  return [
+    originalPrompt,
+    "",
+    "Execution contract repair:",
+    `The previous attempt was not delivered because: ${reason}`,
+    "Restart from current provider state. Complete every required operation before returning the final answer. Do not claim an operation succeeded unless its tool result succeeded.",
+  ].join("\n");
 }
 
 async function postScheduledRunOutput(input: {

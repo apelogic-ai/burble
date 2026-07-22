@@ -450,6 +450,139 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("repairs an omitted required operation before delivery", async () => {
+    const store = createTokenStore(":memory:");
+    const principal = { workspaceId: "T123", slackUserId: "U123" };
+    const route = store.upsertConversationRoute({
+      ...principal,
+      transport: "slack",
+      destination: {
+        channelId: "D123",
+        isDirectMessage: true,
+        rootId: "dm:D123",
+      },
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-stateful-report",
+      ...principal,
+      title: "Stateful report",
+      prompt: [
+        "Read the bound state and report new records.",
+        "Persist every newly reported record before reporting it.",
+        "If no new records remain, say exactly: no new records",
+      ].join("\n"),
+      schedule: { kind: "interval", every: { hours: 1 } },
+      routeId: route.id,
+      runtimeType: "burble-native",
+      state: "scheduled",
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      ...principal,
+      expectedTools: [
+        "google_get_drive_file",
+        "google_append_to_drive_text_file",
+      ],
+      requiredTools: [
+        "google_get_drive_file",
+        "google_append_to_drive_text_file",
+      ],
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "drive_text_file",
+          id: "state-file-123",
+        },
+      ],
+      routeId: route.id,
+      runtimeType: "burble-native",
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: principal.slackUserId,
+      providerLogin: "person@example.com",
+      accessToken: "google-token",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-stateful-report",
+      jobId: job.jobId,
+      ...principal,
+      triggerSource: "manual",
+      status: "queued",
+    });
+    const runnerInputs: Array<{ text: string }> = [];
+    let attempts = 0;
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: { streaming: true, toolEvents: true, remote: true },
+      async *run(input) {
+        attempts += 1;
+        runnerInputs.push(input);
+        yield {
+          type: "tool_call",
+          toolName: "google.getDriveFile",
+          callId: `read-${attempts}`,
+          input: { fileId: "state-file-123" },
+        };
+        yield {
+          type: "tool_result",
+          toolName: "google.getDriveFile",
+          callId: `read-${attempts}`,
+          classification: "user_private",
+          status: "ok",
+        };
+        if (attempts === 2) {
+          yield {
+            type: "tool_call",
+            toolName: "google.appendDriveTextFile",
+            callId: "write-2",
+            input: { fileId: "state-file-123", text: "record-a" },
+          };
+          yield {
+            type: "tool_result",
+            toolName: "google.appendDriveTextFile",
+            callId: "write-2",
+            classification: "user_private",
+            status: "ok",
+          };
+        }
+        yield {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "record-a",
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string }> = [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(attempts).toBe(2);
+    expect(runnerInputs[1].text).toContain("Execution contract repair");
+    expect(runnerInputs[1].text).toContain(
+      "Scheduled run did not complete required tool google_append_to_drive_text_file.",
+    );
+    expect(posts).toEqual([{ channel: "D123", text: "record-a" }]);
+    expect(store.getAgentJobRun(run.runId)?.status).toBe("succeeded");
+
+    store.close();
+  });
+
   test("keeps scheduled run audit core fields when telemetry is not JSON-serializable", async () => {
     const store = createTokenStore(":memory:");
     const route = store.upsertConversationRoute({
