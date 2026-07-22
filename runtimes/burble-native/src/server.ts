@@ -499,6 +499,7 @@ async function collectOpenAiTurnAttempt(
     attempt,
     timeoutMs
   });
+  const stream = request.input.scheduledJob === undefined;
 
   try {
     const response = await requestFetch(responsesUrl, {
@@ -512,11 +513,32 @@ async function collectOpenAiTurnAttempt(
         model,
         input,
         tools: buildOpenAiTools(request),
-        stream: true
+        stream
       })
     });
-    if (!response.ok || !response.body) {
+    if (!response.ok) {
       throw new ProviderHttpError(response.status);
+    }
+    if (!stream) {
+      const responsePayload: unknown = await response.json();
+      throwIfProviderTimedOut(abortController.signal);
+      throwIfTurnTimedOut(turnDeadline);
+      logNativeProviderLifecycle(context, request, "terminal_received", {
+        attempt,
+        elapsedMs: Date.now() - startedAt,
+        terminalType: "response"
+      });
+      const outputItems = readOpenAiOutputItems(responsePayload);
+      return {
+        deltas: [],
+        text: extractOpenAiText(responsePayload) ?? "",
+        usage: normalizeOpenAiUsage(readRecord(responsePayload, "usage")),
+        outputItems,
+        toolCalls: outputItems.flatMap(readOpenAiFunctionToolCall)
+      };
+    }
+    if (!response.body) {
+      throw new ProviderStreamIncompleteError();
     }
 
     const deltas: string[] = [];

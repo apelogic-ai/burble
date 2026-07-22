@@ -385,6 +385,78 @@ describe("Burble Native runtime server", () => {
     });
   });
 
+  test("uses complete provider responses for scheduled turns", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const request = withScheduledJob(
+      nativeRunRequest("summarize current items"),
+      ["web_search"]
+    );
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(request)
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          return Response.json({
+            output_text: "No new items.",
+            output: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [
+                  { type: "output_text", text: "No new items." }
+                ]
+              }
+            ],
+            usage: {
+              input_tokens: 40,
+              output_tokens: 4,
+              total_tokens: 44
+            }
+          });
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(String(requests[0].init?.body))).toMatchObject({
+      stream: false
+    });
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    ).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      { type: "message_delta", text: "No new items." },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "No new items.",
+          usage: {
+            inputTokens: 40,
+            outputTokens: 4,
+            totalTokens: 44,
+            usageSource: "provider-output"
+          }
+        }
+      }
+    ]);
+  });
+
   test("retries transient OpenAI response failures", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const response = await handleRuntimeRequest(
@@ -856,54 +928,36 @@ describe("Burble Native runtime server", () => {
             request.url.endsWith("/responses")
           ).length;
           if (providerRequestCount === 1) {
-            return new Response(
-              sseEvent({
-                type: "response.completed",
-                response: {
-                  output: [
-                    {
-                      type: "function_call",
-                      call_id: "scheduled_call_1",
-                      name: "burble_provider_call",
-                      arguments: JSON.stringify({
-                        toolName: "github.searchIssues",
-                        input: {
-                          query: "org:apelogic-ai is:pr is:open",
-                          jobId: "model-forged-job"
-                        }
-                      })
+            return Response.json({
+              output: [
+                {
+                  type: "function_call",
+                  call_id: "scheduled_call_1",
+                  name: "burble_provider_call",
+                  arguments: JSON.stringify({
+                    toolName: "github.searchIssues",
+                    input: {
+                      query: "org:apelogic-ai is:pr is:open",
+                      jobId: "model-forged-job"
                     }
-                  ],
-                  usage: {
-                    input_tokens: 100,
-                    output_tokens: 5,
-                    total_tokens: 105
-                  }
+                  })
                 }
-              }),
-              { headers: { "content-type": "text/event-stream" } }
-            );
+              ],
+              usage: {
+                input_tokens: 100,
+                output_tokens: 5,
+                total_tokens: 105
+              }
+            });
           }
-          return new Response(
-            [
-              sseEvent({
-                type: "response.output_text.delta",
-                delta: "Found one pull request."
-              }),
-              sseEvent({
-                type: "response.completed",
-                response: {
-                  output_text: "Found one pull request.",
-                  usage: {
-                    input_tokens: 80,
-                    output_tokens: 6,
-                    total_tokens: 86
-                  }
-                }
-              })
-            ].join(""),
-            { headers: { "content-type": "text/event-stream" } }
-          );
+          return Response.json({
+            output_text: "Found one pull request.",
+            usage: {
+              input_tokens: 80,
+              output_tokens: 6,
+              total_tokens: 86
+            }
+          });
         }
       }
     );
@@ -1176,45 +1230,33 @@ describe("Burble Native runtime server", () => {
             request.url.endsWith("/responses")
           ).length;
           if (providerRequestCount === 1) {
-            return new Response(
-              sseEvent({
-                type: "response.completed",
-                response: {
-                  output: [
-                    {
-                      type: "function_call",
-                      call_id: "scheduled_call_wide",
-                      name: "burble_provider_call",
-                      arguments: JSON.stringify({
-                        toolName: "github.search99",
-                        input: {}
-                      })
-                    }
-                  ],
-                  usage: {
-                    input_tokens: 100,
-                    output_tokens: 5,
-                    total_tokens: 105
-                  }
+            return Response.json({
+              output: [
+                {
+                  type: "function_call",
+                  call_id: "scheduled_call_wide",
+                  name: "burble_provider_call",
+                  arguments: JSON.stringify({
+                    toolName: "github.search99",
+                    input: {}
+                  })
                 }
-              }),
-              { headers: { "content-type": "text/event-stream" } }
-            );
-          }
-          return new Response(
-            sseEvent({
-              type: "response.completed",
-              response: {
-                output_text: "Wide scan complete.",
-                usage: {
-                  input_tokens: 80,
-                  output_tokens: 4,
-                  total_tokens: 84
-                }
+              ],
+              usage: {
+                input_tokens: 100,
+                output_tokens: 5,
+                total_tokens: 105
               }
-            }),
-            { headers: { "content-type": "text/event-stream" } }
-          );
+            });
+          }
+          return Response.json({
+            output_text: "Wide scan complete.",
+            usage: {
+              input_tokens: 80,
+              output_tokens: 4,
+              total_tokens: 84
+            }
+          });
         }
       }
     );
