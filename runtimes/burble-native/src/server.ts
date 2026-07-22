@@ -46,7 +46,9 @@ const MIN_TURN_TIMEOUT_MS = 1;
 const MAX_TURN_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_PROVIDER_MAX_ATTEMPTS = 3;
 const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 250;
-const MAX_TOOL_LOOP_STEPS = 4;
+const DEFAULT_MAX_TOOL_LOOP_STEPS = 8;
+const MIN_TOOL_LOOP_STEPS = 1;
+const MAX_TOOL_LOOP_STEPS = 32;
 const MAX_PROMPT_TOOLS = 24;
 const MAX_MODEL_TOOL_OUTPUT_CHARS = 12_000;
 const TRUNCATED_TOOL_OUTPUT_EDGE_CHARS = 4_000;
@@ -251,6 +253,7 @@ async function* runNativeTurn(
   let usage: RunUsage | undefined;
   let input = buildOpenAiInput(request);
   const turnDeadline = createTurnDeadline(context.env);
+  const maxToolLoopSteps = readMaxToolLoopSteps(context.env);
   let toolCallSteps = 0;
   while (true) {
     const result = await collectOpenAiTurn(input, request, context, turnDeadline);
@@ -263,9 +266,9 @@ async function* runNativeTurn(
       responseText = result.text || responseText;
       break;
     }
-    if (toolCallSteps >= MAX_TOOL_LOOP_STEPS) {
+    if (toolCallSteps >= maxToolLoopSteps) {
       throw new Error(
-        `Burble Native exceeded ${MAX_TOOL_LOOP_STEPS} tool-call steps`
+        `Burble Native exceeded ${maxToolLoopSteps} tool-call steps`
       );
     }
 
@@ -303,8 +306,16 @@ async function* runNativeTurn(
       });
     }
 
-    input = [...asOpenAiInputItems(input), ...result.outputItems, ...toolOutputs];
     toolCallSteps += 1;
+    input = [
+      ...asOpenAiInputItems(input),
+      ...result.outputItems,
+      ...toolOutputs,
+      {
+        role: "developer",
+        content: formatToolLoopBudget(maxToolLoopSteps - toolCallSteps)
+      }
+    ];
   }
   yield {
     type: "final",
@@ -772,6 +783,24 @@ function readProviderRetryBaseDelayMs(
   return Number.isFinite(parsed) && parsed >= 0
     ? Math.floor(parsed)
     : DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;
+}
+
+function readMaxToolLoopSteps(
+  env: Record<string, string | undefined> | undefined
+): number {
+  const raw = readEnv(env, "BURBLE_NATIVE_MAX_TOOL_LOOP_STEPS");
+  if (!raw) {
+    return DEFAULT_MAX_TOOL_LOOP_STEPS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_MAX_TOOL_LOOP_STEPS;
+  }
+  return Math.min(Math.max(parsed, MIN_TOOL_LOOP_STEPS), MAX_TOOL_LOOP_STEPS);
+}
+
+function formatToolLoopBudget(remainingSteps: number): string {
+  return `Burble execution budget: ${remainingSteps} tool-call rounds remain. Complete all required reads and mutations before the final answer. Do not claim an operation succeeded unless its tool result succeeded.`;
 }
 
 function readTurnTimeoutMs(

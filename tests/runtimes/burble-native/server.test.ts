@@ -832,20 +832,25 @@ describe("Burble Native runtime server", () => {
     );
     expect(firstProviderBody.input[0].content).not.toContain("jira.searchIssues");
     expect(firstProviderBody.input[0].content).not.toContain("github.createIssue");
-    expect(JSON.parse(String(providerRequests[1].init?.body))).toMatchObject({
-      input: [
-        { role: "user", content: expect.stringContaining("who am I on GitHub?") },
-        {
-          type: "function_call",
-          call_id: "call_123",
-          name: "burble_provider_call"
-        },
-        {
-          type: "function_call_output",
-          call_id: "call_123",
-          output: expect.stringContaining("octocat")
-        }
-      ]
+    const secondProviderBody = JSON.parse(
+      String(providerRequests[1].init?.body)
+    );
+    expect(secondProviderBody.input.slice(0, 3)).toMatchObject([
+      { role: "user", content: expect.stringContaining("who am I on GitHub?") },
+      {
+        type: "function_call",
+        call_id: "call_123",
+        name: "burble_provider_call"
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_123",
+        output: expect.stringContaining("octocat")
+      }
+    ]);
+    expect(secondProviderBody.input.at(-1)).toMatchObject({
+      role: "developer",
+      content: expect.stringContaining("7 tool-call rounds remain")
     });
     const toolRequest = requests.find((request) =>
       request.url.includes("/github.getAuthenticatedUser/execute")
@@ -999,9 +1004,10 @@ describe("Burble Native runtime server", () => {
     });
   });
 
-  test("allows final synthesis after four tool-call rounds", async () => {
+  test("allows final synthesis beyond four tool-call rounds", async () => {
     let providerRequests = 0;
     let toolRequests = 0;
+    const providerBodies: Array<{ input: Array<{ content?: string }> }> = [];
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {
         method: "POST",
@@ -1010,7 +1016,7 @@ describe("Burble Native runtime server", () => {
           "content-type": "application/json"
         },
         body: JSON.stringify(
-          withRuntimeManifestTools(nativeRunRequest("complete four steps"), [
+          withRuntimeManifestTools(nativeRunRequest("complete five steps"), [
             {
               name: "github_get_authenticated_user",
               alias: "github.getAuthenticatedUser",
@@ -1035,7 +1041,7 @@ describe("Burble Native runtime server", () => {
           BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
           BURBLE_INTERNAL_TOKEN: "runtime-token"
         },
-        fetch: async (url: string) => {
+        fetch: async (url: string, init?: RequestInit) => {
           if (url.includes("/github.getAuthenticatedUser/execute")) {
             toolRequests += 1;
             return Response.json({
@@ -1043,8 +1049,13 @@ describe("Burble Native runtime server", () => {
               content: { login: "octocat" }
             });
           }
+          providerBodies.push(
+            JSON.parse(String(init?.body)) as {
+              input: Array<{ content?: string }>;
+            }
+          );
           providerRequests += 1;
-          if (providerRequests <= 4) {
+          if (providerRequests <= 5) {
             return new Response(
               sseEvent({
                 type: "response.completed",
@@ -1069,11 +1080,11 @@ describe("Burble Native runtime server", () => {
             [
               sseEvent({
                 type: "response.output_text.delta",
-                delta: "Four-step workflow complete."
+                delta: "Five-step workflow complete."
               }),
               sseEvent({
                 type: "response.completed",
-                response: { output_text: "Four-step workflow complete." }
+                response: { output_text: "Five-step workflow complete." }
               })
             ].join(""),
             { headers: { "content-type": "text/event-stream" } }
@@ -1083,9 +1094,12 @@ describe("Burble Native runtime server", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain("Four-step workflow complete.");
-    expect(providerRequests).toBe(5);
-    expect(toolRequests).toBe(4);
+    expect(await response.text()).toContain("Five-step workflow complete.");
+    expect(providerRequests).toBe(6);
+    expect(toolRequests).toBe(5);
+    expect(providerBodies[5].input.at(-1)?.content).toContain(
+      "3 tool-call rounds remain"
+    );
   });
 
   test("rejects a fifth tool-call round without executing it", async () => {
@@ -1122,7 +1136,8 @@ describe("Burble Native runtime server", () => {
           OPENAI_API_KEY: "test-openai-key",
           OPENAI_BASE_URL: "https://openai-compatible.example/v1",
           BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
-          BURBLE_INTERNAL_TOKEN: "runtime-token"
+          BURBLE_INTERNAL_TOKEN: "runtime-token",
+          BURBLE_NATIVE_MAX_TOOL_LOOP_STEPS: "4"
         },
         fetch: async (url: string) => {
           if (url.includes("/github.getAuthenticatedUser/execute")) {
