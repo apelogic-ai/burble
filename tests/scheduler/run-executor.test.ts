@@ -16,6 +16,8 @@ describe("scheduler run executor", () => {
       validateScheduledRunToolEvidence({
         requiredTools: ["github_search_issues"],
         events: [],
+        prompt: "Find new records.",
+        outputText: "Found one new record.",
       }),
     ).toEqual({
       ok: false,
@@ -26,6 +28,8 @@ describe("scheduler run executor", () => {
     expect(
       validateScheduledRunToolEvidence({
         requiredTools: ["github_search_issues"],
+        prompt: "Find new records.",
+        outputText: "Found one new record.",
         events: [
           {
             type: "tool_call",
@@ -46,6 +50,8 @@ describe("scheduler run executor", () => {
     expect(
       validateScheduledRunToolEvidence({
         requiredTools: [],
+        prompt: "Update the state.",
+        outputText: "State updated.",
         events: [
           {
             type: "tool_call",
@@ -66,6 +72,35 @@ describe("scheduler run executor", () => {
       reason:
         "Scheduled run tool google_append_to_drive_text_file failed before delivery.",
     });
+  });
+
+  test("requires expected mutations unless the exact no-change output applies", () => {
+    const task = [
+      "Find new records and persist newly reported records in durable state.",
+      "If no new records remain, say exactly: no new records",
+    ].join("\n");
+
+    expect(
+      validateScheduledRunToolEvidence({
+        requiredTools: ["google_append_to_drive_text_file"],
+        events: [],
+        prompt: task,
+        outputText: "Found one new record.",
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Scheduled run did not complete required tool google_append_to_drive_text_file.",
+    });
+
+    expect(
+      validateScheduledRunToolEvidence({
+        requiredTools: ["google_append_to_drive_text_file"],
+        events: [],
+        prompt: task,
+        outputText: "no new records",
+      }),
+    ).toEqual({ ok: true });
   });
 
   test("uses bounded exponential backoff with jitter for runtime retries", () => {

@@ -21,6 +21,7 @@ import {
 } from "../providers/catalog";
 import {
   formatScheduledJobFailureMessage,
+  readDeclaredNoChangeOutput,
   scheduledTaskRuntimePrompt,
   validateScheduledJobOutput,
 } from "./output-contract";
@@ -519,16 +520,18 @@ async function executeScheduledRunAttempt(input: {
     scheduledRuntimeRetrySleep: input.scheduledRuntimeRetrySleep,
     logWarn: input.logWarn,
   });
-  const evidence = validateScheduledRunToolEvidence({
-    requiredTools: input.executionContext.requiredExecutionTools,
-    events: collected.events,
-  });
-  if (!evidence.ok) {
-    throw new Error(evidence.reason);
-  }
   const output = validateScheduledJobOutput(collected.output);
   if (!output.ok) {
     throw new Error(output.reason);
+  }
+  const evidence = validateScheduledRunToolEvidence({
+    requiredTools: input.executionContext.requiredExecutionTools,
+    events: collected.events,
+    prompt: input.executionContext.job.prompt,
+    outputText: output.text,
+  });
+  if (!evidence.ok) {
+    throw new Error(evidence.reason);
   }
   return {
     text: output.text,
@@ -1390,14 +1393,20 @@ function sanitizeScheduledRunToolEvent(
 export function validateScheduledRunToolEvidence(input: {
   requiredTools: readonly string[];
   events: readonly AgentRunEvent[];
+  prompt: string;
+  outputText: string;
 }): { ok: true } | { ok: false; reason: string } {
   const successfulResults = input.events.filter(
     (event): event is Extract<AgentRunEvent, { type: "tool_result" }> =>
       event.type === "tool_result" && event.status !== "error",
   );
+  const declaredNoChangeOutput = readDeclaredNoChangeOutput(input.prompt);
+  const isDeclaredNoChange =
+    declaredNoChangeOutput !== null &&
+    input.outputText.trim() === declaredNoChangeOutput;
   for (const requiredTool of input.requiredTools) {
     const spec = findProviderToolSpec(requiredTool);
-    if (spec?.risk !== "read") {
+    if (spec?.risk !== "read" && isDeclaredNoChange) {
       continue;
     }
     if (
@@ -1407,7 +1416,7 @@ export function validateScheduledRunToolEvidence(input: {
     ) {
       return {
         ok: false,
-        reason: `Scheduled run did not complete required tool ${spec.name}.`,
+        reason: `Scheduled run did not complete required tool ${spec?.name ?? requiredTool}.`,
       };
     }
   }

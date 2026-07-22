@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   SCHEDULED_JOB_OUTPUT_CONTRACT_PROMPT,
+  readDeclaredNoChangeOutput,
   scheduledTaskRuntimePrompt,
   validateScheduledJobOutput,
 } from "../../src/scheduler/output-contract";
@@ -26,6 +27,24 @@ describe("scheduled job output contract", () => {
     expect(prompt).toContain(SCHEDULED_JOB_OUTPUT_CONTRACT_PROMPT);
     expect(prompt).toContain("literal delivery");
     expect(prompt.endsWith(":heart::heart:")).toBe(true);
+  });
+
+  test("reads generic inline and multiline no-change outputs", () => {
+    expect(
+      readDeclaredNoChangeOutput(
+        "If there are no new records, say exactly: no new records",
+      ),
+    ).toBe("no new records");
+    expect(
+      readDeclaredNoChangeOutput(
+        "If no net-new topics remain, say exactly:\n\nno new topics",
+      ),
+    ).toBe("no new topics");
+    expect(
+      readDeclaredNoChangeOutput(
+        "If the state cannot be read, report the failure instead.",
+      ),
+    ).toBeNull();
   });
 
   test("accepts and trims normal final output", () => {
