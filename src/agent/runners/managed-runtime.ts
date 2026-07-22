@@ -467,12 +467,30 @@ export function createManagedRuntimeAdapter(
         };
 
         if (isStreamingResponse(response)) {
-          agentResponse = yield* readStreamingRunResponse(
-            response,
-            runtimeMessageDeltasEnabled(runtime),
-            observeEvent,
-            runSnapshotTimeoutMs,
-          );
+          try {
+            agentResponse = yield* readStreamingRunResponse(
+              response,
+              runtimeMessageDeltasEnabled(runtime),
+              observeEvent,
+              runSnapshotTimeoutMs,
+            );
+          } catch (error) {
+            if (!isManagedRuntimeFinalResponseTimeout(error)) {
+              throw error;
+            }
+            const recovered = await recoverRuntimeSnapshotAfterStreamTimeout({
+              requestFetch,
+              baseUrl,
+              runtime,
+              runId,
+              timeoutMs: Math.min(runSnapshotTimeoutMs, 5_000),
+              logInfo,
+            });
+            if (!recovered) {
+              throw error;
+            }
+            agentResponse = recovered;
+          }
         } else {
           const startPayload = (await response.json()) as RemoteRunResponse &
             RemoteRunStartResponse;
@@ -999,6 +1017,100 @@ function isManagedRuntimeFinalResponseTimeout(error: unknown): boolean {
       error.message,
     )
   );
+}
+
+async function recoverRuntimeSnapshotAfterStreamTimeout(input: {
+  requestFetch: AgentRuntimeFetch;
+  baseUrl: string;
+  runtime: RuntimeHandle | null;
+  runId: string;
+  timeoutMs: number;
+  logInfo: (message: string) => void;
+}): Promise<AgentOutput | null> {
+  const controller = new AbortController();
+  let response: Response | null = null;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const recovery = (async (): Promise<{
+      status: number;
+      output: AgentOutput | null;
+    }> => {
+      response = await getRuntimeRun(
+        input.requestFetch,
+        `${input.baseUrl}/runs/${encodeURIComponent(input.runId)}`,
+        input.runtime,
+        controller.signal,
+      );
+      if (!response.ok) {
+        return { status: response.status, output: null };
+      }
+      return {
+        status: response.status,
+        output: await readJsonRunResponse(response),
+      };
+    })();
+    recovery.catch(() => undefined);
+    const timedOut = new Promise<{
+      status: number;
+      output: AgentOutput | null;
+    }>((_, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        void response?.body?.cancel().catch(() => undefined);
+        reject(
+          new Error(
+            `Managed runtime snapshot recovery timed out after ${input.timeoutMs}ms`,
+          ),
+        );
+      }, input.timeoutMs);
+    });
+    const snapshot = await Promise.race([recovery, timedOut]);
+    if (snapshot.status < 200 || snapshot.status >= 300) {
+      input.logInfo(
+        [
+          "Managed runtime final snapshot unavailable",
+          `runId=${input.runId}`,
+          `runtimeId=${input.runtime?.id ?? "static"}`,
+          `status=${snapshot.status}`,
+        ].join(" "),
+      );
+      return null;
+    }
+    const recovered = snapshot.output;
+    if (!recovered) {
+      input.logInfo(
+        [
+          "Managed runtime final snapshot incomplete",
+          `runId=${input.runId}`,
+          `runtimeId=${input.runtime?.id ?? "static"}`,
+        ].join(" "),
+      );
+      return null;
+    }
+    input.logInfo(
+      [
+        "Managed runtime final snapshot recovered",
+        `runId=${input.runId}`,
+        `runtimeId=${input.runtime?.id ?? "static"}`,
+      ].join(" "),
+    );
+    return recovered;
+  } catch (error) {
+    input.logInfo(
+      [
+        "Managed runtime final snapshot recovery failed",
+        `runId=${input.runId}`,
+        `runtimeId=${input.runtime?.id ?? "static"}`,
+        `error=${formatRuntimeStopError(error)}`,
+      ].join(" "),
+    );
+    return null;
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    controller.abort();
+  }
 }
 
 function formatRuntimeStopError(error: unknown): string {
