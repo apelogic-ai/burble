@@ -120,6 +120,9 @@ type RemoteRunEvent =
       callId: string;
       classification: ToolClassification;
       status?: "ok" | "error";
+      errorCode?: string;
+      errorMessage?: string;
+      operation?: string;
     }
   | { type: "message_delta"; text: string }
   | { type: "message_replace"; text: string }
@@ -933,13 +936,22 @@ function observeRuntimeStreamEvent(
   }
 
   if (event.type === "tool_result") {
+    const status = event.status ?? "ok";
     input.observability?.emit({
       ...common,
       name: "runtime.tool.call.completed",
       toolName: event.toolName,
       callId: event.callId,
       classification: event.classification,
-      status: "ok",
+      status,
+      ...(status === "error" && event.errorMessage
+        ? {
+            error: {
+              message: event.errorMessage,
+              ...(event.errorCode ? { code: event.errorCode } : {}),
+            },
+          }
+        : {}),
     });
     if (input.runtime) {
       input.runtimeFactory?.recordRuntimeEvent?.(input.runtime.id, {
@@ -949,6 +961,10 @@ function observeRuntimeStreamEvent(
           toolName: event.toolName,
           callId: event.callId,
           classification: event.classification,
+          ...(event.status ? { status: event.status } : {}),
+          ...(event.errorCode ? { errorCode: event.errorCode } : {}),
+          ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}),
+          ...(event.operation ? { operation: event.operation } : {}),
         },
       });
     }
@@ -1862,7 +1878,10 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
         classifications.has(event.classification) &&
         (event.status === undefined ||
           event.status === "ok" ||
-          event.status === "error")
+          event.status === "error") &&
+        optionalBoundedString(event.errorCode, 128) &&
+        optionalBoundedString(event.errorMessage, 500) &&
+        optionalBoundedString(event.operation, 256)
         ? event
         : null;
     case "error":
@@ -1874,6 +1893,13 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
     default:
       return null;
   }
+}
+
+function optionalBoundedString(value: unknown, maxLength: number): boolean {
+  return (
+    value === undefined ||
+    (typeof value === "string" && value.length > 0 && value.length <= maxLength)
+  );
 }
 
 function toWebSocketUrl(url: string): string {

@@ -64,13 +64,16 @@ describe("scheduler run executor", () => {
             callId: "call-write",
             classification: "user_private",
             status: "error",
+            errorCode: "state_replace_failed",
+            errorMessage: "Revision conflict.",
+            operation: "drive_files_update",
           },
         ],
       }),
     ).toEqual({
       ok: false,
       reason:
-        "Scheduled run tool google_append_to_drive_text_file failed before delivery.",
+        "Scheduled run tool google_append_to_drive_text_file failed before delivery (operation drive_files_update): state_replace_failed: Revision conflict.",
     });
   });
 

@@ -1,4 +1,5 @@
 import {
+  readRuntimeToolErrorDiagnostic,
   parseRuntimeRunRequest,
   type RuntimeFinalResponse
 } from "@burble/runtime-sdk/runtime-contract";
@@ -292,12 +293,14 @@ async function* runNativeTurn(
         request,
         context
       );
+      const toolError = readRuntimeToolErrorDiagnostic(toolResult);
       yield {
         type: "tool_result",
         toolName: toolCall.toolName,
         callId: toolCall.callId,
         classification: readToolResultClassification(toolResult),
-        status: toolResultHasError(toolResult) ? "error" : "ok"
+        status: toolResultHasError(toolResult) ? "error" : "ok",
+        ...(toolError ?? {})
       };
       toolOutputs.push({
         type: "function_call_output",

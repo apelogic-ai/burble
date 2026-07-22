@@ -91,6 +91,9 @@ export type AgentRunEvent =
       callId: string;
       classification: ToolClassification;
       status?: "ok" | "error";
+      errorCode?: string;
+      errorMessage?: string;
+      operation?: string;
     }
   | { type: "message_delta"; text: string }
   | { type: "message_replace"; text: string }

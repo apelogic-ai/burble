@@ -1567,7 +1567,11 @@ describe("Burble Native runtime server", () => {
       toolName: "github.listMyPullRequests",
       callId: "call_123",
       classification: "user_private",
-      status: "error"
+      status: "error",
+      errorCode: "tool_execution_failed",
+      errorMessage:
+        "Burble tool gateway returned HTTP 503: Bearer [redacted] backend unavailable",
+      operation: "github.listMyPullRequests"
     });
     const secondProviderBody = JSON.parse(
       String(

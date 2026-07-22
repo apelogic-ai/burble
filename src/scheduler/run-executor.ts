@@ -1463,6 +1463,9 @@ function sanitizeScheduledRunToolEvent(
         callId: event.callId,
         classification: event.classification,
         ...(event.status ? { status: event.status } : {}),
+        ...(event.errorCode ? { errorCode: event.errorCode } : {}),
+        ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}),
+        ...(event.operation ? { operation: event.operation } : {}),
       },
     ];
   }
@@ -1493,7 +1496,7 @@ export function validateScheduledRunToolEvidence(input: {
     if (spec && spec.risk !== "read") {
       return {
         ok: false,
-        reason: `Scheduled run tool ${spec.name} failed before delivery.`,
+        reason: scheduledToolFailureReason(spec.name, event),
       };
     }
   }
@@ -1519,6 +1522,21 @@ export function validateScheduledRunToolEvidence(input: {
   }
 
   return { ok: true };
+}
+
+function scheduledToolFailureReason(
+  toolName: string,
+  event: Extract<AgentRunEvent, { type: "tool_result" }>,
+): string {
+  const operation = event.operation
+    ? ` (operation ${event.operation})`
+    : "";
+  const detail = [event.errorCode, event.errorMessage?.replace(/[.\s]+$/, "")]
+    .filter((value): value is string => Boolean(value))
+    .join(": ");
+  return detail
+    ? `Scheduled run tool ${toolName} failed before delivery${operation}: ${detail}.`
+    : `Scheduled run tool ${toolName} failed before delivery${operation}.`;
 }
 
 export function scheduledRuntimeRetryDelayMs(

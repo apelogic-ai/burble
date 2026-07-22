@@ -314,6 +314,9 @@ export const runtimeRunEventSchema = z.discriminatedUnion("type", [
       callId: z.string().min(1),
       classification: toolClassificationSchema,
       status: z.enum(["ok", "error"]).optional(),
+      errorCode: z.string().min(1).max(128).optional(),
+      errorMessage: z.string().min(1).max(500).optional(),
+      operation: z.string().min(1).max(256).optional(),
       content: z.unknown().optional()
     })
     .strict(),
@@ -407,6 +410,11 @@ export type RuntimeRunRequest = Omit<
   executionMode?: "default" | "native-runtime";
 };
 export type RuntimeRunEvent = z.infer<typeof runtimeRunEventSchema>;
+export type RuntimeToolErrorDiagnostic = {
+  errorCode?: string;
+  errorMessage?: string;
+  operation?: string;
+};
 export type RuntimeFinalResponse = z.infer<typeof runtimeFinalResponseSchema>;
 export type RuntimeUsage = z.infer<typeof runtimeUsageSchema>;
 export type RuntimeCapabilityManifest = z.infer<
@@ -424,6 +432,92 @@ export function parseRuntimeRunRequest(input: unknown): RuntimeRunRequest {
       ? "native-runtime"
       : request.executionMode;
   return { ...request, executionMode };
+}
+
+export function readRuntimeToolErrorDiagnostic(
+  input: unknown
+): RuntimeToolErrorDiagnostic | undefined {
+  const record = findRuntimeToolErrorRecord(input);
+  if (!record) {
+    return undefined;
+  }
+  const errorCode = boundedDiagnosticIdentifier(record.error, 128);
+  const errorMessage = boundedDiagnosticMessage(record.message, 500);
+  const operation = boundedDiagnosticIdentifier(
+    record.operation ?? record.toolName,
+    256
+  );
+  if (!errorCode && !errorMessage && !operation) {
+    return undefined;
+  }
+  return {
+    ...(errorCode ? { errorCode } : {}),
+    ...(errorMessage ? { errorMessage } : {}),
+    ...(operation ? { operation } : {})
+  };
+}
+
+function findRuntimeToolErrorRecord(
+  input: unknown,
+  depth = 0
+): Record<string, unknown> | undefined {
+  if (depth > 5 || !input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  const record = input as Record<string, unknown>;
+  if (
+    typeof record.error === "string" ||
+    record.error === true ||
+    record.isError === true
+  ) {
+    return record;
+  }
+  for (const value of Object.values(record)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = findRuntimeToolErrorRecord(item, depth + 1);
+        if (found) {
+          return found;
+        }
+      }
+      continue;
+    }
+    const found = findRuntimeToolErrorRecord(value, depth + 1);
+    if (found) {
+      return found;
+    }
+  }
+  return undefined;
+}
+
+function boundedDiagnosticIdentifier(
+  input: unknown,
+  maxLength: number
+): string | undefined {
+  if (typeof input !== "string") {
+    return undefined;
+  }
+  const normalized = input.trim().replace(/[^A-Za-z0-9._:/-]+/g, "_");
+  return normalized ? normalized.slice(0, maxLength) : undefined;
+}
+
+function boundedDiagnosticMessage(
+  input: unknown,
+  maxLength: number
+): string | undefined {
+  if (typeof input !== "string") {
+    return undefined;
+  }
+  const redacted = input
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted-openai-key]")
+    .replace(
+      /\b(token|secret|api[_-]?key|private[_-]?key|password)(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&]+)/gi,
+      "$1$2[redacted]"
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+  return redacted ? redacted.slice(0, maxLength) : undefined;
 }
 
 export function parseRuntimeRunEvent(input: unknown): RuntimeRunEvent {
