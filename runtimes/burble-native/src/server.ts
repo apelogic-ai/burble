@@ -53,6 +53,7 @@ const MAX_TOOL_LOOP_STEPS = 32;
 const MAX_PROMPT_TOOLS = 24;
 const MAX_MODEL_TOOL_OUTPUT_CHARS = 12_000;
 const TRUNCATED_TOOL_OUTPUT_EDGE_CHARS = 4_000;
+const MAX_RUNTIME_TOOL_EVENT_INPUT_CHARS = 2_048;
 const MAX_ATTACHMENT_NAME_CHARS = 120;
 const BURBLE_PROVIDER_TOOL_NAME = "burble_provider_call";
 
@@ -286,7 +287,7 @@ async function* runNativeTurn(
         type: "tool_call",
         toolName: effectiveToolCall.toolName,
         callId: effectiveToolCall.callId,
-        input: effectiveToolCall.input
+        ...runtimeToolEventInput(effectiveToolCall.input)
       };
       const toolResult = await executeBurbleProviderToolForModel(
         effectiveToolCall,
@@ -717,6 +718,25 @@ function serializeToolOutputForModel(toolResult: unknown): string {
       tail: serialized.slice(-TRUNCATED_TOOL_OUTPUT_EDGE_CHARS)
     }
   });
+}
+
+function runtimeToolEventInput(
+  input: unknown
+): { input: Record<string, unknown> } | Record<string, never> {
+  if (!isRecord(input)) {
+    return {};
+  }
+  const serialized = JSON.stringify(input);
+  if (serialized.length <= MAX_RUNTIME_TOOL_EVENT_INPUT_CHARS) {
+    return { input };
+  }
+  return {
+    input: {
+      truncated: true,
+      originalChars: serialized.length,
+      inputKeys: Object.keys(input)
+    }
+  };
 }
 
 function readOpenAiModel(env: Record<string, string | undefined> | undefined): string {

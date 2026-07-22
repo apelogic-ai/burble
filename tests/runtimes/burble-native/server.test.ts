@@ -1004,6 +1004,112 @@ describe("Burble Native runtime server", () => {
     });
   });
 
+  test("bounds large tool inputs in runtime events without truncating execution", async () => {
+    const replacementText = "state-entry\n".repeat(1_000);
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestTools(
+            withScheduledJob(nativeRunRequest("replace the bounded state"), [
+              "google_update_drive_text_file"
+            ]),
+            [
+              {
+                name: "google_update_drive_text_file",
+                alias: "google.updateDriveTextFile",
+                provider: "google",
+                title: "Replace Drive text file",
+                description: "Replace the complete contents of a Drive text file.",
+                enabled: true,
+                risk: "low_write",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: false,
+                input: [
+                  { name: "fileId", type: "string", required: true },
+                  { name: "content", type: "string", required: true }
+                ]
+              }
+            ]
+          )
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+          BURBLE_INTERNAL_TOKEN: "runtime-token"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          if (url.includes("/google.updateDriveTextFile/execute")) {
+            return Response.json({
+              classification: "user_private",
+              content: { id: "state-file" }
+            });
+          }
+          const providerRequestCount = requests.filter((request) =>
+            request.url.endsWith("/responses")
+          ).length;
+          if (providerRequestCount === 1) {
+            return Response.json({
+              output: [
+                {
+                  type: "function_call",
+                  call_id: "replace_state",
+                  name: "burble_provider_call",
+                  arguments: JSON.stringify({
+                    toolName: "google.updateDriveTextFile",
+                    input: {
+                      fileId: "state-file",
+                      content: replacementText
+                    }
+                  })
+                }
+              ]
+            });
+          }
+          return Response.json({ output_text: "State replaced." });
+        }
+      }
+    );
+
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toContainEqual({
+      type: "tool_call",
+      toolName: "google.updateDriveTextFile",
+      callId: "replace_state",
+      input: {
+        truncated: true,
+        originalChars: expect.any(Number),
+        inputKeys: ["fileId", "content", "jobId"]
+      }
+    });
+    expect(JSON.stringify(events)).not.toContain(replacementText);
+
+    const toolRequest = requests.find((request) =>
+      request.url.includes("/google.updateDriveTextFile/execute")
+    );
+    expect(JSON.parse(String(toolRequest?.init?.body))).toEqual({
+      input: {
+        fileId: "state-file",
+        content: replacementText,
+        jobId: "job-native-123"
+      }
+    });
+  });
+
   test("allows final synthesis beyond four tool-call rounds", async () => {
     let providerRequests = 0;
     let toolRequests = 0;
