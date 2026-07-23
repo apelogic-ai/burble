@@ -347,6 +347,125 @@ describe("scheduled task preparation", () => {
       "google_get_drive_file",
     ]);
   });
+
+  test("discovers trusted schemas for exact recurring bridge operations", async () => {
+    const calls: unknown[] = [];
+    const result = await executeScheduledTaskPreparation({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      plan: {
+        preparation: [],
+        steps: [
+          {
+            id: "inspect",
+            instruction: "Inspect the pull request and its comments.",
+            tools: ["github_call_mcp_tool"],
+            operations: [
+              {
+                tool: "github_call_mcp_tool",
+                operation: "issue_read",
+              },
+              {
+                tool: "github_call_mcp_tool",
+                operation: "issue_comments",
+              },
+            ],
+          },
+        ],
+      },
+      executeTool: async (input) => {
+        calls.push(input);
+        return {
+          value: [
+            {
+              name: "issue_read",
+              description: "Read one issue or pull request.",
+              inputSchema: { type: "object", required: ["owner", "repo"] },
+            },
+            {
+              name: "issue_comments",
+              description: "Read issue comments.",
+              inputSchema: { type: "object" },
+            },
+          ],
+        };
+      },
+    });
+
+    expect(calls).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        tool: "github_list_mcp_tools",
+        input: {},
+        purpose: "Resolve recurring operation contracts",
+      },
+    ]);
+    expect(result.operationGrants).toEqual([
+      {
+        tool: "github_call_mcp_tool",
+        operation: "issue_comments",
+        description: "Read issue comments.",
+        inputSchema: { type: "object" },
+      },
+      {
+        tool: "github_call_mcp_tool",
+        operation: "issue_read",
+        description: "Read one issue or pull request.",
+        inputSchema: { type: "object", required: ["owner", "repo"] },
+      },
+    ]);
+  });
+
+  test("rejects unadvertised recurring bridge operations before preparation side effects", async () => {
+    const calls: string[] = [];
+    await expect(
+      executeScheduledTaskPreparation({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        plan: {
+          preparation: [
+            {
+              id: "create_state",
+              tool: "google_create_drive_text_file",
+              input: { name: "State", text: "" },
+              saveAs: "state",
+            },
+          ],
+          steps: [
+            {
+              id: "inspect",
+              instruction: "Inspect comments.",
+              tools: ["github_call_mcp_tool"],
+              operations: [
+                {
+                  tool: "github_call_mcp_tool",
+                  operation: "issue_comments",
+                },
+              ],
+            },
+          ],
+        },
+        executeTool: async (input) => {
+          calls.push(input.tool);
+          if (input.tool === "github_list_mcp_tools") {
+            return {
+              value: [
+                {
+                  name: "issue_read",
+                  inputSchema: { type: "object" },
+                },
+              ],
+            };
+          }
+          throw new Error("preparation side effect must not run");
+        },
+      }),
+    ).rejects.toThrow(
+      "does not currently advertise selected operation issue_comments",
+    );
+    expect(calls).toEqual(["github_list_mcp_tools"]);
+  });
 });
 
 function examplePlan(): SchedulerTaskPlan {

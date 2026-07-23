@@ -1406,8 +1406,14 @@ describe("scheduler control plane", () => {
       jobId: "job-generic-state",
       workspaceId: "T123",
       slackUserId: "U123",
-      expectedTools: ["github_search_issues"],
+      expectedTools: ["github_call_mcp_tool"],
       requiredTools: ["github_call_mcp_tool"],
+      operationGrants: [
+        {
+          tool: "github_call_mcp_tool",
+          operation: "issue_read",
+        },
+      ],
       routeId: "convrt_state",
       runtimeType: "burble-native",
       stateRefs: [
@@ -1430,15 +1436,27 @@ describe("scheduler control plane", () => {
       jobId: "job-generic-state",
       prompt: "Read the configured state and report only new changes.",
       capability: {
-        expectedTools: ["github_search_issues"],
+        expectedTools: ["github_call_mcp_tool"],
         requiredTools: ["github_call_mcp_tool"],
+        operationGrants: [
+          {
+            tool: "github_call_mcp_tool",
+            operation: "issue_read",
+          },
+        ],
       },
     });
 
     expect(result?.ok).toBe(true);
     expect(store.getAgentJobCapability("job-generic-state")).toMatchObject({
-      expectedTools: ["github_search_issues"],
+      expectedTools: ["github_call_mcp_tool"],
       requiredTools: ["github_call_mcp_tool"],
+      operationGrants: [
+        {
+          tool: "github_call_mcp_tool",
+          operation: "issue_read",
+        },
+      ],
       stateRefs: [
         {
           provider: "object-store",

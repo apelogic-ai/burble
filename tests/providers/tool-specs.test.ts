@@ -27,18 +27,23 @@ type HermesProviderToolHints = {
 
 describe("provider tool specs", () => {
   test("does not give dynamic MCP bridges provider-wide execution coverage", () => {
-    expect(
-      "grantCoverage" in
-        githubProviderToolSpecs.find(
-          (tool) => tool.name === "github_call_mcp_tool"
-        )!
-    ).toBe(false);
-    expect(
-      "grantCoverage" in
-        atlassianProviderToolSpecs.find(
-          (tool) => tool.name === "atlassian_call_mcp_tool"
-        )!
-    ).toBe(false);
+    const githubBridge = githubProviderToolSpecs.find(
+      (tool) => tool.name === "github_call_mcp_tool",
+    )!;
+    const atlassianBridge = atlassianProviderToolSpecs.find(
+      (tool) => tool.name === "atlassian_call_mcp_tool",
+    )!;
+
+    expect("grantCoverage" in githubBridge).toBe(false);
+    expect("grantCoverage" in atlassianBridge).toBe(false);
+    expect(githubBridge).toMatchObject({
+      operationNameInput: "name",
+      operationCatalogTool: "github_list_mcp_tools",
+    });
+    expect(atlassianBridge).toMatchObject({
+      operationNameInput: "name",
+      operationCatalogTool: "atlassian_list_mcp_tools",
+    });
   });
 
   test("loads GitHub MCP tool metadata from YAML", () => {

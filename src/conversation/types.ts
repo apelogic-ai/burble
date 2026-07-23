@@ -106,6 +106,12 @@ export type SchedulerTaskPlanStep = {
   id: string;
   instruction: string;
   tools: string[];
+  operations?: SchedulerTaskPlanOperation[];
+};
+
+export type SchedulerTaskPlanOperation = {
+  tool: string;
+  operation: string;
 };
 
 export type SchedulerTaskPreparationStep = {

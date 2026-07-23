@@ -1,6 +1,7 @@
 import * as z from "zod/v4";
 import type {
   SchedulerTaskPlan,
+  SchedulerTaskPlanOperation,
   SchedulerTaskPreparationStep,
 } from "../conversation/types";
 import {
@@ -9,6 +10,7 @@ import {
 } from "../providers/catalog";
 import { providerToolInputSchema } from "../providers/tool-specs";
 import type { ScheduledJobStateRef } from "../agent/scheduled-job-context";
+import type { AgentJobOperationGrant } from "../db";
 
 export type ScheduledTaskPreparationToolResult = {
   value: unknown;
@@ -26,8 +28,22 @@ export type ScheduledTaskPreparationToolExecutor = (input: {
 export type ScheduledTaskPreparationResult = {
   prompt: string;
   requiredTools: string[];
+  operationGrants?: AgentJobOperationGrant[];
   stateRefs: ScheduledJobStateRef[];
   resources: Record<string, unknown>;
+};
+
+export type ScheduledTaskOperationCatalogEntry = {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema?: unknown;
+};
+
+export type ScheduledTaskOperationPreflight = {
+  operationGrants: AgentJobOperationGrant[];
+  errors: string[];
+  catalogs: Record<string, ScheduledTaskOperationCatalogEntry[]>;
 };
 
 export type ScheduledTaskPlanValidation =
@@ -82,6 +98,9 @@ export function validateScheduledTaskPlan(
         );
       }
     }
+    for (const selection of step.operations ?? []) {
+      validateOperationSelection(step, selection, errors);
+    }
     for (const binding of resourceBindings(step.instruction)) {
       if (!preparationBindings.has(binding)) {
         errors.push(
@@ -109,10 +128,23 @@ export async function executeScheduledTaskPreparation(input: {
   slackUserId: string;
   plan: SchedulerTaskPlan;
   executeTool: ScheduledTaskPreparationToolExecutor;
+  operationPreflight?: ScheduledTaskOperationPreflight;
 }): Promise<ScheduledTaskPreparationResult> {
   const validation = validateScheduledTaskPlan(input.plan);
   if (!validation.ok) {
     throw new Error(validation.errors.join(" "));
+  }
+
+  const operationPreflight =
+    input.operationPreflight ??
+    (await preflightScheduledTaskOperations({
+      workspaceId: input.workspaceId,
+      slackUserId: input.slackUserId,
+      plan: input.plan,
+      executeTool: input.executeTool,
+    }));
+  if (operationPreflight.errors.length > 0) {
+    throw new Error(operationPreflight.errors.join(" "));
   }
 
   const resources: Record<string, unknown> = {};
@@ -133,9 +165,219 @@ export async function executeScheduledTaskPreparation(input: {
       )
       .join("\n"),
     requiredTools: canonicalRecurringTools(input.plan),
+    ...(operationPreflight.operationGrants.length > 0
+      ? { operationGrants: operationPreflight.operationGrants }
+      : {}),
     stateRefs: dedupeStateRefs(stateRefs),
     resources,
   };
+}
+
+export function scheduledTaskOperationBridgeTools(
+  plan: SchedulerTaskPlan,
+): string[] {
+  return [
+    ...new Set(
+      plan.steps
+        .flatMap((step) => step.tools)
+        .filter((toolName) => {
+          const spec = findProviderToolSpec(toolName);
+          return Boolean(spec?.operationNameInput);
+        }),
+    ),
+  ].sort();
+}
+
+export async function preflightScheduledTaskOperations(input: {
+  workspaceId: string;
+  slackUserId: string;
+  plan: SchedulerTaskPlan;
+  executeTool: ScheduledTaskPreparationToolExecutor;
+  catalogs?: Record<string, ScheduledTaskOperationCatalogEntry[]>;
+}): Promise<ScheduledTaskOperationPreflight> {
+  const bridgeTools = scheduledTaskOperationBridgeTools(input.plan);
+  if (bridgeTools.length === 0) {
+    return { operationGrants: [], errors: [], catalogs: {} };
+  }
+
+  const errors: string[] = [];
+  const grants: AgentJobOperationGrant[] = [];
+  const catalogs = { ...input.catalogs };
+  for (const toolName of bridgeTools) {
+    const tool = findProviderToolSpec(toolName);
+    const catalogToolName = tool?.operationCatalogTool;
+    if (!tool?.operationNameInput || !catalogToolName) {
+      errors.push(
+        `Recurring operation bridge ${toolName} does not declare a discovery tool.`,
+      );
+      continue;
+    }
+    const catalogTool = findProviderToolSpec(catalogToolName);
+    if (
+      !catalogTool ||
+      catalogTool.provider !== tool.provider ||
+      catalogTool.risk !== "read"
+    ) {
+      errors.push(
+        `Recurring operation bridge ${toolName} declares an invalid discovery tool ${catalogToolName}.`,
+      );
+      continue;
+    }
+    let catalog = catalogs[toolName];
+    if (!catalog) {
+      const result = await input.executeTool({
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        tool: catalogToolName,
+        input: {},
+        purpose: "Resolve recurring operation contracts",
+      });
+      catalog = normalizeOperationCatalog(result.value);
+      catalogs[toolName] = catalog;
+    }
+    const selected = selectedOperations(input.plan, toolName);
+    if (selected.length === 0) {
+      errors.push(
+        operationSelectionError(
+          toolName,
+          "requires at least one exact recurring operation",
+          catalog,
+        ),
+      );
+      continue;
+    }
+    for (const operation of selected) {
+      const advertised = catalog.find((entry) => entry.name === operation);
+      if (!advertised) {
+        errors.push(
+          operationSelectionError(
+            toolName,
+            `does not currently advertise selected operation ${operation}`,
+            catalog,
+          ),
+        );
+        continue;
+      }
+      grants.push({
+        tool: toolName,
+        operation,
+        ...(advertised.description
+          ? { description: advertised.description }
+          : {}),
+        ...(advertised.inputSchema !== undefined
+          ? { inputSchema: advertised.inputSchema }
+          : {}),
+      });
+    }
+  }
+
+  return {
+    operationGrants: dedupeOperationGrants(grants),
+    errors: [...new Set(errors)],
+    catalogs,
+  };
+}
+
+function validateOperationSelection(
+  step: SchedulerTaskPlan["steps"][number],
+  selection: SchedulerTaskPlanOperation,
+  errors: string[],
+): void {
+  if (!step.tools.includes(selection.tool)) {
+    errors.push(
+      `Recurring step ${step.id} selects an operation for ungranted tool ${selection.tool}.`,
+    );
+    return;
+  }
+  const tool = findProviderToolSpec(selection.tool);
+  if (!tool?.operationNameInput) {
+    errors.push(
+      `Recurring step ${step.id} selects an operation for non-bridge tool ${selection.tool}.`,
+    );
+  }
+}
+
+function selectedOperations(
+  plan: SchedulerTaskPlan,
+  toolName: string,
+): string[] {
+  return [
+    ...new Set(
+      plan.steps.flatMap((step) =>
+        (step.operations ?? [])
+          .filter((selection) => selection.tool === toolName)
+          .map((selection) => selection.operation.trim())
+          .filter(Boolean),
+      ),
+    ),
+  ].sort();
+}
+
+function normalizeOperationCatalog(
+  value: unknown,
+): ScheduledTaskOperationCatalogEntry[] {
+  const entries = Array.isArray(value)
+    ? value
+    : isRecord(value) && Array.isArray(value.tools)
+      ? value.tools
+      : [];
+  const normalized: ScheduledTaskOperationCatalogEntry[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries.slice(0, 200)) {
+    if (!isRecord(entry) || typeof entry.name !== "string") {
+      continue;
+    }
+    const name = entry.name.trim();
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    normalized.push({
+      name,
+      ...(typeof entry.title === "string" && entry.title.trim()
+        ? { title: entry.title.trim() }
+        : {}),
+      ...(typeof entry.description === "string" && entry.description.trim()
+        ? { description: entry.description.trim() }
+        : {}),
+      ...(entry.inputSchema !== undefined
+        ? { inputSchema: entry.inputSchema }
+        : {}),
+    });
+  }
+  return normalized.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function operationSelectionError(
+  toolName: string,
+  reason: string,
+  catalog: ScheduledTaskOperationCatalogEntry[],
+): string {
+  return [
+    `Dynamic operation preflight: ${toolName} ${reason}.`,
+    `Advertised operations: ${JSON.stringify(
+      catalog.map((entry) => ({
+        name: entry.name,
+        ...(entry.title ? { title: entry.title } : {}),
+        ...(entry.description ? { description: entry.description } : {}),
+      })),
+    )}.`,
+    `Select exact operations in the matching recurring step's operations array.`,
+  ].join(" ");
+}
+
+function dedupeOperationGrants(
+  grants: AgentJobOperationGrant[],
+): AgentJobOperationGrant[] {
+  const byKey = new Map<string, AgentJobOperationGrant>();
+  for (const grant of grants) {
+    byKey.set(`${grant.tool}\u0000${grant.operation}`, grant);
+  }
+  return [...byKey.values()].sort(
+    (left, right) =>
+      left.tool.localeCompare(right.tool) ||
+      left.operation.localeCompare(right.operation),
+  );
 }
 
 function bindPreparationResource(

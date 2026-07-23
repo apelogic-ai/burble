@@ -477,6 +477,7 @@ tools:
     alias: github.callMcpTool
     implementation: callMcpTool
     operationNameInput: name
+    operationCatalogTool: github_list_mcp_tools
     title: GitHub MCP tool call
     description: Call any official or GitHub-namespaced tool advertised by the centralized MCP gateway with this user's connected GitHub identity.
     risk: high_write

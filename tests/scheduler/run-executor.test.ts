@@ -14,7 +14,7 @@ describe("scheduler run executor", () => {
   test("requires resolved read capabilities and rejects failed mutations", () => {
     expect(
       validateScheduledRunToolEvidence({
-        requiredTools: ["github_search_issues"],
+        requiredTools: ["github_call_mcp_tool"],
         events: [],
         prompt: "Find new records.",
         outputText: "Found one new record.",
@@ -22,12 +22,12 @@ describe("scheduler run executor", () => {
     ).toEqual({
       ok: false,
       reason:
-        "Scheduled run did not complete required tool github_search_issues.",
+        "Scheduled run did not complete required tool github_call_mcp_tool.",
     });
 
     expect(
       validateScheduledRunToolEvidence({
-        requiredTools: ["github_search_issues"],
+        requiredTools: ["github_call_mcp_tool"],
         prompt: "Find new records.",
         outputText: "Found one new record.",
         events: [
