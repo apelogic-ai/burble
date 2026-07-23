@@ -1045,13 +1045,25 @@ type RuntimeRequestManifestTool = NonNullable<
 function selectedRuntimeTools(request: RunRequest): RuntimeRequestManifestTool[] {
   if (request.input.scheduledJob) {
     const allowedTools = new Set(request.input.scheduledJob.allowedTools);
+    const operationGrants = request.input.scheduledJob.operationGrants ?? [];
     const manifestTools = request.runtime.manifest?.tools ?? [];
     return manifestTools
       .filter(
         (tool) =>
           tool.enabled &&
           (allowedTools.has(tool.name) ||
-            allowedTools.has(tool.alias))
+            allowedTools.has(tool.alias)) &&
+          (!tool.operationNameInput ||
+            operationGrants.some(
+              (grant) =>
+                (grant.tool === tool.name || grant.tool === tool.alias) &&
+                Boolean(grant.operation)
+            ))
+      )
+      .map((tool) =>
+        tool.operationNameInput
+          ? narrowRuntimeToolOperations(tool, operationGrants)
+          : tool
       )
       .sort(compareRuntimeTools)
       .slice(0, MAX_PROMPT_TOOLS);
@@ -1066,6 +1078,27 @@ function selectedRuntimeTools(request: RunRequest): RuntimeRequestManifestTool[]
     .sort(compareRuntimeTools)
     .slice(0, Math.max(0, MAX_PROMPT_TOOLS - builtInTools.length));
   return [...builtInTools, ...manifestTools];
+}
+
+function narrowRuntimeToolOperations(
+  tool: RuntimeRequestManifestTool,
+  grants: NonNullable<
+    NonNullable<RunRequest["input"]["scheduledJob"]>["operationGrants"]
+  >
+): RuntimeRequestManifestTool {
+  const operations = grants
+    .filter((grant) => grant.tool === tool.name || grant.tool === tool.alias)
+    .map((grant) => grant.operation)
+    .filter(Boolean)
+    .toSorted();
+  return {
+    ...tool,
+    input: tool.input.map((input) =>
+      input.name === tool.operationNameInput
+        ? { ...input, values: operations }
+        : input
+    )
+  };
 }
 
 function selectedBuiltInRuntimeTools(

@@ -278,6 +278,43 @@ describe("scheduled task validation", () => {
     });
   });
 
+  test("requires exact operation grants for a dynamic MCP bridge", () => {
+    const missing = validateScheduledTask(
+      scheduledJob("Read issue comments through the connected provider."),
+      {
+        expectedTools: ["github_call_mcp_tool"],
+        requiredTools: ["github_call_mcp_tool"],
+        operationGrants: [],
+      },
+    );
+    const exact = validateScheduledTask(
+      scheduledJob("Read issue comments through the connected provider."),
+      {
+        expectedTools: ["github_call_mcp_tool"],
+        requiredTools: ["github_call_mcp_tool"],
+        operationGrants: [
+          {
+            tool: "github_call_mcp_tool",
+            operation: "issue_read",
+            description: "Read issue details and comments",
+            inputSchema: { type: "object" },
+          },
+        ],
+      },
+    );
+
+    expect(missing).toMatchObject({
+      ok: false,
+      errors: [
+        {
+          code: "missing_operation_grant",
+          tool: "github_call_mcp_tool",
+        },
+      ],
+    });
+    expect(exact).toMatchObject({ ok: true, errors: [] });
+  });
+
   test("does not let GitHub write grants cover organization PR search", () => {
     const createOnly = validateScheduledTask(
       scheduledJob(

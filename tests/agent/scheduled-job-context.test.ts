@@ -10,6 +10,14 @@ const capability: AgentJobCapabilityRecord = {
   workspaceId: "T123",
   slackUserId: "U123",
   requiredTools: ["google_get_drive_file", "google_append_drive_text_file"],
+  operationGrants: [
+    {
+      tool: "github_call_mcp_tool",
+      operation: "issue_read",
+      description: "Read one issue or pull request",
+      inputSchema: { type: "object" },
+    },
+  ],
   routeId: "convrt_123",
   policyHash: "policy-a",
   capabilityProfile: "scheduled_job",
@@ -36,6 +44,14 @@ describe("buildScheduledJobContext", () => {
       jobId: "job-123",
       capabilityProfile: "scheduled_job",
       allowedTools: ["google_append_drive_text_file", "google_get_drive_file"],
+      operationGrants: [
+        {
+          tool: "github_call_mcp_tool",
+          operation: "issue_read",
+          description: "Read one issue or pull request",
+          inputSchema: { type: "object" },
+        },
+      ],
       routeId: "convrt_123",
       runtimeType: "hermes",
       stateRefs: [

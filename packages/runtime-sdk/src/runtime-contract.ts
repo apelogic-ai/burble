@@ -146,6 +146,7 @@ export const runtimeManifestToolSchema = z
     name: z.string().min(1),
     alias: z.string().min(1),
     provider: z.string().min(1),
+    operationNameInput: z.string().min(1).optional(),
     title: z.string().min(1),
     description: z.string().min(1),
     enabled: z.boolean(),
@@ -204,11 +205,21 @@ export const scheduledJobVisibilityPolicySchema = z
   })
   .strict();
 
+export const scheduledJobOperationGrantSchema = z
+  .object({
+    tool: z.string().min(1),
+    operation: z.string().min(1),
+    description: z.string().optional(),
+    inputSchema: z.unknown().optional(),
+  })
+  .strict();
+
 export const scheduledJobContextSchema = z
   .object({
     jobId: z.string().min(1),
     capabilityProfile: z.string().min(1),
     allowedTools: z.array(z.string().min(1)).min(1),
+    operationGrants: z.array(scheduledJobOperationGrantSchema).optional(),
     routeId: z.string().min(1).optional(),
     runtimeType: agentRuntimeEngineSchema.optional(),
     stateRefs: z.array(scheduledJobStateRefSchema),

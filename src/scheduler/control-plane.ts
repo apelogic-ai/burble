@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   AgentJobCapabilityRecord,
+  AgentJobOperationGrant,
   AgentJobRunAuditRecord,
   AgentJobRunRecord,
   AgentRuntimeEngine,
@@ -248,6 +249,7 @@ export type SchedulerUpdateJobInput = SchedulerJobMutationInput & {
 export type SchedulerTaskCapabilityUpdate = {
   requiredTools: string[];
   expectedTools?: string[];
+  operationGrants?: AgentJobOperationGrant[];
   stateRefs?: ScheduledJobStateRef[];
   stateRefMode?: "merge" | "replace" | "clear";
 };
@@ -1180,6 +1182,7 @@ function ensureScheduledJobCapability(
     slackUserId: job.slackUserId,
     requiredTools: inferredTools,
     expectedTools: inferredTools,
+    operationGrants: [],
     routeId: job.routeId,
     runtimeType: job.runtimeType,
     capabilityProfile: "scheduled_job",
@@ -1235,6 +1238,12 @@ function resolveScheduledJobCapability(
     slackUserId: job.slackUserId,
     requiredTools,
     expectedTools,
+    operationGrants:
+      capability?.operationGrants ??
+      (options.preserveExistingRequiredTools
+        ? existing?.operationGrants
+        : undefined) ??
+      [],
     routeId: job.routeId,
     policyHash: existing?.policyHash ?? null,
     capabilityProfile: existing?.capabilityProfile ?? "scheduled_job",
@@ -1258,6 +1267,7 @@ function persistScheduledJobCapability(
     slackUserId: job.slackUserId,
     requiredTools: capability.requiredTools,
     expectedTools: capability.expectedTools,
+    operationGrants: capability.operationGrants,
     routeId: job.routeId,
     policyHash: capability.policyHash,
     capabilityProfile: capability.capabilityProfile,

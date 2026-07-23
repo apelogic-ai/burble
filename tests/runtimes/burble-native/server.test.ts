@@ -1017,12 +1017,20 @@ describe("Burble Native runtime server", () => {
           withRuntimeManifestTools(
             withScheduledJob(nativeRunRequest("inspect a pull request"), [
               "github_call_mcp_tool"
+            ], [
+              {
+                tool: "github_call_mcp_tool",
+                operation: "issue_read",
+                description: "Read issue details and comments",
+                inputSchema: { type: "object" }
+              }
             ]),
             [
               {
                 name: "github_call_mcp_tool",
                 alias: "github.callMcpTool",
                 provider: "github",
+                operationNameInput: "name",
                 title: "GitHub MCP tool",
                 description: "Call an advertised GitHub MCP tool.",
                 enabled: true,
@@ -1030,7 +1038,14 @@ describe("Burble Native runtime server", () => {
                 routeRequired: true,
                 confirmation: "strong",
                 retrySafe: false,
-                input: []
+                input: [
+                  {
+                    name: "name",
+                    type: "string",
+                    required: true,
+                    nullable: false
+                  }
+                ]
               },
               {
                 name: "github_get_pr",
@@ -1082,6 +1097,7 @@ describe("Burble Native runtime server", () => {
     expect(response.status).toBe(200);
     const providerBody = JSON.parse(String(requests[0]?.init?.body));
     expect(providerBody.input[0].content).toContain("github.callMcpTool");
+    expect(providerBody.input[0].content).toContain("string(issue_read)");
     expect(providerBody.input[0].content).not.toContain("github.getPullRequest");
     expect(providerBody.input[0].content).not.toContain("google.getDriveFile");
   });
@@ -2487,7 +2503,13 @@ function withRuntimeManifestTools<T extends ReturnType<typeof nativeRunRequest>>
 
 function withScheduledJob<T extends ReturnType<typeof nativeRunRequest>>(
   request: T,
-  allowedTools: string[] = ["github_search_issues"]
+  allowedTools: string[] = ["github_search_issues"],
+  operationGrants: Array<{
+    tool: string;
+    operation: string;
+    description?: string;
+    inputSchema?: unknown;
+  }> = []
 ): T {
   return {
     ...request,
@@ -2497,6 +2519,7 @@ function withScheduledJob<T extends ReturnType<typeof nativeRunRequest>>(
         jobId: "job-native-123",
         capabilityProfile: "scheduled_job",
         allowedTools,
+        operationGrants,
         runtimeType: "burble-native",
         routeId: "convrt_scheduled_native",
         stateRefs: [

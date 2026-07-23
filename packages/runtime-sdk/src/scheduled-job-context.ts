@@ -23,6 +23,10 @@ export function formatRuntimeScheduledJobContextLines(
     `- jobId=${scheduledJob.jobId}`,
     `- capabilityProfile=${scheduledJob.capabilityProfile}`,
     `- allowedTools=${formatAllowedTools(scheduledJob.allowedTools)}`,
+    ...(scheduledJob.operationGrants ?? []).map(
+      (grant) =>
+        `- allowedOperation tool=${grant.tool} operation=${grant.operation}${grant.description ? ` description=${JSON.stringify(grant.description)}` : ""}`
+    ),
     ...(scheduledJob.routeId ? [`- routeId=${scheduledJob.routeId}`] : []),
     ...(options.includeRuntimeType && scheduledJob.runtimeType
       ? [`- runtimeType=${scheduledJob.runtimeType}`]

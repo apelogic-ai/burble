@@ -84,14 +84,20 @@ import { searchSlackMessages, searchSlackUsers } from "../providers/slack/client
 import { searchWeb } from "../providers/web/client";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import type { RuntimeJwtClaims } from "../runtime-jwt";
-import { providerToolCovers } from "../providers/catalog";
+import {
+  findProviderToolSpec,
+  providerToolCovers
+} from "../providers/catalog";
 import {
   buildRuntimeManifestForRecord,
   enabledManifestToolNames
 } from "../agent/runtime-policy";
 import type { RuntimeManifest } from "../agent/runtime-manifest";
 import { assertScheduledJobCapabilityMatchesRuntime } from "../agent/scheduled-job-auth";
-import { isScheduledJobToolAllowed } from "../agent/scheduled-job-tools";
+import {
+  isScheduledJobOperationAllowed,
+  isScheduledJobToolAllowed
+} from "../agent/scheduled-job-tools";
 import {
   isAllowedAtlassianMcpToolName,
   isReadOnlyAtlassianMcpToolName,
@@ -618,6 +624,35 @@ async function validateScheduledJobArgumentProviderMcpToolAccess(
     };
   }
 
+  const operationNameInput = findProviderToolSpec(
+    call.name
+  )?.operationNameInput;
+  const operation =
+    operationNameInput &&
+    call.arguments &&
+    typeof call.arguments === "object" &&
+    !Array.isArray(call.arguments)
+      ? (call.arguments as Record<string, unknown>)[operationNameInput]
+      : null;
+  if (
+    typeof operation === "string" &&
+    operation.trim() &&
+    !isScheduledJobOperationAllowed({
+      operationGrants: capability.operationGrants,
+      toolName: call.name,
+      operation
+    })
+  ) {
+    return {
+      request,
+      response: mcpJsonRpcErrorResponse(
+        readJsonRpcId(payload),
+        -32024,
+        `Operation ${operation} is not available through ${call.name} for scheduled job ${jobId}.`
+      )
+    };
+  }
+
   return {
     request: replaceRequestJsonBody(
       request,
@@ -954,12 +989,16 @@ function stripProviderMcpConfirmation(payload: unknown): unknown {
   };
 }
 
-function readJsonRpcToolCall(payload: unknown): { name: string } | null {
+function readJsonRpcToolCall(
+  payload: unknown
+): { name: string; arguments?: unknown } | null {
   if (!isJsonRpcToolCall(payload)) {
     return null;
   }
   const name = payload.params.name;
-  return typeof name === "string" && name.trim() ? { name } : null;
+  return typeof name === "string" && name.trim()
+    ? { name, arguments: payload.params.arguments }
+    : null;
 }
 
 function isJsonRpcToolCall(

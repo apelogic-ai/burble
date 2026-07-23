@@ -46,7 +46,7 @@ export type SchedulerTaskGrant = Pick<
   AgentJobCapabilityRecord,
   "requiredTools" | "expectedTools"
 > &
-  Partial<Pick<AgentJobCapabilityRecord, "stateRefs">>;
+  Partial<Pick<AgentJobCapabilityRecord, "operationGrants" | "stateRefs">>;
 
 export const LEGACY_SCHEDULED_TASK_CONTRACT_MESSAGE =
   "This scheduled task uses a legacy capability contract without resolved expected operations. Recreate or re-save the scheduled task before running it.";
@@ -88,6 +88,18 @@ export function validateScheduledTask(
       });
     }
     const spec = findProviderToolSpec(tool);
+    if (
+      spec?.operationNameInput &&
+      !capability?.operationGrants?.some(
+        (grant) => grant.tool === spec.name && Boolean(grant.operation.trim()),
+      )
+    ) {
+      errors.push({
+        code: "missing_operation_grant",
+        message: `Task requires an exact downstream operation binding for ${tool}.`,
+        tool,
+      });
+    }
     for (const stateInput of spec?.stateRefRequired
       ? (spec.stateRefInputs ?? [])
       : []) {

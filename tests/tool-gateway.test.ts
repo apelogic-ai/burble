@@ -1018,6 +1018,104 @@ describe("handleToolGatewayRequest", () => {
     expect(calls).toHaveLength(2);
   });
 
+  test("limits scheduled dynamic MCP calls to exact persisted operations", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "provider-watch",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_call_mcp_tool"],
+      expectedTools: ["github_call_mcp_tool"],
+      operationGrants: [
+        {
+          tool: "github_call_mcp_tool",
+          operation: "issue_read",
+          inputSchema: { type: "object" }
+        }
+      ],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const calls: unknown[] = [];
+    const deps = {
+      mcpIdentityIssuer: issuer,
+      getSlackEmail: async () => "person@example.com",
+      listMcpGwTools: async () => [
+        { name: "issue_read" },
+        { name: "issue_comments" }
+      ],
+      callMcpGwTool: async (_clientConfig: unknown, input: unknown) => {
+        calls.push(input);
+        return {
+          status: "ok" as const,
+          result: { content: [{ type: "text", text: "ok" }] }
+        };
+      }
+    };
+    const store = createStore(null, runtime, [], null, [], {
+      found: capability
+    });
+    const makeRequest = (name: string) =>
+      request(
+        "github.callMcpTool",
+        {
+          scheduledJob: { jobId: "provider-watch" },
+          input: {
+            jobId: "provider-watch",
+            name,
+            arguments: { owner: "example", repo: "project" }
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      );
+
+    const denied = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://gateway.example/mcp",
+        mcpGwAudience: "https://gateway.example/mcp"
+      },
+      store,
+      "github.callMcpTool",
+      makeRequest("issue_comments"),
+      deps
+    );
+    const allowed = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://gateway.example/mcp",
+        mcpGwAudience: "https://gateway.example/mcp"
+      },
+      store,
+      "github.callMcpTool",
+      makeRequest("issue_read"),
+      deps
+    );
+
+    expect(denied.status).toBe(403);
+    await expect(denied.json()).resolves.toMatchObject({
+      content: { error: "scheduled_job_operation_denied" }
+    });
+    expect(allowed.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        name: "issue_read",
+        arguments: { owner: "example", repo: "project" }
+      }
+    ]);
+  });
+
   test("routes runtime Google tools through MCP-GW without a Burble Google connection when enabled", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity",

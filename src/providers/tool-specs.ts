@@ -13,6 +13,7 @@ export type ProviderToolSpec = {
   risk?: ProviderToolRisk;
   confirmation?: ProviderToolConfirmation;
   retrySafe?: boolean;
+  operationNameInput?: string;
   dependsOn?: string[];
   stateRefInputs?: string[];
   stateRefRequired?: boolean;
@@ -231,6 +232,7 @@ function parseProviderToolSpec(
       "strong"
     ]),
     retrySafe: readOptionalBoolean(parsed, "retrySafe", source),
+    operationNameInput: readOptionalString(parsed, "operationNameInput", source),
     dependsOn: readOptionalStringArray(parsed, "dependsOn", source),
     stateRefInputs: readOptionalStringArray(parsed, "stateRefInputs", source),
     stateRefRequired: readOptionalBoolean(parsed, "stateRefRequired", source),

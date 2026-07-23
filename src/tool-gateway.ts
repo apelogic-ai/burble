@@ -155,6 +155,7 @@ import { formatLogLine } from "./logging";
 import { buildScheduledJobContext } from "./agent/scheduled-job-context";
 import { assertScheduledJobCapabilityMatchesRuntime } from "./agent/scheduled-job-auth";
 import {
+  isScheduledJobOperationAllowed,
   isScheduledJobToolAllowed,
   normalizeScheduledJobToolNames
 } from "./agent/scheduled-job-tools";
@@ -2385,6 +2386,32 @@ function validateAndStripScheduledJobToolGatewayInput(
   }
 
   const strippedInput = stripScheduledJobIds(body.input);
+  const operationInput = findScheduledJobOperationInput(
+    toolName,
+    strippedInput
+  );
+  if (
+    operationInput &&
+    !isScheduledJobOperationAllowed({
+      operationGrants: capability.operationGrants,
+      toolName,
+      operation: operationInput.operation
+    })
+  ) {
+    return {
+      body,
+      response: jsonResponse(
+        {
+          classification: "user_private",
+          content: {
+            error: "scheduled_job_operation_denied",
+            message: `Operation ${operationInput.operation} is not available through ${toolName} for scheduled job ${jobId}.`
+          }
+        },
+        403
+      )
+    };
+  }
   const scheduledJob = buildScheduledJobContext(capability);
   const deniedStateInput = findDeniedScheduledJobStateInput(
     toolName,
@@ -2418,6 +2445,25 @@ function validateAndStripScheduledJobToolGatewayInput(
     },
     response: null
   };
+}
+
+function findScheduledJobOperationInput(
+  toolName: string,
+  input: unknown
+): { operation: string } | null {
+  const operationNameInput = findProviderToolSpec(toolName)?.operationNameInput;
+  if (
+    !operationNameInput ||
+    !input ||
+    typeof input !== "object" ||
+    Array.isArray(input)
+  ) {
+    return null;
+  }
+  const value = (input as Record<string, unknown>)[operationNameInput];
+  return typeof value === "string" && value.trim()
+    ? { operation: value.trim() }
+    : null;
 }
 
 function findDeniedScheduledJobStateInput(
