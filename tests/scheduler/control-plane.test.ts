@@ -432,6 +432,7 @@ describe("scheduler control plane", () => {
       jobId: "github-pr-monitor",
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: ["github_search_issues"],
       routeId: "convrt_123",
       runtimeType: "hermes",
@@ -465,7 +466,7 @@ describe("scheduler control plane", () => {
         state: "scheduled",
         runtimeType: "hermes",
         requiredTools: ["github_search_issues"],
-        expectedTools: [],
+        expectedTools: ["github_search_issues"],
         stateRefs: [],
         routeId: "convrt_123",
         updatedAt: "2026-06-24T12:00:00.000Z",
@@ -492,7 +493,7 @@ describe("scheduler control plane", () => {
         state: "scheduled",
         runtimeType: "hermes",
         requiredTools: ["github_search_issues"],
-        expectedTools: [],
+        expectedTools: ["github_search_issues"],
         stateRefs: [],
         routeId: "convrt_123",
         updatedAt: "2026-06-24T12:00:00.000Z",
@@ -544,6 +545,7 @@ describe("scheduler control plane", () => {
       jobId: "github-pr-monitor",
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: ["github_list_my_pull_requests"],
       routeId: "convrt_123",
       runtimeType: "hermes",
@@ -601,6 +603,7 @@ describe("scheduler control plane", () => {
       jobId: "github-pr-monitor",
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: ["github_list_my_pull_requests"],
       routeId: "convrt_123",
       runtimeType: "hermes",
@@ -663,6 +666,7 @@ describe("scheduler control plane", () => {
       jobId: "github-pr-monitor",
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: ["github_list_my_pull_requests"],
       routeId: "convrt_123",
       runtimeType: "hermes",
@@ -729,6 +733,7 @@ describe("scheduler control plane", () => {
       jobId: "github-pr-monitor",
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: ["github_search_issues"],
       routeId: "convrt_123",
       runtimeType: "hermes",
@@ -782,6 +787,7 @@ describe("scheduler control plane", () => {
       jobId: "github-pr-monitor",
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: ["github_search_issues"],
       routeId: "convrt_123",
       runtimeType: "hermes",
@@ -831,6 +837,7 @@ describe("scheduler control plane", () => {
       jobId: "ai-news-hourly",
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["slack_search_messages", "web_search"],
       requiredTools: ["slack_search_messages", "web_search"],
       routeId: "convrt_123",
       runtimeType: "openclaw",
@@ -1399,8 +1406,14 @@ describe("scheduler control plane", () => {
       jobId: "job-generic-state",
       workspaceId: "T123",
       slackUserId: "U123",
-      expectedTools: ["github_search_issues"],
+      expectedTools: ["github_call_mcp_tool"],
       requiredTools: ["github_call_mcp_tool"],
+      operationGrants: [
+        {
+          tool: "github_call_mcp_tool",
+          operation: "issue_read",
+        },
+      ],
       routeId: "convrt_state",
       runtimeType: "burble-native",
       stateRefs: [
@@ -1423,15 +1436,27 @@ describe("scheduler control plane", () => {
       jobId: "job-generic-state",
       prompt: "Read the configured state and report only new changes.",
       capability: {
-        expectedTools: ["github_search_issues"],
+        expectedTools: ["github_call_mcp_tool"],
         requiredTools: ["github_call_mcp_tool"],
+        operationGrants: [
+          {
+            tool: "github_call_mcp_tool",
+            operation: "issue_read",
+          },
+        ],
       },
     });
 
     expect(result?.ok).toBe(true);
     expect(store.getAgentJobCapability("job-generic-state")).toMatchObject({
-      expectedTools: ["github_search_issues"],
+      expectedTools: ["github_call_mcp_tool"],
       requiredTools: ["github_call_mcp_tool"],
+      operationGrants: [
+        {
+          tool: "github_call_mcp_tool",
+          operation: "issue_read",
+        },
+      ],
       stateRefs: [
         {
           provider: "object-store",

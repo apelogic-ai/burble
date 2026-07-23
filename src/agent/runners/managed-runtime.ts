@@ -101,6 +101,11 @@ type RemoteRunResponse = {
   response?: AgentOutput;
 };
 
+type RecoveredRuntimeSnapshot = {
+  output: AgentOutput;
+  toolEvents: AgentRunEvent[];
+};
+
 type RemoteRunStartResponse = {
   runId?: string;
   eventsUrl?: string;
@@ -120,6 +125,9 @@ type RemoteRunEvent =
       callId: string;
       classification: ToolClassification;
       status?: "ok" | "error";
+      errorCode?: string;
+      errorMessage?: string;
+      operation?: string;
     }
   | { type: "message_delta"; text: string }
   | { type: "message_replace"; text: string }
@@ -432,7 +440,12 @@ export function createManagedRuntimeAdapter(
           },
         });
 
+        const observedToolEventKeys = new Set<string>();
         const observeEvent = (event: AgentRunEvent) => {
+          const eventKey = runtimeToolEventKey(event);
+          if (eventKey) {
+            observedToolEventKeys.add(eventKey);
+          }
           const eventDetails =
             event.type === "tool_call"
               ? [
@@ -467,12 +480,38 @@ export function createManagedRuntimeAdapter(
         };
 
         if (isStreamingResponse(response)) {
-          agentResponse = yield* readStreamingRunResponse(
-            response,
-            runtimeMessageDeltasEnabled(runtime),
-            observeEvent,
-            runSnapshotTimeoutMs,
-          );
+          try {
+            agentResponse = yield* readStreamingRunResponse(
+              response,
+              runtimeMessageDeltasEnabled(runtime),
+              observeEvent,
+              runSnapshotTimeoutMs,
+            );
+          } catch (error) {
+            if (!isManagedRuntimeFinalResponseTimeout(error)) {
+              throw error;
+            }
+            const recovered = await recoverRuntimeSnapshotAfterStreamTimeout({
+              requestFetch,
+              baseUrl,
+              runtime,
+              runId,
+              timeoutMs: Math.min(runSnapshotTimeoutMs, 5_000),
+              logInfo,
+            });
+            if (!recovered) {
+              throw error;
+            }
+            for (const event of recovered.toolEvents) {
+              const eventKey = runtimeToolEventKey(event);
+              if (eventKey && observedToolEventKeys.has(eventKey)) {
+                continue;
+              }
+              observeEvent(event);
+              yield event;
+            }
+            agentResponse = recovered.output;
+          }
         } else {
           const startPayload = (await response.json()) as RemoteRunResponse &
             RemoteRunStartResponse;
@@ -915,13 +954,22 @@ function observeRuntimeStreamEvent(
   }
 
   if (event.type === "tool_result") {
+    const status = event.status ?? "ok";
     input.observability?.emit({
       ...common,
       name: "runtime.tool.call.completed",
       toolName: event.toolName,
       callId: event.callId,
       classification: event.classification,
-      status: "ok",
+      status,
+      ...(status === "error" && event.errorMessage
+        ? {
+            error: {
+              message: event.errorMessage,
+              ...(event.errorCode ? { code: event.errorCode } : {}),
+            },
+          }
+        : {}),
     });
     if (input.runtime) {
       input.runtimeFactory?.recordRuntimeEvent?.(input.runtime.id, {
@@ -931,6 +979,10 @@ function observeRuntimeStreamEvent(
           toolName: event.toolName,
           callId: event.callId,
           classification: event.classification,
+          ...(event.status ? { status: event.status } : {}),
+          ...(event.errorCode ? { errorCode: event.errorCode } : {}),
+          ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}),
+          ...(event.operation ? { operation: event.operation } : {}),
         },
       });
     }
@@ -999,6 +1051,100 @@ function isManagedRuntimeFinalResponseTimeout(error: unknown): boolean {
       error.message,
     )
   );
+}
+
+async function recoverRuntimeSnapshotAfterStreamTimeout(input: {
+  requestFetch: AgentRuntimeFetch;
+  baseUrl: string;
+  runtime: RuntimeHandle | null;
+  runId: string;
+  timeoutMs: number;
+  logInfo: (message: string) => void;
+}): Promise<RecoveredRuntimeSnapshot | null> {
+  const controller = new AbortController();
+  let response: Response | null = null;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const recovery = (async (): Promise<{
+      status: number;
+      snapshot: RecoveredRuntimeSnapshot | null;
+    }> => {
+      response = await getRuntimeRun(
+        input.requestFetch,
+        `${input.baseUrl}/runs/${encodeURIComponent(input.runId)}`,
+        input.runtime,
+        controller.signal,
+      );
+      if (!response.ok) {
+        return { status: response.status, snapshot: null };
+      }
+      return {
+        status: response.status,
+        snapshot: await readJsonRunSnapshot(response),
+      };
+    })();
+    recovery.catch(() => undefined);
+    const timedOut = new Promise<{
+      status: number;
+      snapshot: RecoveredRuntimeSnapshot | null;
+    }>((_, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        void response?.body?.cancel().catch(() => undefined);
+        reject(
+          new Error(
+            `Managed runtime snapshot recovery timed out after ${input.timeoutMs}ms`,
+          ),
+        );
+      }, input.timeoutMs);
+    });
+    const snapshot = await Promise.race([recovery, timedOut]);
+    if (snapshot.status < 200 || snapshot.status >= 300) {
+      input.logInfo(
+        [
+          "Managed runtime final snapshot unavailable",
+          `runId=${input.runId}`,
+          `runtimeId=${input.runtime?.id ?? "static"}`,
+          `status=${snapshot.status}`,
+        ].join(" "),
+      );
+      return null;
+    }
+    const recovered = snapshot.snapshot;
+    if (!recovered) {
+      input.logInfo(
+        [
+          "Managed runtime final snapshot incomplete",
+          `runId=${input.runId}`,
+          `runtimeId=${input.runtime?.id ?? "static"}`,
+        ].join(" "),
+      );
+      return null;
+    }
+    input.logInfo(
+      [
+        "Managed runtime final snapshot recovered",
+        `runId=${input.runId}`,
+        `runtimeId=${input.runtime?.id ?? "static"}`,
+      ].join(" "),
+    );
+    return recovered;
+  } catch (error) {
+    input.logInfo(
+      [
+        "Managed runtime final snapshot recovery failed",
+        `runId=${input.runId}`,
+        `runtimeId=${input.runtime?.id ?? "static"}`,
+        `error=${formatRuntimeStopError(error)}`,
+      ].join(" "),
+    );
+    return null;
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    controller.abort();
+  }
 }
 
 function formatRuntimeStopError(error: unknown): string {
@@ -1208,6 +1354,33 @@ async function readJsonRunResponse(
 ): Promise<AgentOutput | null> {
   const payload = (await response.json()) as RemoteRunResponse;
   return validateRemoteRunResponse(payload);
+}
+
+async function readJsonRunSnapshot(
+  response: Response,
+): Promise<RecoveredRuntimeSnapshot | null> {
+  const payload = (await response.json()) as RemoteRunResponse & {
+    events?: unknown;
+  };
+  const output = validateRemoteRunResponse(payload);
+  if (!output) {
+    return null;
+  }
+  const toolEvents = Array.isArray(payload.events)
+    ? payload.events
+        .map(validateRemoteRunEvent)
+        .filter(
+          (event): event is AgentRunEvent =>
+            event?.type === "tool_call" || event?.type === "tool_result",
+        )
+    : [];
+  return { output, toolEvents };
+}
+
+function runtimeToolEventKey(event: AgentRunEvent): string | null {
+  return event.type === "tool_call" || event.type === "tool_result"
+    ? `${event.type}:${event.toolName}:${event.callId}`
+    : null;
 }
 
 function assertManagedRuntimeFinalResponse(response: AgentOutput): void {
@@ -1750,7 +1923,10 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
         classifications.has(event.classification) &&
         (event.status === undefined ||
           event.status === "ok" ||
-          event.status === "error")
+          event.status === "error") &&
+        optionalBoundedString(event.errorCode, 128) &&
+        optionalBoundedString(event.errorMessage, 500) &&
+        optionalBoundedString(event.operation, 256)
         ? event
         : null;
     case "error":
@@ -1762,6 +1938,13 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
     default:
       return null;
   }
+}
+
+function optionalBoundedString(value: unknown, maxLength: number): boolean {
+  return (
+    value === undefined ||
+    (typeof value === "string" && value.length > 0 && value.length <= maxLength)
+  );
 }
 
 function toWebSocketUrl(url: string): string {

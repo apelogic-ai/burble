@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  readRuntimeToolErrorDiagnostic,
   parseRuntimeCapabilityManifest,
   parseRuntimeRunEvent,
   parseRuntimeRunRequest,
@@ -233,6 +234,10 @@ describe("runtime contract schemas", () => {
         toolName: "github_list_my_pull_requests",
         callId: "call-1",
         classification: "user_private",
+        status: "error",
+        errorCode: "github_tool_failed",
+        errorMessage: "Validation failed.",
+        operation: "github_get_pull_request",
         content: [{ title: "Runtime contract" }]
       },
       {
@@ -269,6 +274,25 @@ describe("runtime contract schemas", () => {
       "final",
       "error"
     ]);
+  });
+
+  test("extracts bounded redacted diagnostics from failed tool results", () => {
+    expect(
+      readRuntimeToolErrorDiagnostic({
+        classification: "user_private",
+        content: {
+          error: "github_tool_failed",
+          message:
+            "Validation failed with Bearer secret-token and api_key=secret-api-key",
+          toolName: "github_get_pull_request"
+        }
+      })
+    ).toEqual({
+      errorCode: "github_tool_failed",
+      errorMessage:
+        "Validation failed with Bearer [redacted] and api_key=[redacted]",
+      operation: "github_get_pull_request"
+    });
   });
 
   test("rejects unknown runtime event types", () => {

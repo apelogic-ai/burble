@@ -73,6 +73,18 @@ export function validateScheduledJobOutput(
   };
 }
 
+export function readDeclaredNoChangeOutput(prompt: string): string | null {
+  const pattern =
+    /(?:if|when)\b(?<condition>[^\n]{0,500}?\b(?:no|none|nothing|zero)\b[^\n]{0,500}?)\b(?:say|return|respond(?:\s+with)?|output)\s+exactly\s*:?\s*(?<value>[^\n]+)/giu;
+  for (const match of prompt.matchAll(pattern)) {
+    const value = cleanDeclaredExactOutput(match.groups?.value ?? "");
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
 export function formatScheduledJobFailureMessage(
   job: ScheduledJobRecord,
   run: AgentJobRunRecord,
@@ -93,4 +105,10 @@ function readLiteralScheduledMessage(prompt: string): string | null {
   );
   const message = match?.groups?.message?.trim();
   return message ? message : null;
+}
+
+function cleanDeclaredExactOutput(value: string): string {
+  const trimmed = value.trim().replace(/^[-*]\s+/, "");
+  const quoted = /^(?<quote>["'`])(?<value>.+)\k<quote>$/u.exec(trimmed);
+  return quoted?.groups?.value?.trim() ?? trimmed;
 }

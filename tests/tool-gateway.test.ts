@@ -1018,6 +1018,104 @@ describe("handleToolGatewayRequest", () => {
     expect(calls).toHaveLength(2);
   });
 
+  test("limits scheduled dynamic MCP calls to exact persisted operations", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "provider-watch",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_call_mcp_tool"],
+      expectedTools: ["github_call_mcp_tool"],
+      operationGrants: [
+        {
+          tool: "github_call_mcp_tool",
+          operation: "issue_read",
+          inputSchema: { type: "object" }
+        }
+      ],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const calls: unknown[] = [];
+    const deps = {
+      mcpIdentityIssuer: issuer,
+      getSlackEmail: async () => "person@example.com",
+      listMcpGwTools: async () => [
+        { name: "issue_read" },
+        { name: "issue_comments" }
+      ],
+      callMcpGwTool: async (_clientConfig: unknown, input: unknown) => {
+        calls.push(input);
+        return {
+          status: "ok" as const,
+          result: { content: [{ type: "text", text: "ok" }] }
+        };
+      }
+    };
+    const store = createStore(null, runtime, [], null, [], {
+      found: capability
+    });
+    const makeRequest = (name: string) =>
+      request(
+        "github.callMcpTool",
+        {
+          scheduledJob: { jobId: "provider-watch" },
+          input: {
+            jobId: "provider-watch",
+            name,
+            arguments: { owner: "example", repo: "project" }
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      );
+
+    const denied = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://gateway.example/mcp",
+        mcpGwAudience: "https://gateway.example/mcp"
+      },
+      store,
+      "github.callMcpTool",
+      makeRequest("issue_comments"),
+      deps
+    );
+    const allowed = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://gateway.example/mcp",
+        mcpGwAudience: "https://gateway.example/mcp"
+      },
+      store,
+      "github.callMcpTool",
+      makeRequest("issue_read"),
+      deps
+    );
+
+    expect(denied.status).toBe(403);
+    await expect(denied.json()).resolves.toMatchObject({
+      content: { error: "scheduled_job_operation_denied" }
+    });
+    expect(allowed.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        name: "issue_read",
+        arguments: { owner: "example", repo: "project" }
+      }
+    ]);
+  });
+
   test("routes runtime Google tools through MCP-GW without a Burble Google connection when enabled", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity",
@@ -3360,6 +3458,7 @@ describe("handleToolGatewayRequest", () => {
       jobId: "github-pr-monitor",
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: ["github_list_my_pull_requests"],
       routeId: "convrt_123",
       policyHash: null,
@@ -3435,6 +3534,7 @@ describe("handleToolGatewayRequest", () => {
       jobId: "github-pr-monitor",
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: ["github_search_issues"],
       routeId: "convrt_123",
       policyHash: null,
@@ -5072,6 +5172,55 @@ describe("handleToolGatewayRequest", () => {
     });
     expect(JSON.stringify(observabilityEvents)).not.toContain("secret-token");
     expect(JSON.stringify(observabilityEvents)).not.toContain("runtime-token-u123");
+  });
+
+  test("classifies structured tool errors as failed gateway completions", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        githubViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "github.searchIssues",
+      request(
+        "github.searchIssues",
+        { input: { query: "org:apelogic-ai is:pr is:open" } },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        observability: {
+          emit: (event) => {
+            observabilityEvents.push(event);
+          }
+        },
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => {
+          throw new McpGwProviderConnectionRequiredError("github");
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(observabilityEvents[1]).toMatchObject({
+      name: "tool.gateway.completed",
+      toolName: "github.searchIssues",
+      status: "error",
+      error: {
+        code: "github_not_connected",
+        message: expect.stringContaining("GitHub account is not connected")
+      },
+      attributes: {
+        toolErrorCode: "github_not_connected"
+      }
+    });
   });
 
   test("lets a runtime send to its active conversation without provider credentials", async () => {

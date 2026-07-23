@@ -643,7 +643,17 @@ describe("handleRuntimeRequest", () => {
       response: {
         classification: "user_private",
         text: "Authenticated to GitHub as `octocat`."
-      }
+      },
+      events: [
+        { type: "status", text: "Loading Burble context..." },
+        {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "Authenticated to GitHub as `octocat`."
+          }
+        }
+      ]
     });
   });
 

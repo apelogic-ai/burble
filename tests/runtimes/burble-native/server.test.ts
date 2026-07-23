@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { parseRuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
-import { handleRuntimeRequest as handleRuntimeRequestRaw } from "../../../runtimes/burble-native/src/server";
+import {
+  DEFAULT_TURN_TIMEOUT_MS,
+  handleRuntimeRequest as handleRuntimeRequestRaw
+} from "../../../runtimes/burble-native/src/server";
 import { createBurbleNativeToolExecutor } from "../../../runtimes/burble-native/src/tools";
 
 const runtimeToken = "runtime-token";
@@ -31,6 +34,11 @@ function withRuntimeAuthorization(request: Request, token: string): Request {
 }
 
 describe("Burble Native runtime server", () => {
+  test("keeps its default turn deadline below the managed runtime watchdog", () => {
+    expect(DEFAULT_TURN_TIMEOUT_MS).toBe(150_000);
+    expect(DEFAULT_TURN_TIMEOUT_MS).toBeLessThan(180_000);
+  });
+
   test("requires runtime bearer auth for run endpoints", async () => {
     const response = await handleRuntimeRequestRaw(
       new Request("http://runtime/runs", {
@@ -375,6 +383,78 @@ describe("Burble Native runtime server", () => {
         }
       ]
     });
+  });
+
+  test("uses complete provider responses for scheduled turns", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const request = withScheduledJob(
+      nativeRunRequest("summarize current items"),
+      ["web_search"]
+    );
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(request)
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          return Response.json({
+            output_text: "No new items.",
+            output: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [
+                  { type: "output_text", text: "No new items." }
+                ]
+              }
+            ],
+            usage: {
+              input_tokens: 40,
+              output_tokens: 4,
+              total_tokens: 44
+            }
+          });
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(String(requests[0].init?.body))).toMatchObject({
+      stream: false
+    });
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    ).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      { type: "message_delta", text: "No new items." },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "No new items.",
+          usage: {
+            inputTokens: 40,
+            outputTokens: 4,
+            totalTokens: 44,
+            usageSource: "provider-output"
+          }
+        }
+      }
+    ]);
   });
 
   test("retries transient OpenAI response failures", async () => {
@@ -752,20 +832,25 @@ describe("Burble Native runtime server", () => {
     );
     expect(firstProviderBody.input[0].content).not.toContain("jira.searchIssues");
     expect(firstProviderBody.input[0].content).not.toContain("github.createIssue");
-    expect(JSON.parse(String(providerRequests[1].init?.body))).toMatchObject({
-      input: [
-        { role: "user", content: expect.stringContaining("who am I on GitHub?") },
-        {
-          type: "function_call",
-          call_id: "call_123",
-          name: "burble_provider_call"
-        },
-        {
-          type: "function_call_output",
-          call_id: "call_123",
-          output: expect.stringContaining("octocat")
-        }
-      ]
+    const secondProviderBody = JSON.parse(
+      String(providerRequests[1].init?.body)
+    );
+    expect(secondProviderBody.input.slice(0, 3)).toMatchObject([
+      { role: "user", content: expect.stringContaining("who am I on GitHub?") },
+      {
+        type: "function_call",
+        call_id: "call_123",
+        name: "burble_provider_call"
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_123",
+        output: expect.stringContaining("octocat")
+      }
+    ]);
+    expect(secondProviderBody.input.at(-1)).toMatchObject({
+      role: "developer",
+      content: expect.stringContaining("7 tool-call rounds remain")
     });
     const toolRequest = requests.find((request) =>
       request.url.includes("/github.getAuthenticatedUser/execute")
@@ -848,54 +933,36 @@ describe("Burble Native runtime server", () => {
             request.url.endsWith("/responses")
           ).length;
           if (providerRequestCount === 1) {
-            return new Response(
-              sseEvent({
-                type: "response.completed",
-                response: {
-                  output: [
-                    {
-                      type: "function_call",
-                      call_id: "scheduled_call_1",
-                      name: "burble_provider_call",
-                      arguments: JSON.stringify({
-                        toolName: "github.searchIssues",
-                        input: {
-                          query: "org:apelogic-ai is:pr is:open",
-                          jobId: "model-forged-job"
-                        }
-                      })
+            return Response.json({
+              output: [
+                {
+                  type: "function_call",
+                  call_id: "scheduled_call_1",
+                  name: "burble_provider_call",
+                  arguments: JSON.stringify({
+                    toolName: "github.searchIssues",
+                    input: {
+                      query: "org:apelogic-ai is:pr is:open",
+                      jobId: "model-forged-job"
                     }
-                  ],
-                  usage: {
-                    input_tokens: 100,
-                    output_tokens: 5,
-                    total_tokens: 105
-                  }
+                  })
                 }
-              }),
-              { headers: { "content-type": "text/event-stream" } }
-            );
+              ],
+              usage: {
+                input_tokens: 100,
+                output_tokens: 5,
+                total_tokens: 105
+              }
+            });
           }
-          return new Response(
-            [
-              sseEvent({
-                type: "response.output_text.delta",
-                delta: "Found one pull request."
-              }),
-              sseEvent({
-                type: "response.completed",
-                response: {
-                  output_text: "Found one pull request.",
-                  usage: {
-                    input_tokens: 80,
-                    output_tokens: 6,
-                    total_tokens: 86
-                  }
-                }
-              })
-            ].join(""),
-            { headers: { "content-type": "text/event-stream" } }
-          );
+          return Response.json({
+            output_text: "Found one pull request.",
+            usage: {
+              input_tokens: 80,
+              output_tokens: 6,
+              total_tokens: 86
+            }
+          });
         }
       }
     );
@@ -937,9 +1004,8 @@ describe("Burble Native runtime server", () => {
     });
   });
 
-  test("allows final synthesis after four tool-call rounds", async () => {
-    let providerRequests = 0;
-    let toolRequests = 0;
+  test("does not expand a dynamic MCP bridge into same-provider tools", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {
         method: "POST",
@@ -948,7 +1014,213 @@ describe("Burble Native runtime server", () => {
           "content-type": "application/json"
         },
         body: JSON.stringify(
-          withRuntimeManifestTools(nativeRunRequest("complete four steps"), [
+          withRuntimeManifestTools(
+            withScheduledJob(nativeRunRequest("inspect a pull request"), [
+              "github_call_mcp_tool"
+            ], [
+              {
+                tool: "github_call_mcp_tool",
+                operation: "issue_read",
+                description: "Read issue details and comments",
+                inputSchema: { type: "object" }
+              }
+            ]),
+            [
+              {
+                name: "github_call_mcp_tool",
+                alias: "github.callMcpTool",
+                provider: "github",
+                operationNameInput: "name",
+                title: "GitHub MCP tool",
+                description: "Call an advertised GitHub MCP tool.",
+                enabled: true,
+                risk: "high_write",
+                routeRequired: true,
+                confirmation: "strong",
+                retrySafe: false,
+                input: [
+                  {
+                    name: "name",
+                    type: "string",
+                    required: true,
+                    nullable: false
+                  }
+                ]
+              },
+              {
+                name: "github_get_pr",
+                alias: "github.getPullRequest",
+                provider: "github",
+                title: "GitHub pull request",
+                description: "Read a pull request.",
+                enabled: true,
+                risk: "read",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: true,
+                input: []
+              },
+              {
+                name: "google_get_drive_file",
+                alias: "google.getDriveFile",
+                provider: "google",
+                title: "Drive file",
+                description: "Read a Drive file.",
+                enabled: true,
+                risk: "read",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: true,
+                input: []
+              }
+            ]
+          )
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_INTERNAL_TOKEN: "runtime-token"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          return Response.json({
+            output_text: "Done.",
+            usage: nativeUsage()
+          });
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const providerBody = JSON.parse(String(requests[0]?.init?.body));
+    expect(providerBody.input[0].content).toContain("github.callMcpTool");
+    expect(providerBody.input[0].content).toContain("string(issue_read)");
+    expect(providerBody.input[0].content).not.toContain("github.getPullRequest");
+    expect(providerBody.input[0].content).not.toContain("google.getDriveFile");
+  });
+
+  test("bounds large tool inputs in runtime events without truncating execution", async () => {
+    const replacementText = "state-entry\n".repeat(1_000);
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestTools(
+            withScheduledJob(nativeRunRequest("replace the bounded state"), [
+              "google_update_drive_text_file"
+            ]),
+            [
+              {
+                name: "google_update_drive_text_file",
+                alias: "google.updateDriveTextFile",
+                provider: "google",
+                title: "Replace Drive text file",
+                description: "Replace the complete contents of a Drive text file.",
+                enabled: true,
+                risk: "low_write",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: false,
+                input: [
+                  { name: "fileId", type: "string", required: true },
+                  { name: "content", type: "string", required: true }
+                ]
+              }
+            ]
+          )
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+          BURBLE_INTERNAL_TOKEN: "runtime-token"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          if (url.includes("/google.updateDriveTextFile/execute")) {
+            return Response.json({
+              classification: "user_private",
+              content: { id: "state-file" }
+            });
+          }
+          const providerRequestCount = requests.filter((request) =>
+            request.url.endsWith("/responses")
+          ).length;
+          if (providerRequestCount === 1) {
+            return Response.json({
+              output: [
+                {
+                  type: "function_call",
+                  call_id: "replace_state",
+                  name: "burble_provider_call",
+                  arguments: JSON.stringify({
+                    toolName: "google.updateDriveTextFile",
+                    input: {
+                      fileId: "state-file",
+                      content: replacementText
+                    }
+                  })
+                }
+              ]
+            });
+          }
+          return Response.json({ output_text: "State replaced." });
+        }
+      }
+    );
+
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toContainEqual({
+      type: "tool_call",
+      toolName: "google.updateDriveTextFile",
+      callId: "replace_state",
+      input: {
+        truncated: true,
+        originalChars: expect.any(Number),
+        inputKeys: ["fileId", "content", "jobId"]
+      }
+    });
+    expect(JSON.stringify(events)).not.toContain(replacementText);
+
+    const toolRequest = requests.find((request) =>
+      request.url.includes("/google.updateDriveTextFile/execute")
+    );
+    expect(JSON.parse(String(toolRequest?.init?.body))).toEqual({
+      input: {
+        fileId: "state-file",
+        content: replacementText,
+        jobId: "job-native-123"
+      }
+    });
+  });
+
+  test("allows final synthesis beyond four tool-call rounds", async () => {
+    let providerRequests = 0;
+    let toolRequests = 0;
+    const providerBodies: Array<{ input: Array<{ content?: string }> }> = [];
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestTools(nativeRunRequest("complete five steps"), [
             {
               name: "github_get_authenticated_user",
               alias: "github.getAuthenticatedUser",
@@ -973,7 +1245,7 @@ describe("Burble Native runtime server", () => {
           BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
           BURBLE_INTERNAL_TOKEN: "runtime-token"
         },
-        fetch: async (url: string) => {
+        fetch: async (url: string, init?: RequestInit) => {
           if (url.includes("/github.getAuthenticatedUser/execute")) {
             toolRequests += 1;
             return Response.json({
@@ -981,8 +1253,13 @@ describe("Burble Native runtime server", () => {
               content: { login: "octocat" }
             });
           }
+          providerBodies.push(
+            JSON.parse(String(init?.body)) as {
+              input: Array<{ content?: string }>;
+            }
+          );
           providerRequests += 1;
-          if (providerRequests <= 4) {
+          if (providerRequests <= 5) {
             return new Response(
               sseEvent({
                 type: "response.completed",
@@ -1007,11 +1284,11 @@ describe("Burble Native runtime server", () => {
             [
               sseEvent({
                 type: "response.output_text.delta",
-                delta: "Four-step workflow complete."
+                delta: "Five-step workflow complete."
               }),
               sseEvent({
                 type: "response.completed",
-                response: { output_text: "Four-step workflow complete." }
+                response: { output_text: "Five-step workflow complete." }
               })
             ].join(""),
             { headers: { "content-type": "text/event-stream" } }
@@ -1021,9 +1298,12 @@ describe("Burble Native runtime server", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain("Four-step workflow complete.");
-    expect(providerRequests).toBe(5);
-    expect(toolRequests).toBe(4);
+    expect(await response.text()).toContain("Five-step workflow complete.");
+    expect(providerRequests).toBe(6);
+    expect(toolRequests).toBe(5);
+    expect(providerBodies[5].input.at(-1)?.content).toContain(
+      "3 tool-call rounds remain"
+    );
   });
 
   test("rejects a fifth tool-call round without executing it", async () => {
@@ -1060,7 +1340,8 @@ describe("Burble Native runtime server", () => {
           OPENAI_API_KEY: "test-openai-key",
           OPENAI_BASE_URL: "https://openai-compatible.example/v1",
           BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
-          BURBLE_INTERNAL_TOKEN: "runtime-token"
+          BURBLE_INTERNAL_TOKEN: "runtime-token",
+          BURBLE_NATIVE_MAX_TOOL_LOOP_STEPS: "4"
         },
         fetch: async (url: string) => {
           if (url.includes("/github.getAuthenticatedUser/execute")) {
@@ -1168,45 +1449,33 @@ describe("Burble Native runtime server", () => {
             request.url.endsWith("/responses")
           ).length;
           if (providerRequestCount === 1) {
-            return new Response(
-              sseEvent({
-                type: "response.completed",
-                response: {
-                  output: [
-                    {
-                      type: "function_call",
-                      call_id: "scheduled_call_wide",
-                      name: "burble_provider_call",
-                      arguments: JSON.stringify({
-                        toolName: "github.search99",
-                        input: {}
-                      })
-                    }
-                  ],
-                  usage: {
-                    input_tokens: 100,
-                    output_tokens: 5,
-                    total_tokens: 105
-                  }
+            return Response.json({
+              output: [
+                {
+                  type: "function_call",
+                  call_id: "scheduled_call_wide",
+                  name: "burble_provider_call",
+                  arguments: JSON.stringify({
+                    toolName: "github.search99",
+                    input: {}
+                  })
                 }
-              }),
-              { headers: { "content-type": "text/event-stream" } }
-            );
-          }
-          return new Response(
-            sseEvent({
-              type: "response.completed",
-              response: {
-                output_text: "Wide scan complete.",
-                usage: {
-                  input_tokens: 80,
-                  output_tokens: 4,
-                  total_tokens: 84
-                }
+              ],
+              usage: {
+                input_tokens: 100,
+                output_tokens: 5,
+                total_tokens: 105
               }
-            }),
-            { headers: { "content-type": "text/event-stream" } }
-          );
+            });
+          }
+          return Response.json({
+            output_text: "Wide scan complete.",
+            usage: {
+              input_tokens: 80,
+              output_tokens: 4,
+              total_tokens: 84
+            }
+          });
         }
       }
     );
@@ -1502,7 +1771,11 @@ describe("Burble Native runtime server", () => {
       toolName: "github.listMyPullRequests",
       callId: "call_123",
       classification: "user_private",
-      status: "error"
+      status: "error",
+      errorCode: "tool_execution_failed",
+      errorMessage:
+        "Burble tool gateway returned HTTP 503: Bearer [redacted] backend unavailable",
+      operation: "github.listMyPullRequests"
     });
     const secondProviderBody = JSON.parse(
       String(
@@ -1909,6 +2182,153 @@ describe("Burble Native runtime server", () => {
     ]);
   });
 
+  test("finishes when response.completed arrives before the SSE transport closes", async () => {
+    let streamCancelled = false;
+    const logs: string[] = [];
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("hello"))
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "50",
+          BURBLE_NATIVE_PROVIDER_MAX_ATTEMPTS: "1"
+        },
+        logInfo: (message) => logs.push(message),
+        fetch: async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    sseEvent({
+                      type: "response.completed",
+                      response: {
+                        output_text: "Completed before EOF.",
+                        usage: {
+                          input_tokens: 7,
+                          output_tokens: 3,
+                          total_tokens: 10
+                        }
+                      }
+                    })
+                  )
+                );
+              },
+              cancel() {
+                streamCancelled = true;
+              }
+            }),
+            { headers: { "content-type": "text/event-stream" } }
+          )
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    ).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      { type: "message_delta", text: "Completed before EOF." },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Completed before EOF.",
+          usage: {
+            inputTokens: 7,
+            outputTokens: 3,
+            totalTokens: 10,
+            usageSource: "provider-output"
+          }
+        }
+      }
+    ]);
+    expect(streamCancelled).toBe(true);
+    expect(logs).toEqual([
+      expect.stringMatching(
+        /event=request_started attempt=1 timeoutMs=50$/
+      ),
+      expect.stringMatching(
+        /event=terminal_received attempt=1 elapsedMs=\d+ terminalType=response\.completed$/
+      ),
+      expect.stringMatching(
+        /event=stream_closed attempt=1 elapsedMs=\d+ reason=consumer_stopped$/
+      )
+    ]);
+  });
+
+  test.each([
+    ["response.failed", "Provider rejected the response."],
+    ["response.incomplete", "max_output_tokens"]
+  ])("stops on terminal %s events", async (eventType, detail) => {
+    let streamCancelled = false;
+    const terminalResponse =
+      eventType === "response.failed"
+        ? { error: { message: detail } }
+        : { incomplete_details: { reason: detail } };
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("hello"))
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "50",
+          BURBLE_NATIVE_PROVIDER_MAX_ATTEMPTS: "1"
+        },
+        fetch: async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    sseEvent({ type: eventType, response: terminalResponse })
+                  )
+                );
+              },
+              cancel() {
+                streamCancelled = true;
+              }
+            }),
+            { headers: { "content-type": "text/event-stream" } }
+          )
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toHaveLength(2);
+    expect(events[0]).toEqual({
+      type: "status",
+      text: "Burble Native accepted the turn."
+    });
+    expect(events[1]).toMatchObject({
+      type: "error",
+      message: expect.stringContaining(detail)
+    });
+    expect(streamCancelled).toBe(true);
+  });
+
   test("executes tools through the Burble tool gateway with runtime auth", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const executeTool = createBurbleNativeToolExecutor({
@@ -2083,7 +2503,13 @@ function withRuntimeManifestTools<T extends ReturnType<typeof nativeRunRequest>>
 
 function withScheduledJob<T extends ReturnType<typeof nativeRunRequest>>(
   request: T,
-  allowedTools: string[] = ["github_search_issues"]
+  allowedTools: string[] = ["github_search_issues"],
+  operationGrants: Array<{
+    tool: string;
+    operation: string;
+    description?: string;
+    inputSchema?: unknown;
+  }> = []
 ): T {
   return {
     ...request,
@@ -2093,6 +2519,7 @@ function withScheduledJob<T extends ReturnType<typeof nativeRunRequest>>(
         jobId: "job-native-123",
         capabilityProfile: "scheduled_job",
         allowedTools,
+        operationGrants,
         runtimeType: "burble-native",
         routeId: "convrt_scheduled_native",
         stateRefs: [

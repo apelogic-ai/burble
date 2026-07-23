@@ -146,52 +146,71 @@ export function createSandboxRuntimeFactory(input: {
       } else {
         try {
           const attached = await input.sandboxProvider.attach(existing.sandboxId);
-          const paths = sandboxRuntimePaths(attached.workspacePath, input.engine);
-          const policy =
-            (await input.buildPolicy?.({
-              principal,
-              engine: input.engine,
-              runtimeId: existing.id,
-              runtimeDataId,
-              manifest,
-            })) ?? buildDefaultSandboxPolicy(input, manifest);
-          const policyHash = sandboxRuntimePolicyHash(manifest, policy);
-          if (existing.policyHash !== policyHash) {
-            await input.sandboxProvider.applyPolicy(attached.id, policy);
-          }
-          const updated = input.store.getOrCreateAgentRuntime({
-            workspaceId: principal.workspaceId,
-            slackUserId: principal.slackUserId,
+          const compatibility = await inspectSandboxRuntimeContract({
+            endpointUrl: attached.endpointUrl,
             engine: input.engine,
-            endpointUrl: attached.endpointUrl,
-            authTokenHash: hashRuntimeToken(token),
-            statePath: paths.statePath,
-            configPath: paths.configPath,
-            workspacePath: attached.workspacePath,
-            sandboxId: attached.id,
-            policyHash,
-            now: now(),
-          });
-          await waitForSandboxRuntimeHealth({
-            sandboxId: attached.id,
-            endpointUrl: attached.endpointUrl,
-            fetch: requestFetch,
-            attempts:
-              input.healthCheckAttempts ??
-              runtimeHealthCheckAttempts(input.engine),
-            intervalMs: input.healthCheckIntervalMs ?? 1000,
-          });
-          input.store.touchAgentRuntime(existing.id, now());
-          if (existing.status === "provisioning") {
-            input.store.updateAgentRuntimeStatus(existing.id, {
-              status: "ready",
-            });
-          }
-          return toRuntimeHandle(
-            input.store.getAgentRuntime(existing.id) ?? updated,
             token,
-            manifest,
-          );
+            fetch: requestFetch,
+          });
+          if (!compatibility.compatible) {
+            await retireSandboxRuntimeForReprovision({
+              store: input.store,
+              sandboxProvider: input.sandboxProvider,
+              runtime: existing,
+              reason: runtimeContractMismatchReason(compatibility),
+              now: now(),
+            });
+          } else {
+            const paths = sandboxRuntimePaths(
+              attached.workspacePath,
+              input.engine,
+            );
+            const policy =
+              (await input.buildPolicy?.({
+                principal,
+                engine: input.engine,
+                runtimeId: existing.id,
+                runtimeDataId,
+                manifest,
+              })) ?? buildDefaultSandboxPolicy(input, manifest);
+            const policyHash = sandboxRuntimePolicyHash(manifest, policy);
+            if (existing.policyHash !== policyHash) {
+              await input.sandboxProvider.applyPolicy(attached.id, policy);
+            }
+            const updated = input.store.getOrCreateAgentRuntime({
+              workspaceId: principal.workspaceId,
+              slackUserId: principal.slackUserId,
+              engine: input.engine,
+              endpointUrl: attached.endpointUrl,
+              authTokenHash: hashRuntimeToken(token),
+              statePath: paths.statePath,
+              configPath: paths.configPath,
+              workspacePath: attached.workspacePath,
+              sandboxId: attached.id,
+              policyHash,
+              now: now(),
+            });
+            await waitForSandboxRuntimeHealth({
+              sandboxId: attached.id,
+              endpointUrl: attached.endpointUrl,
+              fetch: requestFetch,
+              attempts:
+                input.healthCheckAttempts ??
+                runtimeHealthCheckAttempts(input.engine),
+              intervalMs: input.healthCheckIntervalMs ?? 1000,
+            });
+            input.store.touchAgentRuntime(existing.id, now());
+            if (existing.status === "provisioning") {
+              input.store.updateAgentRuntimeStatus(existing.id, {
+                status: "ready",
+              });
+            }
+            return toRuntimeHandle(
+              input.store.getAgentRuntime(existing.id) ?? updated,
+              token,
+              manifest,
+            );
+          }
         } catch (error) {
           if (!isSandboxNotFoundError(error)) {
             throw error;
@@ -313,6 +332,15 @@ export function createSandboxRuntimeFactory(input: {
           input.healthCheckAttempts ?? runtimeHealthCheckAttempts(input.engine),
         intervalMs: input.healthCheckIntervalMs ?? 1000,
       });
+      const compatibility = await inspectSandboxRuntimeContract({
+        endpointUrl: sandbox.endpointUrl,
+        engine: input.engine,
+        token,
+        fetch: requestFetch,
+      });
+      if (!compatibility.compatible) {
+        throw new Error(runtimeContractMismatchReason(compatibility));
+      }
       input.store.updateAgentRuntimeStatus(runtime.id, { status: "ready" });
       input.store.recordAgentRuntimeEvent({
         runtimeId: runtime.id,
@@ -864,6 +892,72 @@ function shouldReprovisionForMcpRuntimeJwt(
   );
   const refreshAtMs = issuedAtMs + (ttlSeconds - marginSeconds) * 1000;
   return (input.now ?? (() => new Date()))().getTime() >= refreshAtMs;
+}
+
+type SandboxRuntimeContractCompatibility = {
+  compatible: boolean;
+  expectedVersion: string;
+  actualVersion: string | null;
+  actualRuntimeType: string | null;
+};
+
+async function inspectSandboxRuntimeContract(input: {
+  endpointUrl: string;
+  engine: AgentRuntimeEngine;
+  token: string;
+  fetch: SandboxRuntimeFetch;
+}): Promise<SandboxRuntimeContractCompatibility> {
+  const expectedVersion = runtimeDescriptor(input.engine).capabilities.version;
+  if (expectedVersion === "known") {
+    return {
+      compatible: true,
+      expectedVersion,
+      actualVersion: null,
+      actualRuntimeType: null,
+    };
+  }
+
+  let actualVersion: string | null = null;
+  let actualRuntimeType: string | null = null;
+  try {
+    const response = await input.fetch(
+      `${input.endpointUrl.replace(/\/+$/, "")}/capabilities`,
+      {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${input.token}`,
+        },
+      },
+    );
+    if (response.ok) {
+      const payload = (await response.json()) as Record<string, unknown>;
+      actualVersion =
+        typeof payload.version === "string" ? payload.version : null;
+      actualRuntimeType =
+        typeof payload.runtimeType === "string" ? payload.runtimeType : null;
+    }
+  } catch {
+    // A runtime with an exact contract must prove compatibility before use.
+  }
+
+  return {
+    compatible:
+      actualVersion === expectedVersion &&
+      actualRuntimeType === input.engine,
+    expectedVersion,
+    actualVersion,
+    actualRuntimeType,
+  };
+}
+
+function runtimeContractMismatchReason(
+  compatibility: SandboxRuntimeContractCompatibility,
+): string {
+  return [
+    "runtime_contract_version_mismatch",
+    `expected=${compatibility.expectedVersion}`,
+    `actual=${compatibility.actualVersion ?? "unknown"}`,
+  ].join(":");
 }
 
 async function retireSandboxRuntimeForReprovision(input: {

@@ -7,6 +7,7 @@ import type {
   SchedulerIntentResolver,
   SchedulerIntentResolverResult,
   SchedulerTaskPlan,
+  SchedulerTaskPlanOperation,
   SchedulerTaskPlanStep,
   SchedulerTaskPreparationStep,
 } from "./types";
@@ -220,6 +221,9 @@ function mergeRepairedTaskPlan(
     steps: original.steps.map((step, index) => ({
       ...step,
       tools: repaired.steps[index]!.tools,
+      ...(repaired.steps[index]!.operations
+        ? { operations: repaired.steps[index]!.operations }
+        : {}),
     })),
     preparation: original.preparation.map((step, index) => ({
       ...step,
@@ -291,6 +295,8 @@ const schedulerIntentSystemPrompt = [
   "For update_job_prompt, include prompt with the new executable task prompt and include jobId when one current task/job clearly matches the user reference.",
   "When a task creation or update contains multiple requested steps, return taskPlan instead of copying the user's message into prompt.",
   "taskPlan.steps are recurring executable steps. Each step has id, instruction, and the exact recurring provider tool names it requires in tools.",
+  "For a recurring dynamic operation bridge, also include operations as an array of {tool, operation} using only exact operation names supplied by live pre-flight repair context.",
+  "Never invent a dynamic operation name. The control plane discovers the live operation catalog and will request one repair when exact selections are missing or stale.",
   "taskPlan.preparation contains one-time provider calls that must finish before the task is updated. Each preparation step has id, tool, input, saveAs, and optional purpose.",
   "Current task specs include opaque stateRefs. Preserve and reuse matching existing refs by default; do not rediscover or recreate them.",
   "Recurring tools marked stateRefRequired require a matching durable stateRef from the same provider. If no matching current stateRef exists, add a one-time preparation step that resolves or creates the resource and bind its returned id into recurring instructions with a {{resources.<saveAs>.<field>}} placeholder.",
@@ -378,6 +384,7 @@ function schedulerIntentPrompt(
     'For update_job_schedule use: {"intent":"update_job_schedule","confidence":0.94,"jobId":"job_123","schedule":{"kind":"cron","expression":"*/45 * * * *","timezone":"UTC"}}',
     'For update_job_prompt use: {"intent":"update_job_prompt","confidence":0.94,"jobId":"job_123","prompt":"Post exactly this message: ❤️❤️"}',
     'For a planned update use: {"intent":"update_job_prompt","confidence":0.98,"jobId":"job_123","taskPlan":{"preparation":[],"steps":[{"id":"collect","instruction":"Find the latest news and select the top five.","tools":["web_search"]},{"id":"report","instruction":"Return the results.","tools":[]}]}}',
+    'For a repaired dynamic operation step use: {"id":"inspect","instruction":"Inspect the requested records.","tools":["dynamic_bridge_tool"],"operations":[{"tool":"dynamic_bridge_tool","operation":"exact_advertised_operation"}]}',
     'For update_job_runtime use: {"intent":"update_job_runtime","confidence":0.94,"jobId":"job_123","runtimeType":"burble-native"}',
     'For a composite update use: {"intent":"update_job","confidence":0.97,"jobId":"job_123","prompt":"Post exactly this message: ❤️","schedule":{"kind":"cron","expression":"*/15 * * * *","timezone":"UTC"},"runtimeType":"burble-native"}',
   ].join("\n");
@@ -504,10 +511,47 @@ function parseSchedulerTaskPlanStep(value: unknown): SchedulerTaskPlanStep | nul
   const instruction =
     typeof value.instruction === "string" ? value.instruction.trim() : "";
   const tools = parseToolNames(value.tools);
-  if (!id || !instruction || !tools) {
+  const operations =
+    value.operations === undefined
+      ? []
+      : parseSchedulerTaskPlanOperations(value.operations);
+  if (!id || !instruction || !tools || !operations) {
     return null;
   }
-  return { id, instruction, tools };
+  return {
+    id,
+    instruction,
+    tools,
+    ...(operations.length > 0 ? { operations } : {}),
+  };
+}
+
+function parseSchedulerTaskPlanOperations(
+  value: unknown,
+): SchedulerTaskPlanOperation[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const operations: SchedulerTaskPlanOperation[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (!isRecord(entry)) {
+      return null;
+    }
+    const tool = typeof entry.tool === "string" ? entry.tool.trim() : "";
+    const operation =
+      typeof entry.operation === "string" ? entry.operation.trim() : "";
+    if (!tool || !operation) {
+      return null;
+    }
+    const key = `${tool}\u0000${operation}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    operations.push({ tool, operation });
+  }
+  return operations;
 }
 
 function parseSchedulerPreparationStep(

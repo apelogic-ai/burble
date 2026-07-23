@@ -58,8 +58,5 @@ export function providerToolCovers(
   if (!actual || !expected) {
     return actualToolName === expectedToolName;
   }
-  return (
-    actual.name === expected.name ||
-    (actual.provider === expected.provider && actual.grantCoverage === "provider")
-  );
+  return actual.name === expected.name;
 }

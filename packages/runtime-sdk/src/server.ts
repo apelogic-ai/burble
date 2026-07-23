@@ -188,9 +188,11 @@ export function createRuntimeContractServer<
         if (!sharedRun) {
           return new Response("Run not found", { status: 404 });
         }
-        return Response.json(await sharedRun.finalPromise, {
-          headers: noStoreHeaders()
-        });
+        const finalResponse = await sharedRun.finalPromise;
+        return Response.json(
+          completedRunSnapshot(finalResponse, sharedRun.events),
+          { headers: noStoreHeaders() }
+        );
       }
 
       if (url.pathname !== "/runs") {
@@ -270,6 +272,23 @@ export function createRuntimeContractServer<
         }
       })();
     }
+  };
+}
+
+function completedRunSnapshot<TEvent extends RuntimeContractEvent, TResponse>(
+  response: TResponse,
+  events: readonly TEvent[]
+): TResponse | (Record<string, unknown> & { events: TEvent[] }) {
+  if (
+    typeof response !== "object" ||
+    response === null ||
+    Array.isArray(response)
+  ) {
+    return response;
+  }
+  return {
+    ...response,
+    events: [...events]
   };
 }
 

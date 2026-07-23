@@ -1,4 +1,5 @@
 import {
+  readRuntimeToolErrorDiagnostic,
   parseRuntimeRunRequest,
   type RuntimeFinalResponse
 } from "@burble/runtime-sdk/runtime-contract";
@@ -23,6 +24,7 @@ import type {
 type RuntimeServerContext = {
   env?: Record<string, string | undefined>;
   fetch?: RuntimeFetch;
+  logInfo?: (message: string) => void;
 };
 
 type RuntimeRequestOptions = RuntimeServerContext;
@@ -40,15 +42,18 @@ type OpenAiFunctionToolCall = {
 const DEFAULT_PROVIDER_TIMEOUT_MS = 120_000;
 const MIN_PROVIDER_TIMEOUT_MS = 1;
 const MAX_PROVIDER_TIMEOUT_MS = 10 * 60_000;
-const DEFAULT_TURN_TIMEOUT_MS = 180_000;
+export const DEFAULT_TURN_TIMEOUT_MS = 150_000;
 const MIN_TURN_TIMEOUT_MS = 1;
 const MAX_TURN_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_PROVIDER_MAX_ATTEMPTS = 3;
 const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 250;
-const MAX_TOOL_LOOP_STEPS = 4;
+const DEFAULT_MAX_TOOL_LOOP_STEPS = 8;
+const MIN_TOOL_LOOP_STEPS = 1;
+const MAX_TOOL_LOOP_STEPS = 32;
 const MAX_PROMPT_TOOLS = 24;
 const MAX_MODEL_TOOL_OUTPUT_CHARS = 12_000;
 const TRUNCATED_TOOL_OUTPUT_EDGE_CHARS = 4_000;
+const MAX_RUNTIME_TOOL_EVENT_INPUT_CHARS = 2_048;
 const MAX_ATTACHMENT_NAME_CHARS = 120;
 const BURBLE_PROVIDER_TOOL_NAME = "burble_provider_call";
 
@@ -108,7 +113,7 @@ export function attachRuntimeEventWebSocket(
 export function buildRuntimeCapabilityManifest(): CapabilityManifest {
   return {
     runtimeType: "burble-native",
-    version: "1",
+    version: "2",
     transports: ["http", "sse", "ndjson", "websocket"],
     streaming: true,
     cancellation: false,
@@ -250,6 +255,7 @@ async function* runNativeTurn(
   let usage: RunUsage | undefined;
   let input = buildOpenAiInput(request);
   const turnDeadline = createTurnDeadline(context.env);
+  const maxToolLoopSteps = readMaxToolLoopSteps(context.env);
   let toolCallSteps = 0;
   while (true) {
     const result = await collectOpenAiTurn(input, request, context, turnDeadline);
@@ -262,9 +268,9 @@ async function* runNativeTurn(
       responseText = result.text || responseText;
       break;
     }
-    if (toolCallSteps >= MAX_TOOL_LOOP_STEPS) {
+    if (toolCallSteps >= maxToolLoopSteps) {
       throw new Error(
-        `Burble Native exceeded ${MAX_TOOL_LOOP_STEPS} tool-call steps`
+        `Burble Native exceeded ${maxToolLoopSteps} tool-call steps`
       );
     }
 
@@ -281,19 +287,21 @@ async function* runNativeTurn(
         type: "tool_call",
         toolName: effectiveToolCall.toolName,
         callId: effectiveToolCall.callId,
-        input: effectiveToolCall.input
+        ...runtimeToolEventInput(effectiveToolCall.input)
       };
       const toolResult = await executeBurbleProviderToolForModel(
         effectiveToolCall,
         request,
         context
       );
+      const toolError = readRuntimeToolErrorDiagnostic(toolResult);
       yield {
         type: "tool_result",
         toolName: toolCall.toolName,
         callId: toolCall.callId,
         classification: readToolResultClassification(toolResult),
-        status: toolResultHasError(toolResult) ? "error" : "ok"
+        status: toolResultHasError(toolResult) ? "error" : "ok",
+        ...(toolError ?? {})
       };
       toolOutputs.push({
         type: "function_call_output",
@@ -302,8 +310,16 @@ async function* runNativeTurn(
       });
     }
 
-    input = [...asOpenAiInputItems(input), ...result.outputItems, ...toolOutputs];
     toolCallSteps += 1;
+    input = [
+      ...asOpenAiInputItems(input),
+      ...result.outputItems,
+      ...toolOutputs,
+      {
+        role: "developer",
+        content: formatToolLoopBudget(maxToolLoopSteps - toolCallSteps)
+      }
+    ];
   }
   yield {
     type: "final",
@@ -443,7 +459,8 @@ async function collectOpenAiTurn(
         input,
         request,
         context,
-        turnDeadline
+        turnDeadline,
+        attempt + 1
       );
     } catch (error) {
       if (!shouldRetryProviderError(error) || attempt === maxAttempts - 1) {
@@ -462,7 +479,8 @@ async function collectOpenAiTurnAttempt(
   input: string | OpenAiInputItem[],
   request: RunRequest,
   context: RuntimeServerContext,
-  turnDeadline: TurnDeadline
+  turnDeadline: TurnDeadline,
+  attempt: number
 ): Promise<{
   deltas: string[];
   text: string;
@@ -491,6 +509,12 @@ async function collectOpenAiTurnAttempt(
   const timeout = setTimeout(() => {
     abortController.abort(timeoutError);
   }, timeoutMs);
+  const startedAt = Date.now();
+  logNativeProviderLifecycle(context, request, "request_started", {
+    attempt,
+    timeoutMs
+  });
+  const stream = request.input.scheduledJob === undefined;
 
   try {
     const response = await requestFetch(responsesUrl, {
@@ -504,11 +528,32 @@ async function collectOpenAiTurnAttempt(
         model,
         input,
         tools: buildOpenAiTools(request),
-        stream: true
+        stream
       })
     });
-    if (!response.ok || !response.body) {
+    if (!response.ok) {
       throw new ProviderHttpError(response.status);
+    }
+    if (!stream) {
+      const responsePayload: unknown = await response.json();
+      throwIfProviderTimedOut(abortController.signal);
+      throwIfTurnTimedOut(turnDeadline);
+      logNativeProviderLifecycle(context, request, "terminal_received", {
+        attempt,
+        elapsedMs: Date.now() - startedAt,
+        terminalType: "response"
+      });
+      const outputItems = readOpenAiOutputItems(responsePayload);
+      return {
+        deltas: [],
+        text: extractOpenAiText(responsePayload) ?? "",
+        usage: normalizeOpenAiUsage(readRecord(responsePayload, "usage")),
+        outputItems,
+        toolCalls: outputItems.flatMap(readOpenAiFunctionToolCall)
+      };
+    }
+    if (!response.body) {
+      throw new ProviderStreamIncompleteError();
     }
 
     const deltas: string[] = [];
@@ -519,7 +564,13 @@ async function collectOpenAiTurnAttempt(
     let completed = false;
     for await (const payload of readSseJsonPayloads(
       response.body,
-      abortController.signal
+      abortController.signal,
+      (reason) =>
+        logNativeProviderLifecycle(context, request, "stream_closed", {
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+          reason
+        })
     )) {
       throwIfProviderTimedOut(abortController.signal);
       throwIfTurnTimedOut(turnDeadline);
@@ -532,12 +583,29 @@ async function collectOpenAiTurnAttempt(
         continue;
       }
       if (type === "response.completed") {
+        logNativeProviderLifecycle(context, request, "terminal_received", {
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+          terminalType: type
+        });
         completed = true;
         const responsePayload = readRecord(payload, "response");
         completedText = extractOpenAiText(responsePayload) ?? completedText;
         completedUsage = normalizeOpenAiUsage(readRecord(responsePayload, "usage"));
         outputItems = readOpenAiOutputItems(responsePayload);
         toolCalls = outputItems.flatMap(readOpenAiFunctionToolCall);
+        break;
+      }
+      if (type === "response.failed" || type === "response.incomplete") {
+        logNativeProviderLifecycle(context, request, "terminal_received", {
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+          terminalType: type
+        });
+        throw new ProviderTerminalResponseError(
+          type,
+          readProviderTerminalDetail(payload, type)
+        );
       }
     }
 
@@ -564,6 +632,20 @@ async function collectOpenAiTurnAttempt(
       // Ignore abort failures after the provider stream has already completed.
     }
   }
+}
+
+function logNativeProviderLifecycle(
+  context: RuntimeServerContext,
+  request: RunRequest,
+  event: "request_started" | "terminal_received" | "stream_closed",
+  fields: Record<string, string | number>
+): void {
+  const details = Object.entries(fields)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(" ");
+  context.logInfo?.(
+    `Burble Native provider lifecycle runId=${request.runId} event=${event}${details ? ` ${details}` : ""}`
+  );
 }
 
 async function executeBurbleProviderToolForModel(
@@ -638,6 +720,25 @@ function serializeToolOutputForModel(toolResult: unknown): string {
   });
 }
 
+function runtimeToolEventInput(
+  input: unknown
+): { input: Record<string, unknown> } | Record<string, never> {
+  if (!isRecord(input)) {
+    return {};
+  }
+  const serialized = JSON.stringify(input);
+  if (serialized.length <= MAX_RUNTIME_TOOL_EVENT_INPUT_CHARS) {
+    return { input };
+  }
+  return {
+    input: {
+      truncated: true,
+      originalChars: serialized.length,
+      inputKeys: Object.keys(input)
+    }
+  };
+}
+
 function readOpenAiModel(env: Record<string, string | undefined> | undefined): string {
   const raw = readEnv(env, "AI_MODEL") ?? "openai:gpt-5.4";
   const separator = raw.indexOf(":");
@@ -707,6 +808,24 @@ function readProviderRetryBaseDelayMs(
     : DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;
 }
 
+function readMaxToolLoopSteps(
+  env: Record<string, string | undefined> | undefined
+): number {
+  const raw = readEnv(env, "BURBLE_NATIVE_MAX_TOOL_LOOP_STEPS");
+  if (!raw) {
+    return DEFAULT_MAX_TOOL_LOOP_STEPS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_MAX_TOOL_LOOP_STEPS;
+  }
+  return Math.min(Math.max(parsed, MIN_TOOL_LOOP_STEPS), MAX_TOOL_LOOP_STEPS);
+}
+
+function formatToolLoopBudget(remainingSteps: number): string {
+  return `Burble execution budget: ${remainingSteps} tool-call rounds remain. Complete all required reads and mutations before the final answer. Do not claim an operation succeeded unless its tool result succeeded.`;
+}
+
 function readTurnTimeoutMs(
   env: Record<string, string | undefined> | undefined
 ): number {
@@ -765,6 +884,32 @@ class ProviderStreamIncompleteError extends Error {
   constructor() {
     super("OpenAI Responses API stream ended before response.completed");
   }
+}
+
+class ProviderTerminalResponseError extends Error {
+  constructor(
+    readonly eventType: "response.failed" | "response.incomplete",
+    detail: string
+  ) {
+    super(`OpenAI Responses API ${eventType}: ${detail}`);
+  }
+}
+
+function readProviderTerminalDetail(
+  payload: Record<string, unknown>,
+  eventType: "response.failed" | "response.incomplete"
+): string {
+  const responsePayload = readRecord(payload, "response");
+  if (eventType === "response.failed") {
+    const error = readRecord(responsePayload, "error") ?? readRecord(payload, "error");
+    return sanitizeToolErrorMessage(readString(error, "message") ?? "unknown error");
+  }
+  const incompleteDetails =
+    readRecord(responsePayload, "incomplete_details") ??
+    readRecord(payload, "incomplete_details");
+  return sanitizeToolErrorMessage(
+    readString(incompleteDetails, "reason") ?? "unknown reason"
+  );
 }
 
 function shouldRetryProviderError(error: unknown): boolean {
@@ -900,11 +1045,25 @@ type RuntimeRequestManifestTool = NonNullable<
 function selectedRuntimeTools(request: RunRequest): RuntimeRequestManifestTool[] {
   if (request.input.scheduledJob) {
     const allowedTools = new Set(request.input.scheduledJob.allowedTools);
-    return (request.runtime.manifest?.tools ?? [])
+    const operationGrants = request.input.scheduledJob.operationGrants ?? [];
+    const manifestTools = request.runtime.manifest?.tools ?? [];
+    return manifestTools
       .filter(
         (tool) =>
           tool.enabled &&
-          (allowedTools.has(tool.name) || allowedTools.has(tool.alias))
+          (allowedTools.has(tool.name) ||
+            allowedTools.has(tool.alias)) &&
+          (!tool.operationNameInput ||
+            operationGrants.some(
+              (grant) =>
+                (grant.tool === tool.name || grant.tool === tool.alias) &&
+                Boolean(grant.operation)
+            ))
+      )
+      .map((tool) =>
+        tool.operationNameInput
+          ? narrowRuntimeToolOperations(tool, operationGrants)
+          : tool
       )
       .sort(compareRuntimeTools)
       .slice(0, MAX_PROMPT_TOOLS);
@@ -919,6 +1078,27 @@ function selectedRuntimeTools(request: RunRequest): RuntimeRequestManifestTool[]
     .sort(compareRuntimeTools)
     .slice(0, Math.max(0, MAX_PROMPT_TOOLS - builtInTools.length));
   return [...builtInTools, ...manifestTools];
+}
+
+function narrowRuntimeToolOperations(
+  tool: RuntimeRequestManifestTool,
+  grants: NonNullable<
+    NonNullable<RunRequest["input"]["scheduledJob"]>["operationGrants"]
+  >
+): RuntimeRequestManifestTool {
+  const operations = grants
+    .filter((grant) => grant.tool === tool.name || grant.tool === tool.alias)
+    .map((grant) => grant.operation)
+    .filter(Boolean)
+    .toSorted();
+  return {
+    ...tool,
+    input: tool.input.map((input) =>
+      input.name === tool.operationNameInput
+        ? { ...input, values: operations }
+        : input
+    )
+  };
 }
 
 function selectedBuiltInRuntimeTools(
@@ -1086,30 +1266,50 @@ function truncateForPrompt(value: string, maxLength: number): string {
 
 async function* readSseJsonPayloads(
   body: ReadableStream<Uint8Array>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  onClose?: (reason: "eof" | "aborted" | "consumer_stopped") => void
 ): AsyncIterable<Record<string, unknown>> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  while (true) {
-    const { value, done } = await readStreamChunkWithAbort(reader, signal);
-    if (done) {
-      break;
-    }
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split(/\r?\n\r?\n/);
-    buffer = parts.pop() ?? "";
-    for (const part of parts) {
-      const payload = parseSseJsonPayload(part);
-      if (payload) {
-        yield payload;
+  let reachedEof = false;
+  try {
+    while (true) {
+      const { value, done } = await readStreamChunkWithAbort(reader, signal);
+      if (done) {
+        reachedEof = true;
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split(/\r?\n\r?\n/);
+      buffer = parts.pop() ?? "";
+      for (const part of parts) {
+        const payload = parseSseJsonPayload(part);
+        if (payload) {
+          yield payload;
+        }
       }
     }
-  }
-  buffer += decoder.decode();
-  const payload = parseSseJsonPayload(buffer);
-  if (payload) {
-    yield payload;
+    buffer += decoder.decode();
+    const payload = parseSseJsonPayload(buffer);
+    if (payload) {
+      yield payload;
+    }
+  } finally {
+    const closeReason = reachedEof
+      ? "eof"
+      : signal.aborted
+        ? "aborted"
+        : "consumer_stopped";
+    if (!reachedEof) {
+      try {
+        void reader.cancel("terminal SSE event received").catch(() => {});
+      } catch {
+        // A terminal protocol event is authoritative even if transport cleanup fails.
+      }
+    }
+    reader.releaseLock();
+    onClose?.(closeReason);
   }
 }
 

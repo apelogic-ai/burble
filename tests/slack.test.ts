@@ -163,7 +163,10 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
       {
         sandboxProvider,
         sandboxStartCommand: ["runtime-entrypoint"],
-        sandboxFetch: async () => new Response("ok")
+        sandboxFetch: async (url) =>
+          url.endsWith("/capabilities")
+            ? Response.json({ runtimeType: "burble-native", version: "2" })
+            : new Response("ok")
       }
     );
 
@@ -192,7 +195,10 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
       undefined,
       {
         sandboxProvider,
-        sandboxFetch: async () => new Response("ok")
+        sandboxFetch: async (url) =>
+          url.endsWith("/capabilities")
+            ? Response.json({ runtimeType: "burble-native", version: "2" })
+            : new Response("ok")
       }
     );
 

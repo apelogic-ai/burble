@@ -21,6 +21,7 @@ import {
 } from "../providers/catalog";
 import {
   formatScheduledJobFailureMessage,
+  readDeclaredNoChangeOutput,
   scheduledTaskRuntimePrompt,
   validateScheduledJobOutput,
 } from "./output-contract";
@@ -50,7 +51,10 @@ import {
 } from "../workflow/task-workflow-driver";
 import type { TaskWorkflowEventStore } from "../workflow/task-workflow-store";
 import { markdownToSlackMrkdwn } from "../slack-mrkdwn";
-import { validateScheduledTask } from "./task-validation";
+import {
+  legacyScheduledTaskContractIssue,
+  validateScheduledTask,
+} from "./task-validation";
 import { formatScheduledTaskValidationFailureReason } from "./task-validation-format";
 import { AsyncKeyedLock } from "../async-keyed-lock";
 
@@ -400,6 +404,11 @@ function prepareScheduledRunExecution(
   if (!job) {
     throw new Error("Scheduled job not found");
   }
+  const capability = store.getAgentJobCapability(job.jobId);
+  const legacyContractIssue = legacyScheduledTaskContractIssue(job, capability);
+  if (legacyContractIssue) {
+    throw new Error(legacyContractIssue.message);
+  }
   const route = job.routeId ? store.getConversationRoute(job.routeId) : null;
   const destination = route ? readSlackRouteDestination(route) : null;
   const runtimePrompt = scheduledTaskRuntimePrompt(job.prompt);
@@ -506,35 +515,108 @@ async function executeScheduledRunAttempt(input: {
   logWarn?: (message: string) => void;
 }): Promise<ScheduledRunAttemptResult> {
   assertScheduledRunDestinationAvailable(input.executionContext);
+  const agentInput = buildScheduledRunAgentInput({
+    store: input.store,
+    run: input.run,
+    executionContext: input.executionContext,
+  });
   const collected = await collectScheduledAgentRunWithProgressRetry({
     runner: input.runner,
-    agentInput: buildScheduledRunAgentInput({
-      store: input.store,
-      run: input.run,
-      executionContext: input.executionContext,
-    }),
+    agentInput,
     job: input.executionContext.job,
     scheduledJobContext: input.executionContext.scheduledJobContext,
     scheduledRuntimeRetryDelayMs: input.scheduledRuntimeRetryDelayMs,
     scheduledRuntimeRetrySleep: input.scheduledRuntimeRetrySleep,
     logWarn: input.logWarn,
   });
-  const evidence = validateScheduledRunToolEvidence({
-    requiredTools: input.executionContext.requiredExecutionTools,
-    events: collected.events,
-  });
-  if (!evidence.ok) {
-    throw new Error(evidence.reason);
-  }
   const output = validateScheduledJobOutput(collected.output);
   if (!output.ok) {
     throw new Error(output.reason);
+  }
+  const evidence = validateScheduledRunToolEvidence({
+    requiredTools: input.executionContext.requiredExecutionTools,
+    events: collected.events,
+    prompt: input.executionContext.job.prompt,
+    outputText: output.text,
+  });
+  if (!evidence.ok) {
+    if (canRepairMissingScheduledOperations(evidence, collected.events)) {
+      input.logWarn?.(
+        `Scheduled run retrying omitted required operations runId=${input.run.runId} reason=${evidence.reason}`,
+      );
+      const repaired = await collectScheduledAgentRunWithProgressRetry({
+        runner: input.runner,
+        agentInput: {
+          ...agentInput,
+          text: scheduledExecutionContractRepairPrompt(
+            agentInput.text,
+            evidence.reason,
+          ),
+        },
+        job: input.executionContext.job,
+        scheduledJobContext: input.executionContext.scheduledJobContext,
+        scheduledRuntimeRetryDelayMs: input.scheduledRuntimeRetryDelayMs,
+        scheduledRuntimeRetrySleep: input.scheduledRuntimeRetrySleep,
+        logWarn: input.logWarn,
+      });
+      const repairedOutput = validateScheduledJobOutput(repaired.output);
+      if (!repairedOutput.ok) {
+        throw new Error(repairedOutput.reason);
+      }
+      const repairedEvidence = validateScheduledRunToolEvidence({
+        requiredTools: input.executionContext.requiredExecutionTools,
+        events: repaired.events,
+        prompt: input.executionContext.job.prompt,
+        outputText: repairedOutput.text,
+      });
+      if (!repairedEvidence.ok) {
+        throw new Error(repairedEvidence.reason);
+      }
+      return {
+        text: repairedOutput.text,
+        output: repaired.output,
+        events: repaired.events,
+      };
+    }
+    throw new Error(evidence.reason);
   }
   return {
     text: output.text,
     output: collected.output,
     events: collected.events,
   };
+}
+
+function canRepairMissingScheduledOperations(
+  evidence: { ok: true } | { ok: false; reason: string },
+  events: readonly AgentRunEvent[],
+): boolean {
+  return (
+    !evidence.ok &&
+    evidence.reason.startsWith(
+      "Scheduled run did not complete required tool ",
+    ) &&
+    !events.some((event) => {
+      if (event.type !== "tool_result" || event.status === "error") {
+        return false;
+      }
+      const spec = findProviderToolSpec(event.toolName);
+      return spec?.risk !== "read";
+    })
+  );
+}
+
+function scheduledExecutionContractRepairPrompt(
+  originalPrompt: string,
+  reason: string,
+): string {
+  return [
+    originalPrompt,
+    "",
+    "Execution contract repair:",
+    `The previous attempt was not delivered because: ${reason}`,
+    "Restart from current provider state. Complete every required operation before returning the final answer. Do not claim an operation succeeded unless its tool result succeeded.",
+  ].join("\n");
 }
 
 async function postScheduledRunOutput(input: {
@@ -1381,6 +1463,9 @@ function sanitizeScheduledRunToolEvent(
         callId: event.callId,
         classification: event.classification,
         ...(event.status ? { status: event.status } : {}),
+        ...(event.errorCode ? { errorCode: event.errorCode } : {}),
+        ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}),
+        ...(event.operation ? { operation: event.operation } : {}),
       },
     ];
   }
@@ -1390,28 +1475,13 @@ function sanitizeScheduledRunToolEvent(
 export function validateScheduledRunToolEvidence(input: {
   requiredTools: readonly string[];
   events: readonly AgentRunEvent[];
+  prompt: string;
+  outputText: string;
 }): { ok: true } | { ok: false; reason: string } {
   const successfulResults = input.events.filter(
     (event): event is Extract<AgentRunEvent, { type: "tool_result" }> =>
       event.type === "tool_result" && event.status !== "error",
   );
-  for (const requiredTool of input.requiredTools) {
-    const spec = findProviderToolSpec(requiredTool);
-    if (spec?.risk !== "read") {
-      continue;
-    }
-    if (
-      !successfulResults.some((event) =>
-        providerToolCovers(event.toolName, requiredTool),
-      )
-    ) {
-      return {
-        ok: false,
-        reason: `Scheduled run did not complete required tool ${spec.name}.`,
-      };
-    }
-  }
-
   const calls = new Map(
     input.events.flatMap((event) =>
       event.type === "tool_call" ? [[event.callId, event.toolName] as const] : [],
@@ -1426,11 +1496,47 @@ export function validateScheduledRunToolEvidence(input: {
     if (spec && spec.risk !== "read") {
       return {
         ok: false,
-        reason: `Scheduled run tool ${spec.name} failed before delivery.`,
+        reason: scheduledToolFailureReason(spec.name, event),
       };
     }
   }
+  const declaredNoChangeOutput = readDeclaredNoChangeOutput(input.prompt);
+  const isDeclaredNoChange =
+    declaredNoChangeOutput !== null &&
+    input.outputText.trim() === declaredNoChangeOutput;
+  for (const requiredTool of input.requiredTools) {
+    const spec = findProviderToolSpec(requiredTool);
+    if (spec?.risk !== "read" && isDeclaredNoChange) {
+      continue;
+    }
+    if (
+      !successfulResults.some((event) =>
+        providerToolCovers(event.toolName, requiredTool),
+      )
+    ) {
+      return {
+        ok: false,
+        reason: `Scheduled run did not complete required tool ${spec?.name ?? requiredTool}.`,
+      };
+    }
+  }
+
   return { ok: true };
+}
+
+function scheduledToolFailureReason(
+  toolName: string,
+  event: Extract<AgentRunEvent, { type: "tool_result" }>,
+): string {
+  const operation = event.operation
+    ? ` (operation ${event.operation})`
+    : "";
+  const detail = [event.errorCode, event.errorMessage?.replace(/[.\s]+$/, "")]
+    .filter((value): value is string => Boolean(value))
+    .join(": ");
+  return detail
+    ? `Scheduled run tool ${toolName} failed before delivery${operation}: ${detail}.`
+    : `Scheduled run tool ${toolName} failed before delivery${operation}.`;
 }
 
 export function scheduledRuntimeRetryDelayMs(

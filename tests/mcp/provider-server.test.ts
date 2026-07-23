@@ -641,6 +641,151 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("keeps dynamic MCP bridge job claims limited to the bridge", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        runtimeId: runtime.id,
+        conversationId: "D123"
+      }
+    });
+    store.upsertAgentJobCapability({
+      jobId: "job-provider-wide",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_call_mcp_tool"],
+      routeId: route.id,
+      policyHash: "policy-a",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job-provider-wide",
+      allowedTools: ["github_call_mcp_tool"]
+    });
+
+    const response = await handleProviderMcpRequest(
+      {
+        ...config,
+        githubViaMcpGw: true
+      },
+      store,
+      issuer,
+      mcpRequest({ method: "tools/list" }, token),
+      {},
+      "github"
+    );
+    const body = readMcpBody(await response.text());
+    const toolNames = body.result.tools.map((tool) => tool.name);
+
+    expect(response.status).toBe(200);
+    expect(toolNames).toContain("github_call_mcp_tool");
+    expect(toolNames).not.toContain("github_get_pr");
+    expect(toolNames).not.toContain("github_get_issue");
+    expect(toolNames).not.toContain("google_get_drive_file");
+
+    store.close();
+  });
+
+  test("rejects dynamic MCP bridge operations outside the scheduled grant", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-native",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/runtime.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertAgentJobCapability({
+      jobId: "job-operation-scoped",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_call_mcp_tool"],
+      operationGrants: [
+        {
+          tool: "github_call_mcp_tool",
+          operation: "issue_read"
+        }
+      ],
+      routeId: null,
+      policyHash: "policy-a",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "burble-native"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job-operation-scoped",
+      allowedTools: ["github_call_mcp_tool"]
+    });
+
+    const response = await handleProviderMcpRequest(
+      {
+        ...config,
+        githubViaMcpGw: true
+      },
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "github_call_mcp_tool",
+            arguments: {
+              jobId: "job-operation-scoped",
+              name: "issue_comments",
+              arguments: {
+                owner: "apelogic-ai",
+                repo: "burble",
+                issue_number: 107
+              }
+            }
+          }
+        },
+        token
+      ),
+      {
+        callMcpGwTool: async () => {
+          throw new Error("operation grant should reject before downstream");
+        }
+      },
+      "github"
+    );
+    const body = readMcpBody(await response.text());
+
+    expect(response.status).toBe(200);
+    expect(body.error).toEqual({
+      code: -32024,
+      message:
+        "Operation issue_comments is not available through github_call_mcp_tool for scheduled job job-operation-scoped."
+    });
+    store.close();
+  });
+
   test("rejects job-scoped JWT claims without a stored job capability", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");

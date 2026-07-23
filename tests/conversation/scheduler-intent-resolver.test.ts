@@ -189,6 +189,65 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses exact dynamic operation selections in recurring steps", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        JSON.stringify({
+          intent: "create_job",
+          confidence: 0.99,
+          jobId: null,
+          create: {
+            title: "Review activity",
+            prompt: "Review activity.",
+            schedule: {
+              kind: "cron",
+              expression: "0 * * * *",
+              timezone: "UTC",
+            },
+          },
+          taskPlan: {
+            preparation: [],
+            steps: [
+              {
+                id: "inspect",
+                instruction: "Inspect records and comments.",
+                tools: ["github_call_mcp_tool"],
+                operations: [
+                  {
+                    tool: "github_call_mcp_tool",
+                    operation: "issue_read",
+                  },
+                  {
+                    tool: "github_call_mcp_tool",
+                    operation: "issue_comments",
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      taskPlan: {
+        steps: [
+          {
+            id: "inspect",
+            operations: [
+              {
+                tool: "github_call_mcp_tool",
+                operation: "issue_read",
+              },
+              {
+                tool: "github_call_mcp_tool",
+                operation: "issue_comments",
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
   test("accepts ordinary JSON identifiers in generic task plans", () => {
     expect(
       parseSchedulerIntentResponse(

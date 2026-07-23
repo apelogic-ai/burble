@@ -14,18 +14,22 @@ describe("scheduler run executor", () => {
   test("requires resolved read capabilities and rejects failed mutations", () => {
     expect(
       validateScheduledRunToolEvidence({
-        requiredTools: ["github_search_issues"],
+        requiredTools: ["github_call_mcp_tool"],
         events: [],
+        prompt: "Find new records.",
+        outputText: "Found one new record.",
       }),
     ).toEqual({
       ok: false,
       reason:
-        "Scheduled run did not complete required tool github_search_issues.",
+        "Scheduled run did not complete required tool github_call_mcp_tool.",
     });
 
     expect(
       validateScheduledRunToolEvidence({
-        requiredTools: ["github_search_issues"],
+        requiredTools: ["github_call_mcp_tool"],
+        prompt: "Find new records.",
+        outputText: "Found one new record.",
         events: [
           {
             type: "tool_call",
@@ -46,6 +50,8 @@ describe("scheduler run executor", () => {
     expect(
       validateScheduledRunToolEvidence({
         requiredTools: [],
+        prompt: "Update the state.",
+        outputText: "State updated.",
         events: [
           {
             type: "tool_call",
@@ -58,14 +64,46 @@ describe("scheduler run executor", () => {
             callId: "call-write",
             classification: "user_private",
             status: "error",
+            errorCode: "state_replace_failed",
+            errorMessage: "Revision conflict.",
+            operation: "drive_files_update",
           },
         ],
       }),
     ).toEqual({
       ok: false,
       reason:
-        "Scheduled run tool google_append_to_drive_text_file failed before delivery.",
+        "Scheduled run tool google_append_to_drive_text_file failed before delivery (operation drive_files_update): state_replace_failed: Revision conflict.",
     });
+  });
+
+  test("requires expected mutations unless the exact no-change output applies", () => {
+    const task = [
+      "Find new records and persist newly reported records in durable state.",
+      "If no new records remain, say exactly: no new records",
+    ].join("\n");
+
+    expect(
+      validateScheduledRunToolEvidence({
+        requiredTools: ["google_append_to_drive_text_file"],
+        events: [],
+        prompt: task,
+        outputText: "Found one new record.",
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Scheduled run did not complete required tool google_append_to_drive_text_file.",
+    });
+
+    expect(
+      validateScheduledRunToolEvidence({
+        requiredTools: ["google_append_to_drive_text_file"],
+        events: [],
+        prompt: task,
+        outputText: "no new records",
+      }),
+    ).toEqual({ ok: true });
   });
 
   test("uses bounded exponential backoff with jitter for runtime retries", () => {
@@ -227,6 +265,59 @@ describe("scheduler run executor", () => {
         ].join("\n"),
       },
     ]);
+
+    store.close();
+  });
+
+  test("fails legacy execution contracts before invoking the runtime", async () => {
+    const store = createTokenStore(":memory:");
+    const job = store.upsertScheduledJob({
+      jobId: "job-legacy-provider",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Legacy provider task",
+      prompt: "Review open pull requests.",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      runtimeType: "burble-native",
+      state: "scheduled",
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      expectedTools: null,
+      requiredTools: ["github_search_issues"],
+      runtimeType: "burble-native",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-legacy-provider",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+    });
+    let runnerCalled = false;
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: {
+        name: "test-runner",
+        capabilities: { streaming: true, toolEvents: true, remote: true },
+        async *run() {
+          runnerCalled = true;
+        },
+      },
+      slackClient: { chat: { postMessage: async () => ({}) } },
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(runnerCalled).toBe(false);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "failed",
+      failureReason:
+        "This scheduled task uses a legacy capability contract without resolved expected operations. Recreate or re-save the scheduled task before running it.",
+    });
 
     store.close();
   });
@@ -411,6 +502,139 @@ describe("scheduler run executor", () => {
       status: "succeeded",
       attempt: 1,
     });
+
+    store.close();
+  });
+
+  test("repairs an omitted required operation before delivery", async () => {
+    const store = createTokenStore(":memory:");
+    const principal = { workspaceId: "T123", slackUserId: "U123" };
+    const route = store.upsertConversationRoute({
+      ...principal,
+      transport: "slack",
+      destination: {
+        channelId: "D123",
+        isDirectMessage: true,
+        rootId: "dm:D123",
+      },
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-stateful-report",
+      ...principal,
+      title: "Stateful report",
+      prompt: [
+        "Read the bound state and report new records.",
+        "Persist every newly reported record before reporting it.",
+        "If no new records remain, say exactly: no new records",
+      ].join("\n"),
+      schedule: { kind: "interval", every: { hours: 1 } },
+      routeId: route.id,
+      runtimeType: "burble-native",
+      state: "scheduled",
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      ...principal,
+      expectedTools: [
+        "google_get_drive_file",
+        "google_append_to_drive_text_file",
+      ],
+      requiredTools: [
+        "google_get_drive_file",
+        "google_append_to_drive_text_file",
+      ],
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "drive_text_file",
+          id: "state-file-123",
+        },
+      ],
+      routeId: route.id,
+      runtimeType: "burble-native",
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: principal.slackUserId,
+      providerLogin: "person@example.com",
+      accessToken: "google-token",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-stateful-report",
+      jobId: job.jobId,
+      ...principal,
+      triggerSource: "manual",
+      status: "queued",
+    });
+    const runnerInputs: Array<{ text: string }> = [];
+    let attempts = 0;
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: { streaming: true, toolEvents: true, remote: true },
+      async *run(input) {
+        attempts += 1;
+        runnerInputs.push(input);
+        yield {
+          type: "tool_call",
+          toolName: "google.getDriveFile",
+          callId: `read-${attempts}`,
+          input: { fileId: "state-file-123" },
+        };
+        yield {
+          type: "tool_result",
+          toolName: "google.getDriveFile",
+          callId: `read-${attempts}`,
+          classification: "user_private",
+          status: "ok",
+        };
+        if (attempts === 2) {
+          yield {
+            type: "tool_call",
+            toolName: "google.appendDriveTextFile",
+            callId: "write-2",
+            input: { fileId: "state-file-123", text: "record-a" },
+          };
+          yield {
+            type: "tool_result",
+            toolName: "google.appendDriveTextFile",
+            callId: "write-2",
+            classification: "user_private",
+            status: "ok",
+          };
+        }
+        yield {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "record-a",
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string }> = [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(attempts).toBe(2);
+    expect(runnerInputs[1].text).toContain("Execution contract repair");
+    expect(runnerInputs[1].text).toContain(
+      "Scheduled run did not complete required tool google_append_to_drive_text_file.",
+    );
+    expect(posts).toEqual([{ channel: "D123", text: "record-a" }]);
+    expect(store.getAgentJobRun(run.runId)?.status).toBe("succeeded");
 
     store.close();
   });
@@ -772,7 +996,7 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
-  test("manual workflow authority records validation failures in the driver", async () => {
+  test("manual workflow authority records legacy contract failures in the driver", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();
     const route = store.upsertConversationRoute({
@@ -840,7 +1064,7 @@ describe("scheduler run executor", () => {
     expect(store.getAgentJobRun(run.runId)).toMatchObject({
       status: "failed",
       failureReason: expect.stringContaining(
-        "missing_required_tool: Task requires github_search_issues",
+        "This scheduled task uses a legacy capability contract without resolved expected operations",
       ),
     });
     expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
@@ -883,6 +1107,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: [],
       requiredTools: ["github_search_issues", "slack_search_messages"],
       routeId: route.id,
       runtimeType: "openclaw",
@@ -992,6 +1217,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: [
         "github_search_issues",
         "slack_search_messages",
@@ -1443,6 +1669,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: [],
       requiredTools: ["google_get_drive_file", "google_search_drive_files"],
       routeId: route.id,
       runtimeType: "hermes",
@@ -2077,6 +2304,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: [],
       requiredTools: ["web_search", "slack_search_messages"],
       routeId: route.id,
       runtimeType: "openclaw",
@@ -2190,6 +2418,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["google_create_drive_text_file"],
       requiredTools: ["web_search", "google_create_drive_text_file"],
       routeId: route.id,
       runtimeType: "openclaw",
@@ -2277,6 +2506,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: ["github_search_issues", "conversation.sendMessage"],
       routeId: route.id,
       runtimeType: "openclaw",
@@ -2384,6 +2614,7 @@ describe("scheduler run executor", () => {
       jobId: job.jobId,
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["google_create_drive_text_file"],
       requiredTools: ["google_create_drive_text_file"],
       routeId: route.id,
       runtimeType: "hermes",

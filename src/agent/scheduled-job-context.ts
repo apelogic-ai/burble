@@ -1,5 +1,9 @@
 import type { ToolClassification } from "../conversation/types";
-import type { AgentJobCapabilityRecord, AgentRuntimeEngine } from "../db";
+import type {
+  AgentJobCapabilityRecord,
+  AgentJobOperationGrant,
+  AgentRuntimeEngine,
+} from "../db";
 
 export type ScheduledJobStateRef = {
   provider: string;
@@ -18,6 +22,7 @@ export type ScheduledJobContext = {
   jobId: string;
   capabilityProfile: string;
   allowedTools: string[];
+  operationGrants?: AgentJobOperationGrant[];
   routeId?: string;
   runtimeType?: AgentRuntimeEngine;
   stateRefs: ScheduledJobStateRef[];
@@ -31,11 +36,27 @@ export function buildScheduledJobContext(
     jobId: capability.jobId,
     capabilityProfile: capability.capabilityProfile,
     allowedTools: [...new Set(capability.requiredTools)].sort(),
+    operationGrants: normalizeOperationGrants(capability.operationGrants),
     ...(capability.routeId ? { routeId: capability.routeId } : {}),
     ...(capability.runtimeType ? { runtimeType: capability.runtimeType } : {}),
     stateRefs: normalizeStateRefs(capability.stateRefs),
     visibilityPolicy: normalizeVisibilityPolicy(capability.visibilityPolicy),
   };
+}
+
+function normalizeOperationGrants(
+  value: AgentJobOperationGrant[] | undefined,
+): AgentJobOperationGrant[] {
+  return Array.isArray(value)
+    ? value.map((grant) => ({
+        tool: grant.tool,
+        operation: grant.operation,
+        ...(grant.description ? { description: grant.description } : {}),
+        ...(grant.inputSchema !== undefined
+          ? { inputSchema: grant.inputSchema }
+          : {}),
+      }))
+    : [];
 }
 
 function normalizeStateRefs(value: unknown): ScheduledJobStateRef[] {
