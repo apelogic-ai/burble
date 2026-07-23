@@ -117,6 +117,10 @@
                         "type": "string",
                         "minLength": 1
                       },
+                      "grantCoverage": {
+                        "type": "string",
+                        "const": "provider"
+                      },
                       "title": {
                         "type": "string",
                         "minLength": 1

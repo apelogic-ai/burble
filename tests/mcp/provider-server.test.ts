@@ -641,6 +641,70 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("expands provider-wide job claims to typed tools from the same provider", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        runtimeId: runtime.id,
+        conversationId: "D123"
+      }
+    });
+    store.upsertAgentJobCapability({
+      jobId: "job-provider-wide",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_call_mcp_tool"],
+      routeId: route.id,
+      policyHash: "policy-a",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job-provider-wide",
+      allowedTools: ["github_call_mcp_tool"]
+    });
+
+    const response = await handleProviderMcpRequest(
+      {
+        ...config,
+        githubViaMcpGw: true
+      },
+      store,
+      issuer,
+      mcpRequest({ method: "tools/list" }, token),
+      {},
+      "github"
+    );
+    const body = readMcpBody(await response.text());
+    const toolNames = body.result.tools.map((tool) => tool.name);
+
+    expect(response.status).toBe(200);
+    expect(toolNames).toContain("github_call_mcp_tool");
+    expect(toolNames).toContain("github_get_pr");
+    expect(toolNames).toContain("github_get_issue");
+    expect(toolNames).not.toContain("google_get_drive_file");
+
+    store.close();
+  });
+
   test("rejects job-scoped JWT claims without a stored job capability", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");

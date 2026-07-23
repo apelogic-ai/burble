@@ -24,6 +24,7 @@ export type RuntimeManifestTool = {
   name: string;
   alias: string;
   provider: string;
+  grantCoverage?: "provider";
   title: string;
   description: string;
   enabled: boolean;
@@ -203,6 +204,9 @@ function manifestTool(input: {
     name: input.tool.name,
     alias: input.tool.alias,
     provider: input.tool.provider,
+    ...(input.tool.grantCoverage
+      ? { grantCoverage: input.tool.grantCoverage }
+      : {}),
     title: input.tool.title,
     description: input.tool.description,
     enabled:

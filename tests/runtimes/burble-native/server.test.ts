@@ -1004,6 +1004,89 @@ describe("Burble Native runtime server", () => {
     });
   });
 
+  test("exposes same-provider typed tools for a provider-wide scheduled grant", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestTools(
+            withScheduledJob(nativeRunRequest("inspect a pull request"), [
+              "github_call_mcp_tool"
+            ]),
+            [
+              {
+                name: "github_call_mcp_tool",
+                alias: "github.callMcpTool",
+                provider: "github",
+                grantCoverage: "provider",
+                title: "GitHub MCP tool",
+                description: "Call an advertised GitHub MCP tool.",
+                enabled: true,
+                risk: "high_write",
+                routeRequired: true,
+                confirmation: "strong",
+                retrySafe: false,
+                input: []
+              },
+              {
+                name: "github_get_pr",
+                alias: "github.getPullRequest",
+                provider: "github",
+                title: "GitHub pull request",
+                description: "Read a pull request.",
+                enabled: true,
+                risk: "read",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: true,
+                input: []
+              },
+              {
+                name: "google_get_drive_file",
+                alias: "google.getDriveFile",
+                provider: "google",
+                title: "Drive file",
+                description: "Read a Drive file.",
+                enabled: true,
+                risk: "read",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: true,
+                input: []
+              }
+            ]
+          )
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_INTERNAL_TOKEN: "runtime-token"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          return Response.json({
+            output_text: "Done.",
+            usage: nativeUsage()
+          });
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const providerBody = JSON.parse(String(requests[0]?.init?.body));
+    expect(providerBody.input[0].content).toContain("github.callMcpTool");
+    expect(providerBody.input[0].content).toContain("github.getPullRequest");
+    expect(providerBody.input[0].content).not.toContain("google.getDriveFile");
+  });
+
   test("bounds large tool inputs in runtime events without truncating execution", async () => {
     const replacementText = "state-entry\n".repeat(1_000);
     const requests: Array<{ url: string; init?: RequestInit }> = [];

@@ -1,4 +1,7 @@
-import { providerToolCatalog } from "../providers/catalog";
+import {
+  providerToolCatalog,
+  providerToolCovers
+} from "../providers/catalog";
 
 const providerToolAliases = new Map<string, string>();
 
@@ -31,8 +34,8 @@ export function isScheduledJobToolAllowed(input: {
   requiredTools: string[];
   toolName: string;
 }): boolean {
-  const requiredTools = new Set(
-    normalizeScheduledJobToolNames(input.requiredTools)
+  const toolName = normalizeScheduledJobToolName(input.toolName);
+  return normalizeScheduledJobToolNames(input.requiredTools).some(
+    (requiredTool) => providerToolCovers(requiredTool, toolName)
   );
-  return requiredTools.has(normalizeScheduledJobToolName(input.toolName));
 }

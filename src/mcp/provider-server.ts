@@ -84,6 +84,7 @@ import { searchSlackMessages, searchSlackUsers } from "../providers/slack/client
 import { searchWeb } from "../providers/web/client";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import type { RuntimeJwtClaims } from "../runtime-jwt";
+import { providerToolCovers } from "../providers/catalog";
 import {
   buildRuntimeManifestForRecord,
   enabledManifestToolNames
@@ -395,7 +396,15 @@ function enabledToolsForClaims(
     return enabledTools;
   }
   return new Set(
-    claims.allowed_tools.filter((toolName) => enabledTools.has(toolName))
+    manifest.tools
+      .filter(
+        (tool) =>
+          tool.enabled &&
+          claims.allowed_tools?.some((allowedTool) =>
+            providerToolCovers(allowedTool, tool.name)
+          )
+      )
+      .map((tool) => tool.name)
   );
 }
 

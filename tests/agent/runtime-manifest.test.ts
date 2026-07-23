@@ -10,6 +10,7 @@ const toolCatalog: ProviderToolSpec[] = [
     implementation: "listMyPullRequests",
     title: "GitHub PRs",
     description: "List pull requests",
+    grantCoverage: "provider",
     input: {}
   },
   {
@@ -165,6 +166,7 @@ describe("buildRuntimeManifest", () => {
         routeRequired: true,
         confirmation: "none",
         retrySafe: true,
+        grantCoverage: "provider",
         input: []
       },
       {
