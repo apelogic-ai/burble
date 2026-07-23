@@ -113,7 +113,7 @@ export function attachRuntimeEventWebSocket(
 export function buildRuntimeCapabilityManifest(): CapabilityManifest {
   return {
     runtimeType: "burble-native",
-    version: "1",
+    version: "2",
     transports: ["http", "sse", "ndjson", "websocket"],
     streaming: true,
     cancellation: false,
