@@ -2,7 +2,6 @@ import type { AgentJobCapabilityRecord, ScheduledJobRecord } from "../db";
 import {
   expandProviderToolDependencies,
   findProviderToolSpec,
-  providerToolCatalog,
 } from "../providers/catalog";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 
@@ -158,18 +157,5 @@ function isExpectedToolCovered(
   expectedTool: string,
   grantedToolSet: Set<string>,
 ): boolean {
-  if (grantedToolSet.has(expectedTool)) {
-    return true;
-  }
-
-  const expectedSpec = findProviderToolSpec(expectedTool);
-  if (!expectedSpec) {
-    return false;
-  }
-  return providerToolCatalog.some(
-    (tool) =>
-      tool.provider === expectedSpec.provider &&
-      tool.grantCoverage === "provider" &&
-      grantedToolSet.has(tool.name),
-  );
+  return grantedToolSet.has(expectedTool);
 }

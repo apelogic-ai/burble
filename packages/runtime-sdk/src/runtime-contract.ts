@@ -146,7 +146,6 @@ export const runtimeManifestToolSchema = z
     name: z.string().min(1),
     alias: z.string().min(1),
     provider: z.string().min(1),
-    grantCoverage: z.literal("provider").optional(),
     title: z.string().min(1),
     description: z.string().min(1),
     enabled: z.boolean(),

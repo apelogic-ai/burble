@@ -1004,7 +1004,7 @@ describe("Burble Native runtime server", () => {
     });
   });
 
-  test("exposes same-provider typed tools for a provider-wide scheduled grant", async () => {
+  test("does not expand a dynamic MCP bridge into same-provider tools", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {
@@ -1023,7 +1023,6 @@ describe("Burble Native runtime server", () => {
                 name: "github_call_mcp_tool",
                 alias: "github.callMcpTool",
                 provider: "github",
-                grantCoverage: "provider",
                 title: "GitHub MCP tool",
                 description: "Call an advertised GitHub MCP tool.",
                 enabled: true,
@@ -1083,7 +1082,7 @@ describe("Burble Native runtime server", () => {
     expect(response.status).toBe(200);
     const providerBody = JSON.parse(String(requests[0]?.init?.body));
     expect(providerBody.input[0].content).toContain("github.callMcpTool");
-    expect(providerBody.input[0].content).toContain("github.getPullRequest");
+    expect(providerBody.input[0].content).not.toContain("github.getPullRequest");
     expect(providerBody.input[0].content).not.toContain("google.getDriveFile");
   });
 

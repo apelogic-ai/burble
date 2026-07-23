@@ -1046,23 +1046,12 @@ function selectedRuntimeTools(request: RunRequest): RuntimeRequestManifestTool[]
   if (request.input.scheduledJob) {
     const allowedTools = new Set(request.input.scheduledJob.allowedTools);
     const manifestTools = request.runtime.manifest?.tools ?? [];
-    const providerWideGrants = new Set(
-      manifestTools
-        .filter(
-          (tool) =>
-            tool.enabled &&
-            tool.grantCoverage === "provider" &&
-            (allowedTools.has(tool.name) || allowedTools.has(tool.alias))
-        )
-        .map((tool) => tool.provider)
-    );
     return manifestTools
       .filter(
         (tool) =>
           tool.enabled &&
           (allowedTools.has(tool.name) ||
-            allowedTools.has(tool.alias) ||
-            providerWideGrants.has(tool.provider))
+            allowedTools.has(tool.alias))
       )
       .sort(compareRuntimeTools)
       .slice(0, MAX_PROMPT_TOOLS);

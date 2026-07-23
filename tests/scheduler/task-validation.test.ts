@@ -83,7 +83,7 @@ describe("scheduled task validation", () => {
           "google_append_to_drive_text_file",
         ],
         requiredTools: [
-          "github_call_mcp_tool",
+          "github_search_issues",
           "google_append_to_drive_text_file",
           "google_get_drive_file",
         ],
@@ -103,7 +103,7 @@ describe("scheduled task validation", () => {
       "google_get_drive_file",
     ]);
     expect(validation.grantedTools).toEqual([
-      "github_call_mcp_tool",
+      "github_search_issues",
       "google_append_to_drive_text_file",
       "google_get_drive_file",
     ]);
@@ -234,7 +234,7 @@ describe("scheduled task validation", () => {
     expect(validation).toMatchObject({ ok: true, errors: [] });
   });
 
-  test("accepts the generic MCP-GW GitHub tool as explicit GitHub coverage", () => {
+  test("rejects a generic MCP bridge as coverage for a concrete operation", () => {
     const validation = validateScheduledTask(
       scheduledJob(
         "Find open pull requests in repositories under the apelogic-ai GitHub organization.",
@@ -246,13 +246,18 @@ describe("scheduled task validation", () => {
     );
 
     expect(validation).toMatchObject({
-      ok: true,
-      errors: [],
+      ok: false,
+      errors: [
+        {
+          code: "missing_required_tool",
+          tool: "github_search_issues",
+        },
+      ],
       warnings: [],
     });
   });
 
-  test("uses catalog-declared provider dispatch coverage generically", () => {
+  test("rejects a provider bridge as coverage for provider discovery", () => {
     const validation = validateScheduledTask(
       scheduledJob("Inspect the connected provider's available operations."),
       {
@@ -262,8 +267,13 @@ describe("scheduled task validation", () => {
     );
 
     expect(validation).toMatchObject({
-      ok: true,
-      errors: [],
+      ok: false,
+      errors: [
+        {
+          code: "missing_required_tool",
+          tool: "atlassian_list_mcp_tools",
+        },
+      ],
       warnings: [],
     });
   });

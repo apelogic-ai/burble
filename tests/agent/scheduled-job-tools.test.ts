@@ -2,13 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { isScheduledJobToolAllowed } from "../../src/agent/scheduled-job-tools";
 
 describe("scheduled job tool grants", () => {
-  test("provider-wide grants cover typed tools from the same provider", () => {
+  test("dynamic MCP bridge grants do not cover other provider tools", () => {
     expect(
       isScheduledJobToolAllowed({
         requiredTools: ["github_call_mcp_tool"],
         toolName: "github_get_pr"
       })
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isScheduledJobToolAllowed({
         requiredTools: ["github_call_mcp_tool"],

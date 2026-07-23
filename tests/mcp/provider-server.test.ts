@@ -641,7 +641,7 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
-  test("expands provider-wide job claims to typed tools from the same provider", async () => {
+  test("keeps dynamic MCP bridge job claims limited to the bridge", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");
     const runtime = store.getOrCreateAgentRuntime({
@@ -698,8 +698,8 @@ describe("handleProviderMcpRequest", () => {
 
     expect(response.status).toBe(200);
     expect(toolNames).toContain("github_call_mcp_tool");
-    expect(toolNames).toContain("github_get_pr");
-    expect(toolNames).toContain("github_get_issue");
+    expect(toolNames).not.toContain("github_get_pr");
+    expect(toolNames).not.toContain("github_get_issue");
     expect(toolNames).not.toContain("google_get_drive_file");
 
     store.close();

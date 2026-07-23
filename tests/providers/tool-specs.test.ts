@@ -26,17 +26,19 @@ type HermesProviderToolHints = {
 };
 
 describe("provider tool specs", () => {
-  test("loads provider-wide grant coverage from tool metadata", () => {
+  test("does not give dynamic MCP bridges provider-wide execution coverage", () => {
     expect(
-      githubProviderToolSpecs.find(
-        (tool) => tool.name === "github_call_mcp_tool"
-      )?.grantCoverage
-    ).toBe("provider");
+      "grantCoverage" in
+        githubProviderToolSpecs.find(
+          (tool) => tool.name === "github_call_mcp_tool"
+        )!
+    ).toBe(false);
     expect(
-      atlassianProviderToolSpecs.find(
-        (tool) => tool.name === "atlassian_call_mcp_tool"
-      )?.grantCoverage
-    ).toBe("provider");
+      "grantCoverage" in
+        atlassianProviderToolSpecs.find(
+          (tool) => tool.name === "atlassian_call_mcp_tool"
+        )!
+    ).toBe(false);
   });
 
   test("loads GitHub MCP tool metadata from YAML", () => {
