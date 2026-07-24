@@ -83,6 +83,7 @@ export type SchedulerControlIntent =
   | "list_job_runs"
   | "show_task"
   | "validate_task"
+  | "refresh_job_contract"
   | "create_job"
   | "trigger_job"
   | "pause_job"

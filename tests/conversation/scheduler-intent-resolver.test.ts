@@ -109,6 +109,18 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses scheduled task contract refresh intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"refresh_job_contract","confidence":0.97,"jobId":"job_openshell"}',
+      ),
+    ).toEqual({
+      intent: "refresh_job_contract",
+      confidence: 0.97,
+      jobId: "job_openshell",
+    });
+  });
+
   test("parses generic recurring and preparation plans without flattening setup into the prompt", () => {
     expect(
       parseSchedulerIntentResponse(

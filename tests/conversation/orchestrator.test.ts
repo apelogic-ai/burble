@@ -3236,6 +3236,183 @@ describe("handleConversation", () => {
     expect(response.text).toContain("missing_required_tool");
   });
 
+  test("refreshes an existing task operation contract without changing task semantics", async () => {
+    const updates: unknown[] = [];
+    let resolverCalls = 0;
+    const prompt =
+      "Inspect pull requests and discussions, then report relevant activity.";
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: [
+          "Re-save the Daily project pulse scheduled job.",
+          "Keep its current prompt, schedule, route, runtime, and bound state unchanged.",
+          "Re-resolve and preflight all recurring provider operations.",
+        ].join(" "),
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [
+            {
+              jobId: "job_openshell",
+              title: "Daily project pulse",
+              prompt,
+              schedule: {
+                kind: "cron",
+                expression: "0 16 * * *",
+                timezone: "UTC",
+              },
+              state: "scheduled",
+              runtimeType: "burble-native",
+              requiredTools: [
+                "github_call_mcp_tool",
+                "github_search_issues",
+                "google_get_drive_file",
+              ],
+              expectedTools: [
+                "github_call_mcp_tool",
+                "github_search_issues",
+                "google_get_drive_file",
+              ],
+              stateRefs: [
+                {
+                  provider: "google",
+                  kind: "document",
+                  id: "state-123",
+                  purpose: "Deduplicate prior reports",
+                },
+              ],
+              routeId: "convrt_project",
+              updatedAt: "2026-07-20T23:05:53.232Z",
+            },
+          ],
+          updateJobPrompt: (input) => {
+            updates.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job_openshell",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Daily project pulse",
+                prompt: input.prompt,
+                schedule: {
+                  kind: "cron",
+                  expression: "0 16 * * *",
+                  timezone: "UTC",
+                },
+                routeId: "convrt_project",
+                state: "scheduled",
+                runtimeType: "burble-native",
+                createdAt: "2026-07-20T23:05:53.232Z",
+                updatedAt: "2026-07-24T16:50:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async (input) => {
+          resolverCalls += 1;
+          if (resolverCalls === 1) {
+            return {
+              intent: "refresh_job_contract",
+              confidence: 0.99,
+              jobId: "job_openshell",
+            };
+          }
+          expect(input.repair?.jobId).toBe("job_openshell");
+          expect(input.repair?.errors.join("\n")).toContain(
+            "requires at least one exact recurring operation",
+          );
+          return {
+            intent: "refresh_job_contract",
+            confidence: 0.99,
+            jobId: "job_openshell",
+            taskPlan: {
+              preparation: [],
+              steps: [
+                {
+                  id: "refresh",
+                  instruction: prompt,
+                  tools: [
+                    "github_call_mcp_tool",
+                    "github_search_issues",
+                    "google_get_drive_file",
+                  ],
+                  operations: [
+                    {
+                      tool: "github_call_mcp_tool",
+                      operation: "pull_request_read",
+                    },
+                    {
+                      tool: "github_call_mcp_tool",
+                      operation: "get_discussion",
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        },
+        scheduledTaskPreparationExecutor: async (input) => {
+          expect(input.tool).toBe("github_list_mcp_tools");
+          return {
+            value: [
+              {
+                name: "pull_request_read",
+                description: "Read pull request details.",
+                inputSchema: { type: "object" },
+              },
+              {
+                name: "get_discussion",
+                description: "Read a discussion.",
+                inputSchema: { type: "object" },
+              },
+            ],
+          };
+        },
+      }),
+    );
+
+    expect(resolverCalls).toBe(2);
+    expect(updates).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job_openshell",
+        prompt,
+        capability: {
+          expectedTools: [
+            "github_call_mcp_tool",
+            "github_search_issues",
+            "google_get_drive_file",
+          ],
+          requiredTools: [
+            "github_call_mcp_tool",
+            "github_search_issues",
+            "google_get_drive_file",
+          ],
+          operationGrants: [
+            {
+              tool: "github_call_mcp_tool",
+              operation: "get_discussion",
+              description: "Read a discussion.",
+              inputSchema: { type: "object" },
+            },
+            {
+              tool: "github_call_mcp_tool",
+              operation: "pull_request_read",
+              description: "Read pull request details.",
+              inputSchema: { type: "object" },
+            },
+          ],
+        },
+      },
+    ]);
+    expect(response.text).toContain(
+      "Refreshed scheduled job job_openshell execution contract.",
+    );
+  });
+
   test("shows scheduled task details from scheduler resolver intent", async () => {
     let called = false;
     const response = await handleConversation(

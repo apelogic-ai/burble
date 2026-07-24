@@ -283,7 +283,7 @@ function withTimeout<T>(
 const schedulerIntentSystemPrompt = [
   "You classify Slack messages for Burble's scheduled-job control plane.",
   "Return only one JSON object. Do not include markdown.",
-  "Valid intents: list_jobs, list_job_runs, show_task, validate_task, create_job, trigger_job, pause_job, resume_job, delete_job, update_job_delivery, update_job, update_job_schedule, update_job_prompt, update_job_runtime, latest_run_status, none.",
+  "Valid intents: list_jobs, list_job_runs, show_task, validate_task, refresh_job_contract, create_job, trigger_job, pause_job, resume_job, delete_job, update_job_delivery, update_job, update_job_schedule, update_job_prompt, update_job_runtime, latest_run_status, none.",
   "Classify only scheduler/cron/background-job control requests.",
   "Never mutate a scheduled task from an ordinary conversational follow-up, even when a current task has a similar topic. The current message must explicitly refer to a job, task, schedule, cron, or other scheduler control action.",
   "Task specs are configured scheduled tasks. Job runs are executions of task specs.",
@@ -293,6 +293,8 @@ const schedulerIntentSystemPrompt = [
   "create.prompt is the executable task only. Remove schedule and delivery clauses such as every 30 min, hourly, report back here, to this channel.",
   "For update_job_schedule, include schedule with the new cron schedule and include jobId when one current task/job clearly matches the user reference.",
   "For update_job_prompt, include prompt with the new executable task prompt and include jobId when one current task/job clearly matches the user reference.",
+  "Use refresh_job_contract when the user explicitly asks to re-save, refresh, re-resolve, rebind, or preflight an existing task against current provider catalogs while preserving its task semantics and settings. Include jobId and omit taskPlan on the initial classification.",
+  "refresh_job_contract is a mutation that rebuilds exact recurring operation grants; do not classify it as validate_task.",
   "When a task creation or update contains multiple requested steps, return taskPlan instead of copying the user's message into prompt.",
   "taskPlan.steps are recurring executable steps. Each step has id, instruction, and the exact recurring provider tool names it requires in tools.",
   "For a recurring dynamic operation bridge, also include operations as an array of {tool, operation} using only exact operation names supplied by live pre-flight repair context.",
@@ -383,6 +385,7 @@ function schedulerIntentPrompt(
     'For create_job use: {"intent":"create_job","confidence":0.94,"jobId":null,"create":{"title":"Heart emoji every 30 min","prompt":"Post exactly this message: ❤️","schedule":{"kind":"cron","expression":"*/30 * * * *","timezone":"UTC"}}}',
     'For update_job_schedule use: {"intent":"update_job_schedule","confidence":0.94,"jobId":"job_123","schedule":{"kind":"cron","expression":"*/45 * * * *","timezone":"UTC"}}',
     'For update_job_prompt use: {"intent":"update_job_prompt","confidence":0.94,"jobId":"job_123","prompt":"Post exactly this message: ❤️❤️"}',
+    'For a contract refresh use: {"intent":"refresh_job_contract","confidence":0.98,"jobId":"job_123"}',
     'For a planned update use: {"intent":"update_job_prompt","confidence":0.98,"jobId":"job_123","taskPlan":{"preparation":[],"steps":[{"id":"collect","instruction":"Find the latest news and select the top five.","tools":["web_search"]},{"id":"report","instruction":"Return the results.","tools":[]}]}}',
     'For a repaired dynamic operation step use: {"id":"inspect","instruction":"Inspect the requested records.","tools":["dynamic_bridge_tool"],"operations":[{"tool":"dynamic_bridge_tool","operation":"exact_advertised_operation"}]}',
     'For update_job_runtime use: {"intent":"update_job_runtime","confidence":0.94,"jobId":"job_123","runtimeType":"burble-native"}',
@@ -414,6 +417,7 @@ export function parseSchedulerIntentResponse(
     intent !== "list_job_runs" &&
     intent !== "show_task" &&
     intent !== "validate_task" &&
+    intent !== "refresh_job_contract" &&
     intent !== "create_job" &&
     intent !== "trigger_job" &&
     intent !== "pause_job" &&
@@ -453,6 +457,7 @@ export function parseSchedulerIntentResponse(
       : null;
   const taskPlan =
     intent === "create_job" ||
+    intent === "refresh_job_contract" ||
     intent === "update_job_prompt" ||
     intent === "update_job"
       ? parseSchedulerTaskPlan(parsed.taskPlan)
