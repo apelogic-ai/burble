@@ -1078,6 +1078,7 @@ async function resolveScheduledTaskOperationPlan(
     repair: {
       jobId: target.jobId,
       errors: preflight.errors,
+      taskPlan: plan,
     },
   });
   if (

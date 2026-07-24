@@ -756,12 +756,24 @@ describe("scheduler intent resolver", () => {
         errors: [
           "missing_required_tool: Task requires google_get_drive_file but the grant does not include it.",
         ],
+        taskPlan: {
+          preparation: [],
+          steps: [
+            {
+              id: "read",
+              instruction: "Read the configured state.",
+              tools: ["google_get_drive_file"],
+            },
+          ],
+        },
       },
     });
 
     expect(prompt).toContain("Pre-flight repair request");
     expect(prompt).toContain("job_stateful");
     expect(prompt).toContain("missing_required_tool");
+    expect(prompt).toContain("Original recurring task plan");
+    expect(prompt).toContain("Read the configured state.");
     expect(prompt).toContain("Return one corrected candidate");
   });
 

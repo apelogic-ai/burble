@@ -69,7 +69,16 @@ export function createLlmSchedulerIntentResolver(
       deps.logWarn?.("Scheduler intent resolver returned invalid JSON.");
       return invalidSchedulerIntentResponse();
     }
-    if (needsSchedulerMutationRepair(responseText, parsed)) {
+    const requiresRepairTaskPlan = Boolean(
+      input.repair?.taskPlan && parsed.intent === "refresh_job_contract",
+    );
+    if (
+      needsSchedulerMutationRepair(
+        responseText,
+        parsed,
+        requiresRepairTaskPlan,
+      )
+    ) {
       deps.logWarn?.(
         "Scheduler intent resolver returned an incomplete or malformed mutation payload; attempting one structural repair.",
       );
@@ -78,7 +87,10 @@ export function createLlmSchedulerIntentResolver(
           generate({
             model,
             system: schedulerIntentSystemPrompt,
-            prompt: schedulerMutationRepairPrompt(responseText),
+            prompt: schedulerMutationRepairPrompt(
+              responseText,
+              input.repair,
+            ),
             maxRetries: 0,
           }),
           timeoutMs,
@@ -91,7 +103,11 @@ export function createLlmSchedulerIntentResolver(
         if (
           !repaired ||
           !isSameSchedulerMutationTarget(parsed, repaired) ||
-          needsSchedulerMutationRepair(repairedResponse.text, repaired)
+          needsSchedulerMutationRepair(
+            repairedResponse.text,
+            repaired,
+            requiresRepairTaskPlan,
+          )
         ) {
           deps.logWarn?.("Scheduler mutation structural repair remained invalid.");
           return invalidSchedulerIntentResponse();
@@ -155,12 +171,15 @@ function invalidSchedulerIntentResponse(): SchedulerIntentResolverResult {
 function needsSchedulerMutationRepair(
   responseText: string,
   parsed: SchedulerIntentResolverResult,
+  requireTaskPlan = false,
 ): boolean {
   const raw = parseJsonRecord(responseText);
   if (raw && Object.hasOwn(raw, "taskPlan") && !parsed.taskPlan) {
     return true;
   }
   switch (parsed.intent) {
+    case "refresh_job_contract":
+      return requireTaskPlan && !parsed.taskPlan;
     case "create_job":
       return !parsed.create;
     case "update_job_prompt":
@@ -191,12 +210,27 @@ function isSameSchedulerMutationTarget(
   );
 }
 
-function schedulerMutationRepairPrompt(originalResponse: string): string {
+function schedulerMutationRepairPrompt(
+  originalResponse: string,
+  repair?: {
+    jobId: string | null;
+    errors: string[];
+    taskPlan?: SchedulerTaskPlan;
+  },
+): string {
   return [
     "Repair this scheduler-intent JSON so its mutation payload matches the required schema.",
     "Preserve the original intent and jobId exactly.",
     "Preserve the requested task semantics, preparation semantics, instructions, and step ordering.",
     "Use ordinary JSON identifiers and exact canonical tool names from the system catalog.",
+    ...(repair?.taskPlan
+      ? [
+          "This is a dynamic-operation pre-flight repair.",
+          `Original recurring task plan: ${JSON.stringify(repair.taskPlan)}`,
+          ...repair.errors.map((error) => `Pre-flight error: ${error}`),
+          "Return the original task plan unchanged except for adding exact advertised selections to recurring operations arrays.",
+        ]
+      : []),
     "Return one complete JSON object and no markdown.",
     "Original response:",
     originalResponse,
@@ -293,7 +327,8 @@ const schedulerIntentSystemPrompt = [
   "create.prompt is the executable task only. Remove schedule and delivery clauses such as every 30 min, hourly, report back here, to this channel.",
   "For update_job_schedule, include schedule with the new cron schedule and include jobId when one current task/job clearly matches the user reference.",
   "For update_job_prompt, include prompt with the new executable task prompt and include jobId when one current task/job clearly matches the user reference.",
-  "Use refresh_job_contract when the user explicitly asks to re-save, refresh, re-resolve, rebind, or preflight an existing task against current provider catalogs while preserving its task semantics and settings. Include jobId and omit taskPlan on the initial classification.",
+  "Use refresh_job_contract when the user explicitly asks to re-save, refresh, re-resolve, rebind, or preflight an existing task against current provider catalogs while preserving its task semantics and settings. Include jobId. Omit taskPlan only on the initial classification when no pre-flight repair request is present.",
+  "During a refresh_job_contract pre-flight repair, return the supplied original recurring task plan unchanged except for adding exact advertised selections to its operations arrays. Keep preparation empty and do not alter instructions or tools.",
   "refresh_job_contract is a mutation that rebuilds exact recurring operation grants; do not classify it as validate_task.",
   "When a task creation or update contains multiple requested steps, return taskPlan instead of copying the user's message into prompt.",
   "taskPlan.steps are recurring executable steps. Each step has id, instruction, and the exact recurring provider tool names it requires in tools.",
@@ -350,7 +385,11 @@ function schedulerIntentPrompt(
     expectedTools?: string[];
     stateRefs?: unknown[];
   }>,
-  repair?: { jobId: string | null; errors: string[] },
+  repair?: {
+    jobId: string | null;
+    errors: string[];
+    taskPlan?: SchedulerTaskPlan;
+  },
 ): string {
   return [
     `Message: ${JSON.stringify(text)}`,
@@ -376,8 +415,13 @@ function schedulerIntentPrompt(
       ? [
           "Pre-flight repair request:",
           `- jobId=${JSON.stringify(repair.jobId)}`,
+          ...(repair.taskPlan
+            ? [
+                `- Original recurring task plan: ${JSON.stringify(repair.taskPlan)}`,
+              ]
+            : []),
           ...repair.errors.map((error) => `- ${error}`),
-          "Return one corrected candidate for the same job and requested mutation. Do not add preparation side effects.",
+          "Return one corrected candidate for the same job and requested mutation. Preserve the original recurring task plan exactly except for operation selections. Do not add preparation side effects.",
         ]
       : []),
     "Return JSON with shape:",

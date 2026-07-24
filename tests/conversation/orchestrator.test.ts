@@ -3320,6 +3320,26 @@ describe("handleConversation", () => {
             };
           }
           expect(input.repair?.jobId).toBe("job_openshell");
+          expect(
+            (
+              input.repair as
+                | { taskPlan?: unknown }
+                | undefined
+            )?.taskPlan,
+          ).toEqual({
+            preparation: [],
+            steps: [
+              {
+                id: "refresh",
+                instruction: prompt,
+                tools: [
+                  "github_call_mcp_tool",
+                  "github_search_issues",
+                  "google_get_drive_file",
+                ],
+              },
+            ],
+          });
           expect(input.repair?.errors.join("\n")).toContain(
             "requires at least one exact recurring operation",
           );

@@ -355,13 +355,9 @@ function operationSelectionError(
 ): string {
   return [
     `Dynamic operation preflight: ${toolName} ${reason}.`,
-    `Advertised operations: ${JSON.stringify(
-      catalog.map((entry) => ({
-        name: entry.name,
-        ...(entry.title ? { title: entry.title } : {}),
-        ...(entry.description ? { description: entry.description } : {}),
-      })),
-    )}.`,
+    `Advertised operation names: ${catalog
+      .map((entry) => entry.name)
+      .join(", ")}.`,
     `Select exact operations in the matching recurring step's operations array.`,
   ].join(" ");
 }

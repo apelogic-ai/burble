@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   executeScheduledTaskPreparation,
+  preflightScheduledTaskOperations,
   validateScheduledTaskPlan,
 } from "../../src/scheduler/task-preparation";
 import type { SchedulerTaskPlan } from "../../src/conversation/types";
@@ -415,6 +416,43 @@ describe("scheduled task preparation", () => {
         inputSchema: { type: "object", required: ["owner", "repo"] },
       },
     ]);
+  });
+
+  test("keeps recurring operation selection errors compact", async () => {
+    const preflight = await preflightScheduledTaskOperations({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      plan: {
+        preparation: [],
+        steps: [
+          {
+            id: "inspect",
+            instruction: "Inspect the requested records.",
+            tools: ["github_call_mcp_tool"],
+          },
+        ],
+      },
+      executeTool: async () => ({
+        value: [
+          {
+            name: "pull_request_read",
+            description: "A deliberately verbose provider description.",
+          },
+          {
+            name: "get_discussion",
+            description: "Another deliberately verbose provider description.",
+          },
+        ],
+      }),
+    });
+
+    expect(preflight.errors).toHaveLength(1);
+    expect(preflight.errors[0]).toContain(
+      "Advertised operation names: get_discussion, pull_request_read",
+    );
+    expect(preflight.errors[0]).not.toContain(
+      "deliberately verbose provider description",
+    );
   });
 
   test("rejects unadvertised recurring bridge operations before preparation side effects", async () => {

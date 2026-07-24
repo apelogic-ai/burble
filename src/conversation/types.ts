@@ -148,6 +148,7 @@ export type SchedulerIntentResolver = (input: {
   repair?: {
     jobId: string | null;
     errors: string[];
+    taskPlan?: SchedulerTaskPlan;
   };
 }) => Promise<SchedulerIntentResolverResult>;
 
