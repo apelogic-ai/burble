@@ -4,7 +4,8 @@ import {
   parseRuntimeCapabilityManifest,
   parseRuntimeRunEvent,
   parseRuntimeRunRequest,
-  runtimeRunEventSchema
+  runtimeRunEventSchema,
+  validateRuntimeJsonSchemaInput
 } from "@burble/runtime-sdk/runtime-contract";
 
 const baseRunRequest = {
@@ -100,6 +101,24 @@ const baseRunRequest = {
     }
   }
 };
+
+test("validates runtime operation inputs through the packaged SDK", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      method: {
+        type: "string",
+        enum: ["get", "get_comments"]
+      }
+    },
+    required: ["method"]
+  };
+
+  expect(validateRuntimeJsonSchemaInput(schema, {})).toContain("method:");
+  expect(
+    validateRuntimeJsonSchemaInput(schema, { method: "get_comments" })
+  ).toBeNull();
+});
 
 test("parses the canonical native runtime execution mode", () => {
   expect(

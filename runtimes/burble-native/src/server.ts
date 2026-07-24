@@ -1,6 +1,7 @@
 import {
   readRuntimeToolErrorDiagnostic,
   parseRuntimeRunRequest,
+  validateRuntimeJsonSchemaInput,
   type RuntimeFinalResponse
 } from "@burble/runtime-sdk/runtime-contract";
 import {
@@ -12,7 +13,6 @@ import {
   createRuntimeContractServer,
   type RuntimeEventWebSocket
 } from "@burble/runtime-sdk/server";
-import * as z from "zod/v4";
 import { createBurbleNativeToolExecutor } from "./tools";
 import type {
   CapabilityManifest,
@@ -1581,25 +1581,10 @@ function validateOperationFunctionInput(
   inputSchema: Record<string, unknown>,
   input: Record<string, unknown>
 ): string | null {
-  try {
-    const schema = z.fromJSONSchema(
-      inputSchema as Parameters<typeof z.fromJSONSchema>[0]
-    );
-    const result = schema.safeParse(input);
-    if (result.success) {
-      return null;
-    }
-    const issues = result.error.issues
-      .slice(0, 8)
-      .map((issue) => {
-        const path = issue.path.length > 0 ? issue.path.join(".") : "input";
-        return `${path}: ${issue.message}`;
-      })
-      .join("; ");
-    return `Arguments do not match the granted operation schema${issues ? `: ${issues}` : ""}. Correct the arguments and call the same typed operation again.`;
-  } catch {
-    return null;
-  }
+  const detail = validateRuntimeJsonSchemaInput(inputSchema, input);
+  return detail
+    ? `Arguments do not match the granted operation schema: ${detail}. Correct the arguments and call the same typed operation again.`
+    : null;
 }
 
 function parseFunctionArguments(value: unknown): unknown {

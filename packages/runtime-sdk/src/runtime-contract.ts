@@ -1,6 +1,31 @@
 import { z } from "zod";
 import { runtimeEngines } from "./runtime-engines";
 
+export function validateRuntimeJsonSchemaInput(
+  inputSchema: Record<string, unknown>,
+  input: Record<string, unknown>
+): string | null {
+  try {
+    const schema = z.fromJSONSchema(
+      inputSchema as Parameters<typeof z.fromJSONSchema>[0]
+    );
+    const result = schema.safeParse(input);
+    if (result.success) {
+      return null;
+    }
+    const issues = result.error.issues
+      .slice(0, 8)
+      .map((issue) => {
+        const path = issue.path.length > 0 ? issue.path.join(".") : "input";
+        return `${path}: ${issue.message}`;
+      })
+      .join("; ");
+    return issues || "Input does not match the JSON schema.";
+  } catch {
+    return null;
+  }
+}
+
 export const toolClassificationSchema = z.enum([
   "public",
   "user_private",
