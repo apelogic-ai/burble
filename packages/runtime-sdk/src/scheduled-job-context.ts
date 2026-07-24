@@ -23,10 +23,7 @@ export function formatRuntimeScheduledJobContextLines(
     `- jobId=${scheduledJob.jobId}`,
     `- capabilityProfile=${scheduledJob.capabilityProfile}`,
     `- allowedTools=${formatAllowedTools(scheduledJob.allowedTools)}`,
-    ...(scheduledJob.operationGrants ?? []).map(
-      (grant) =>
-        `- allowedOperation tool=${grant.tool} operation=${grant.operation}${grant.description ? ` description=${JSON.stringify(grant.description)}` : ""}`
-    ),
+    ...(scheduledJob.operationGrants ?? []).map(formatScheduledJobOperationGrant),
     ...(scheduledJob.routeId ? [`- routeId=${scheduledJob.routeId}`] : []),
     ...(options.includeRuntimeType && scheduledJob.runtimeType
       ? [`- runtimeType=${scheduledJob.runtimeType}`]
@@ -60,6 +57,90 @@ export function withTrustedScheduledJobId(
 
 function formatAllowedTools(allowedTools: readonly string[]): string {
   return [...new Set(allowedTools)].sort().join(",");
+}
+
+function formatScheduledJobOperationGrant(
+  grant: NonNullable<RuntimeScheduledJobContext["operationGrants"]>[number]
+): string {
+  const inputContract = formatOperationInputContract(grant.inputSchema);
+  return `- allowedOperation tool=${grant.tool} operation=${grant.operation}${grant.description ? ` description=${JSON.stringify(grant.description)}` : ""}${inputContract ? ` input=${inputContract}` : ""}`;
+}
+
+function formatOperationInputContract(inputSchema: unknown): string {
+  if (!isRecord(inputSchema) || !isRecord(inputSchema.properties)) {
+    return "";
+  }
+  const required = new Set(
+    Array.isArray(inputSchema.required)
+      ? inputSchema.required.filter(
+          (field): field is string => typeof field === "string"
+        )
+      : []
+  );
+  const fields = Object.entries(inputSchema.properties).map(([name, schema]) =>
+    formatOperationInputField(name, schema, required.has(name))
+  );
+  for (const name of required) {
+    if (!Object.hasOwn(inputSchema.properties, name)) {
+      fields.push(`${name}:any,required`);
+    }
+  }
+  return boundPromptValue(`{${fields.join("; ")}}`, 3_000);
+}
+
+function formatOperationInputField(
+  name: string,
+  schema: unknown,
+  required: boolean
+): string {
+  if (!isRecord(schema)) {
+    return `${name}:any,${required ? "required" : "optional"}`;
+  }
+  const type = schemaType(schema);
+  const values = Array.isArray(schema.enum)
+    ? schema.enum
+        .slice(0, 20)
+        .map(formatSchemaLiteral)
+        .filter(Boolean)
+        .join("|")
+    : "";
+  return `${name}:${type}${values ? `(${values})` : ""},${required ? "required" : "optional"}`;
+}
+
+function schemaType(schema: Record<string, unknown>): string {
+  if (typeof schema.type === "string") {
+    return schema.type;
+  }
+  if (Array.isArray(schema.type)) {
+    const types = schema.type.filter(
+      (value): value is string => typeof value === "string"
+    );
+    if (types.length > 0) {
+      return types.join("|");
+    }
+  }
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    return typeof schema.enum[0];
+  }
+  return "any";
+}
+
+function formatSchemaLiteral(value: unknown): string {
+  if (
+    typeof value !== "string" &&
+    typeof value !== "number" &&
+    typeof value !== "boolean"
+  ) {
+    return "";
+  }
+  return boundPromptValue(String(value).replace(/[|(){};]/g, "_"), 80);
+}
+
+function boundPromptValue(value: string, maxLength: number): string {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  return normalized.length <= maxLength
+    ? normalized
+    : `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function formatScheduledJobStateRef(

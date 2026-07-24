@@ -1022,7 +1022,19 @@ describe("Burble Native runtime server", () => {
                 tool: "github_call_mcp_tool",
                 operation: "issue_read",
                 description: "Read issue details and comments",
-                inputSchema: { type: "object" }
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    method: {
+                      type: "string",
+                      enum: ["get", "get_comments"]
+                    },
+                    owner: { type: "string" },
+                    repo: { type: "string" },
+                    issue_number: { type: "number" }
+                  },
+                  required: ["method", "owner", "repo", "issue_number"]
+                }
               }
             ]),
             [
@@ -1098,6 +1110,9 @@ describe("Burble Native runtime server", () => {
     const providerBody = JSON.parse(String(requests[0]?.init?.body));
     expect(providerBody.input[0].content).toContain("github.callMcpTool");
     expect(providerBody.input[0].content).toContain("string(issue_read)");
+    expect(providerBody.input[0].content).toContain(
+      "input={method:string(get|get_comments),required"
+    );
     expect(providerBody.input[0].content).not.toContain("github.getPullRequest");
     expect(providerBody.input[0].content).not.toContain("google.getDriveFile");
   });
