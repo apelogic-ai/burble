@@ -12,6 +12,7 @@ import {
   createRuntimeContractServer,
   type RuntimeEventWebSocket
 } from "@burble/runtime-sdk/server";
+import * as z from "zod/v4";
 import { createBurbleNativeToolExecutor } from "./tools";
 import type {
   CapabilityManifest,
@@ -37,6 +38,7 @@ type OpenAiFunctionToolCall = {
   callId: string;
   toolName: string;
   input: unknown;
+  validationError?: string;
 };
 
 const DEFAULT_PROVIDER_TIMEOUT_MS = 120_000;
@@ -283,6 +285,17 @@ async function* runNativeTurn(
           request.input.scheduledJob
         )
       };
+      if (effectiveToolCall.validationError) {
+        toolOutputs.push({
+          type: "function_call_output",
+          call_id: toolCall.callId,
+          output: JSON.stringify({
+            error: "invalid_operation_arguments",
+            message: effectiveToolCall.validationError
+          })
+        });
+        continue;
+      }
       yield {
         type: "tool_call",
         toolName: effectiveToolCall.toolName,
@@ -549,7 +562,9 @@ async function collectOpenAiTurnAttempt(
         text: extractOpenAiText(responsePayload) ?? "",
         usage: normalizeOpenAiUsage(readRecord(responsePayload, "usage")),
         outputItems,
-        toolCalls: outputItems.flatMap(readOpenAiFunctionToolCall)
+        toolCalls: outputItems.flatMap((item) =>
+          readOpenAiFunctionToolCall(item, request)
+        )
       };
     }
     if (!response.body) {
@@ -593,7 +608,9 @@ async function collectOpenAiTurnAttempt(
         completedText = extractOpenAiText(responsePayload) ?? completedText;
         completedUsage = normalizeOpenAiUsage(readRecord(responsePayload, "usage"));
         outputItems = readOpenAiOutputItems(responsePayload);
-        toolCalls = outputItems.flatMap(readOpenAiFunctionToolCall);
+        toolCalls = outputItems.flatMap((item) =>
+          readOpenAiFunctionToolCall(item, request)
+        );
         break;
       }
       if (type === "response.failed" || type === "response.incomplete") {
@@ -991,13 +1008,7 @@ function buildOpenAiInput(request: RunRequest): OpenAiInputItem[] {
     "Format answers as Slack mrkdwn, not standard Markdown: use *bold* instead of **bold** and <url|label> instead of [label](url).",
     attachmentContext,
     scheduledJobContext,
-    toolCatalog
-      ? [
-          "Use burble_provider_call only when provider data or actions are needed.",
-          "When calling it, pass exactly one listed tool alias as toolName and a JSON object matching that tool's input hint as input.",
-          toolCatalog
-        ].join("\n")
-      : "No Burble provider tools are available for this turn.",
+    formatModelToolGuidance(request, toolCatalog),
     history ? `Recent conversation:\n${history}` : "",
     `User: ${request.input.text.trim()}`
   ]
@@ -1006,35 +1017,83 @@ function buildOpenAiInput(request: RunRequest): OpenAiInputItem[] {
   return [{ role: "user", content: text }];
 }
 
+function formatModelToolGuidance(
+  request: RunRequest,
+  toolCatalog: string
+): string {
+  if (!toolCatalog) {
+    return "No Burble provider tools are available for this turn.";
+  }
+  const operationAliases = new Set(
+    scheduledOperationToolBindings(request).map((binding) => binding.toolAlias)
+  );
+  const hasGenericTools = selectedRuntimeTools(request).some(
+    (tool) => !operationAliases.has(tool.alias)
+  );
+  return [
+    ...(hasGenericTools
+      ? [
+          "Use burble_provider_call only when one of the ordinary listed provider tools is needed.",
+          "When calling it, pass exactly one listed ordinary tool alias as toolName and a JSON object matching that tool's input hint as input."
+        ]
+      : []),
+    ...(operationAliases.size > 0
+      ? [
+          "Use the typed operation function whose description matches the required downstream operation.",
+          "Pass the operation arguments directly and satisfy every required field in its function schema; Burble supplies the bridge tool and operation name."
+        ]
+      : []),
+    toolCatalog
+  ].join("\n");
+}
+
 function buildOpenAiTools(request: RunRequest): OpenAiInputItem[] {
   const tools = selectedRuntimeTools(request);
   if (tools.length === 0) {
     return [];
   }
+  const operationBindings = scheduledOperationToolBindings(request);
+  const operationToolAliases = new Set(
+    operationBindings.map((binding) => binding.toolAlias)
+  );
+  const genericToolAliases = tools
+    .filter((tool) => !operationToolAliases.has(tool.alias))
+    .map((tool) => tool.alias);
   return [
-    {
+    ...operationBindings.map((binding) => ({
       type: "function",
-      name: BURBLE_PROVIDER_TOOL_NAME,
-      description:
-        "Call a Burble provider or conversation tool through the Burble tool gateway.",
-      parameters: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          toolName: {
-            type: "string",
+      name: binding.functionName,
+      description: `Call ${binding.toolAlias} operation ${binding.operation}.${binding.description ? ` ${binding.description}` : ""}`,
+      parameters: binding.inputSchema
+    })),
+    ...(genericToolAliases.length > 0
+      ? [
+          {
+            type: "function",
+            name: BURBLE_PROVIDER_TOOL_NAME,
             description:
-              "The exact Burble tool alias to execute. Use only aliases listed in the prompt's available Burble tools catalog."
-          },
-          input: {
-            type: "object",
-            description: "The JSON input to pass to the Burble tool.",
-            additionalProperties: true
+              "Call a Burble provider or conversation tool through the Burble tool gateway.",
+            parameters: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                toolName: {
+                  type: "string",
+                  enum: genericToolAliases,
+                  description:
+                    "The exact Burble tool alias to execute. Use only aliases listed in the prompt's available Burble tools catalog."
+                },
+                input: {
+                  type: "object",
+                  description: "The JSON input to pass to the Burble tool.",
+                  additionalProperties: true
+                }
+              },
+              required: ["toolName", "input"]
+            }
           }
-        },
-        required: ["toolName", "input"]
-      }
-    }
+        ]
+      : [])
   ];
 }
 
@@ -1098,6 +1157,70 @@ function narrowRuntimeToolOperations(
         ? { ...input, values: operations }
         : input
     )
+  };
+}
+
+type ScheduledOperationToolBinding = {
+  functionName: string;
+  toolAlias: string;
+  operationNameInput: string;
+  operationArgumentsInput: string;
+  operation: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+};
+
+function scheduledOperationToolBindings(
+  request: RunRequest
+): ScheduledOperationToolBinding[] {
+  if (!request.input.scheduledJob) {
+    return [];
+  }
+  const tools = selectedRuntimeTools(request);
+  const grants = request.input.scheduledJob.operationGrants ?? [];
+  const candidates = tools.flatMap((tool) => {
+    if (!tool.operationNameInput || !tool.operationArgumentsInput) {
+      return [];
+    }
+    return grants
+      .filter(
+        (grant) =>
+          grant.tool === tool.name || grant.tool === tool.alias
+      )
+      .map((grant) => ({
+        toolAlias: tool.alias,
+        operationNameInput: tool.operationNameInput!,
+        operationArgumentsInput: tool.operationArgumentsInput!,
+        operation: grant.operation,
+        ...(grant.description ? { description: grant.description } : {}),
+        inputSchema: operationFunctionInputSchema(grant.inputSchema)
+      }));
+  });
+  return candidates
+    .toSorted(
+      (left, right) =>
+        left.toolAlias.localeCompare(right.toolAlias) ||
+        left.operation.localeCompare(right.operation)
+    )
+    .map((binding, index) => ({
+      ...binding,
+      functionName: `burble_operation_${index}`
+    }));
+}
+
+function operationFunctionInputSchema(
+  inputSchema: unknown
+): Record<string, unknown> {
+  if (
+    isRecord(inputSchema) &&
+    inputSchema.type === "object" &&
+    isRecord(inputSchema.properties)
+  ) {
+    return inputSchema;
+  }
+  return {
+    type: "object",
+    additionalProperties: true
   };
 }
 
@@ -1401,17 +1524,43 @@ function readOpenAiOutputItems(value: unknown): OpenAiInputItem[] {
 }
 
 function readOpenAiFunctionToolCall(
-  item: OpenAiInputItem
+  item: OpenAiInputItem,
+  request: RunRequest
 ): OpenAiFunctionToolCall[] {
   if (item.type !== "function_call") {
     return [];
   }
   const name = typeof item.name === "string" ? item.name : "";
   const callId = typeof item.call_id === "string" ? item.call_id : "";
-  if (name !== BURBLE_PROVIDER_TOOL_NAME || !callId) {
+  if (!callId) {
     return [];
   }
   const parsed = parseFunctionArguments(item.arguments);
+  const operationBindings = scheduledOperationToolBindings(request);
+  const operationBinding = operationBindings.find(
+    (binding) => binding.functionName === name
+  );
+  if (operationBinding) {
+    const operationInput = isRecord(parsed) ? parsed : {};
+    const validationError = validateOperationFunctionInput(
+      operationBinding.inputSchema,
+      operationInput
+    );
+    return [
+      {
+        callId,
+        toolName: operationBinding.toolAlias,
+        input: {
+          [operationBinding.operationNameInput]: operationBinding.operation,
+          [operationBinding.operationArgumentsInput]: operationInput
+        },
+        ...(validationError ? { validationError } : {})
+      }
+    ];
+  }
+  if (name !== BURBLE_PROVIDER_TOOL_NAME) {
+    return [];
+  }
   const toolName =
     isRecord(parsed) && typeof parsed.toolName === "string"
       ? parsed.toolName.trim()
@@ -1426,6 +1575,31 @@ function readOpenAiFunctionToolCall(
       input: isRecord(parsed) && "input" in parsed ? parsed.input : {}
     }
   ];
+}
+
+function validateOperationFunctionInput(
+  inputSchema: Record<string, unknown>,
+  input: Record<string, unknown>
+): string | null {
+  try {
+    const schema = z.fromJSONSchema(
+      inputSchema as Parameters<typeof z.fromJSONSchema>[0]
+    );
+    const result = schema.safeParse(input);
+    if (result.success) {
+      return null;
+    }
+    const issues = result.error.issues
+      .slice(0, 8)
+      .map((issue) => {
+        const path = issue.path.length > 0 ? issue.path.join(".") : "input";
+        return `${path}: ${issue.message}`;
+      })
+      .join("; ");
+    return `Arguments do not match the granted operation schema${issues ? `: ${issues}` : ""}. Correct the arguments and call the same typed operation again.`;
+  } catch {
+    return null;
+  }
 }
 
 function parseFunctionArguments(value: unknown): unknown {

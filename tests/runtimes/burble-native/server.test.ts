@@ -1043,6 +1043,7 @@ describe("Burble Native runtime server", () => {
                 alias: "github.callMcpTool",
                 provider: "github",
                 operationNameInput: "name",
+                operationArgumentsInput: "arguments",
                 title: "GitHub MCP tool",
                 description: "Call an advertised GitHub MCP tool.",
                 enabled: true,
@@ -1107,14 +1108,271 @@ describe("Burble Native runtime server", () => {
     );
 
     expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
     const providerBody = JSON.parse(String(requests[0]?.init?.body));
     expect(providerBody.input[0].content).toContain("github.callMcpTool");
     expect(providerBody.input[0].content).toContain("string(issue_read)");
     expect(providerBody.input[0].content).toContain(
       "input={method:string(get|get_comments),required"
     );
+    expect(providerBody.input[0].content).toContain(
+      "Use the typed operation function whose description matches the required downstream operation."
+    );
+    expect(providerBody.input[0].content).not.toContain(
+      "Use burble_provider_call only"
+    );
+    expect(providerBody.tools).toContainEqual({
+      type: "function",
+      name: "burble_operation_0",
+      description:
+        "Call github.callMcpTool operation issue_read. Read issue details and comments",
+      parameters: {
+        type: "object",
+        properties: {
+          method: {
+            type: "string",
+            enum: ["get", "get_comments"]
+          },
+          owner: { type: "string" },
+          repo: { type: "string" },
+          issue_number: { type: "number" }
+        },
+        required: ["method", "owner", "repo", "issue_number"]
+      }
+    });
+    expect(providerBody.tools).not.toContainEqual(
+      expect.objectContaining({ name: "burble_provider_call" })
+    );
     expect(providerBody.input[0].content).not.toContain("github.getPullRequest");
     expect(providerBody.input[0].content).not.toContain("google.getDriveFile");
+  });
+
+  test("translates typed scheduled operations into bridge calls", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestTools(
+            withScheduledJob(
+              nativeRunRequest("inspect pull request comments"),
+              ["github_call_mcp_tool"],
+              [
+                {
+                  tool: "github_call_mcp_tool",
+                  operation: "pull_request_read",
+                  description: "Read pull request data",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      method: {
+                        type: "string",
+                        enum: ["get", "get_comments"]
+                      },
+                      owner: { type: "string" },
+                      repo: { type: "string" },
+                      pullNumber: { type: "number" }
+                    },
+                    required: ["method", "owner", "repo", "pullNumber"]
+                  }
+                }
+              ]
+            ),
+            [
+              {
+                name: "github_call_mcp_tool",
+                alias: "github.callMcpTool",
+                provider: "github",
+                operationNameInput: "name",
+                operationArgumentsInput: "arguments",
+                title: "GitHub MCP tool",
+                description: "Call an advertised GitHub MCP tool.",
+                enabled: true,
+                risk: "high_write",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: false,
+                input: [
+                  {
+                    name: "name",
+                    type: "string",
+                    required: true,
+                    nullable: false
+                  },
+                  {
+                    name: "arguments",
+                    type: "object",
+                    required: false,
+                    nullable: false
+                  }
+                ]
+              }
+            ]
+          )
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+          BURBLE_INTERNAL_TOKEN: "runtime-token"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          if (url.includes("/github.callMcpTool/execute")) {
+            return Response.json({
+              classification: "user_private",
+              content: { number: 1980 }
+            });
+          }
+          const providerRequestCount = requests.filter((request) =>
+            request.url.endsWith("/responses")
+          ).length;
+          if (providerRequestCount === 1) {
+            return Response.json({
+              output: [
+                {
+                  type: "function_call",
+                  call_id: "typed_operation_1",
+                  name: "burble_operation_0",
+                  arguments: JSON.stringify({
+                    method: "get_comments",
+                    owner: "acme",
+                    repo: "project",
+                    pullNumber: 1980
+                  })
+                }
+              ],
+              usage: nativeUsage()
+            });
+          }
+          return Response.json({
+            output_text: "No new comments.",
+            usage: nativeUsage()
+          });
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const providerBody = JSON.parse(String(requests[0]?.init?.body));
+    expect(
+      providerBody.tools.map((tool: { name: string }) => tool.name)
+    ).toEqual(["burble_operation_0"]);
+    const toolRequest = requests.find((request) =>
+      request.url.includes("/github.callMcpTool/execute")
+    );
+    expect(requests.map((request) => request.url)).toContain(
+      "http://burble-app:3000/internal/tools/github.callMcpTool/execute"
+    );
+    expect(JSON.parse(String(toolRequest?.init?.body))).toEqual({
+      input: {
+        name: "pull_request_read",
+        arguments: {
+          method: "get_comments",
+          owner: "acme",
+          repo: "project",
+          pullNumber: 1980
+        },
+        jobId: "job-native-123"
+      }
+    });
+    expect(events.some((event) => event.type === "final")).toBe(true);
+  });
+
+  test("repairs invalid typed operation arguments before provider execution", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          typedScheduledOperationRequest("inspect pull request comments")
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+          BURBLE_INTERNAL_TOKEN: "runtime-token"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          if (url.includes("/github.callMcpTool/execute")) {
+            return Response.json({
+              classification: "user_private",
+              content: { number: 1980 }
+            });
+          }
+          const providerRequestCount = requests.filter((request) =>
+            request.url.endsWith("/responses")
+          ).length;
+          if (providerRequestCount <= 2) {
+            return Response.json({
+              output: [
+                {
+                  type: "function_call",
+                  call_id: `typed_operation_${providerRequestCount}`,
+                  name: "burble_operation_0",
+                  arguments: JSON.stringify({
+                    ...(providerRequestCount === 2
+                      ? { method: "get_comments" }
+                      : {}),
+                    owner: "acme",
+                    repo: "project",
+                    pullNumber: 1980
+                  })
+                }
+              ],
+              usage: nativeUsage()
+            });
+          }
+          return Response.json({
+            output_text: "No new comments.",
+            usage: nativeUsage()
+          });
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const providerRequests = requests.filter((request) =>
+      request.url.endsWith("/responses")
+    );
+    expect(providerRequests).toHaveLength(3);
+    expect(String(providerRequests[1]?.init?.body)).toContain(
+      "invalid_operation_arguments"
+    );
+    expect(
+      requests.filter((request) =>
+        request.url.includes("/github.callMcpTool/execute")
+      )
+    ).toHaveLength(1);
+    expect(
+      events.filter((event) => event.type === "tool_call")
+    ).toHaveLength(1);
   });
 
   test("bounds large tool inputs in runtime events without truncating execution", async () => {
@@ -2551,6 +2809,61 @@ function withScheduledJob<T extends ReturnType<typeof nativeRunRequest>>(
       }
     }
   };
+}
+
+function typedScheduledOperationRequest(text: string) {
+  return withRuntimeManifestTools(
+    withScheduledJob(nativeRunRequest(text), ["github_call_mcp_tool"], [
+      {
+        tool: "github_call_mcp_tool",
+        operation: "pull_request_read",
+        description: "Read pull request data",
+        inputSchema: {
+          type: "object",
+          properties: {
+            method: {
+              type: "string",
+              enum: ["get", "get_comments"]
+            },
+            owner: { type: "string" },
+            repo: { type: "string" },
+            pullNumber: { type: "number" }
+          },
+          required: ["method", "owner", "repo", "pullNumber"]
+        }
+      }
+    ]),
+    [
+      {
+        name: "github_call_mcp_tool",
+        alias: "github.callMcpTool",
+        provider: "github",
+        operationNameInput: "name",
+        operationArgumentsInput: "arguments",
+        title: "GitHub MCP tool",
+        description: "Call an advertised GitHub MCP tool.",
+        enabled: true,
+        risk: "high_write",
+        routeRequired: true,
+        confirmation: "none",
+        retrySafe: false,
+        input: [
+          {
+            name: "name",
+            type: "string",
+            required: true,
+            nullable: false
+          },
+          {
+            name: "arguments",
+            type: "object",
+            required: false,
+            nullable: false
+          }
+        ]
+      }
+    ]
+  );
 }
 
 function nativeUsage() {

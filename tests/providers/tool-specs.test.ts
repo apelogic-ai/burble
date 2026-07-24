@@ -38,10 +38,12 @@ describe("provider tool specs", () => {
     expect("grantCoverage" in atlassianBridge).toBe(false);
     expect(githubBridge).toMatchObject({
       operationNameInput: "name",
+      operationArgumentsInput: "arguments",
       operationCatalogTool: "github_list_mcp_tools",
     });
     expect(atlassianBridge).toMatchObject({
       operationNameInput: "name",
+      operationArgumentsInput: "arguments",
       operationCatalogTool: "atlassian_list_mcp_tools",
     });
   });

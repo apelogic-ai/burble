@@ -25,6 +25,7 @@ export type RuntimeManifestTool = {
   alias: string;
   provider: string;
   operationNameInput?: string;
+  operationArgumentsInput?: string;
   title: string;
   description: string;
   enabled: boolean;
@@ -206,6 +207,9 @@ function manifestTool(input: {
     provider: input.tool.provider,
     ...(input.tool.operationNameInput
       ? { operationNameInput: input.tool.operationNameInput }
+      : {}),
+    ...(input.tool.operationArgumentsInput
+      ? { operationArgumentsInput: input.tool.operationArgumentsInput }
       : {}),
     title: input.tool.title,
     description: input.tool.description,

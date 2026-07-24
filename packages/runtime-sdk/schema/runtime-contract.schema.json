@@ -121,6 +121,10 @@
                         "type": "string",
                         "minLength": 1
                       },
+                      "operationArgumentsInput": {
+                        "type": "string",
+                        "minLength": 1
+                      },
                       "title": {
                         "type": "string",
                         "minLength": 1

@@ -147,6 +147,7 @@ export const runtimeManifestToolSchema = z
     alias: z.string().min(1),
     provider: z.string().min(1),
     operationNameInput: z.string().min(1).optional(),
+    operationArgumentsInput: z.string().min(1).optional(),
     title: z.string().min(1),
     description: z.string().min(1),
     enabled: z.boolean(),
