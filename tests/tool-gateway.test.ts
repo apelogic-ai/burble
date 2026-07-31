@@ -1201,6 +1201,75 @@ describe("handleToolGatewayRequest", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test("calls exact advertised Google MCP-GW operations through the runtime gateway", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const calls: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "google.callMcpTool",
+      request(
+        "google.callMcpTool",
+        {
+          input: {
+            name: "gws_drive_files_copy",
+            arguments: {
+              params: { fileId: "source-id" },
+              json: { name: "Copy" }
+            }
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        listMcpGwTools: async () => [
+          { name: "google_oauth_status" },
+          { name: "gws_drive_files_copy" },
+          { name: "github_search_pull_requests" }
+        ],
+        callMcpGwTool: async (_clientConfig, input) => {
+          calls.push(input);
+          return {
+            status: "ok",
+            result: {
+              content: [{ type: "text", text: '{"id":"copy-id"}' }]
+            }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "gws_drive_files_copy",
+        burbleToolName: "google_call_mcp_tool"
+      }
+    });
+    expect(calls).toEqual([
+      {
+        name: "gws_drive_files_copy",
+        arguments: {
+          params: { fileId: "source-id" },
+          json: { name: "Copy" }
+        }
+      }
+    ]);
+  });
+
   test("returns Google connect guidance when MCP-GW advertises only OAuth helpers", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity"

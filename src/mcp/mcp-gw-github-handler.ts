@@ -20,6 +20,12 @@ import {
 } from "./mcp-gw-github-tools";
 import type { ProviderMcpDeps } from "./provider-context";
 import { resolveMcpUserAssertion } from "./user-assertion";
+import {
+  advertisedDynamicTools,
+  dynamicOperationName,
+  dynamicToolArguments,
+  isAdvertisedDynamicOperation,
+} from "./mcp-gw-dynamic-tools";
 
 export async function handleMcpGwGitHubToolRequest(input: {
   config: Config;
@@ -71,20 +77,23 @@ export async function handleMcpGwGitHubToolRequest(input: {
       const tools = await getAdvertisedTools();
       return {
         classification: "user_private",
-        content: tools
-          .filter((tool) => isFederatedGitHubToolName(tool.name))
-          .slice(0, 100)
-          .map(sanitizeMcpGwTool),
+        content: advertisedDynamicTools({
+          tools,
+          isOperationName: isFederatedGitHubToolName,
+        }),
       };
     }
 
     if (input.toolName === "github_call_mcp_tool") {
-      const args = recordInput(input.args);
-      const name = stringInput(args, "name");
+      const args = dynamicToolArguments(input.args);
+      const name = dynamicOperationName(args);
       const advertisedTools = await getAdvertisedTools();
       if (
-        !isFederatedGitHubToolName(name) ||
-        !advertisedTools.some((tool) => tool.name === name)
+        !isAdvertisedDynamicOperation({
+          name,
+          tools: advertisedTools,
+          isOperationName: isFederatedGitHubToolName,
+        })
       ) {
         return {
           classification: "user_private",
@@ -94,7 +103,7 @@ export async function handleMcpGwGitHubToolRequest(input: {
           },
         };
       }
-      const toolArguments = optionalRecordInput(args, "arguments");
+      const toolArguments = dynamicToolArguments(args.arguments);
       const result = await (input.deps.callMcpGwTool ?? callMcpGwTool)(
         clientConfig,
         { name, arguments: toolArguments },
@@ -177,47 +186,4 @@ function githubConnectionRequiredResult(): ToolResult<unknown> {
       authCommand: "/auth github",
     },
   };
-}
-
-function sanitizeMcpGwTool(tool: {
-  name: string;
-  title?: string;
-  description?: string;
-  inputSchema?: unknown;
-}) {
-  return {
-    name: tool.name,
-    ...(tool.title ? { title: tool.title } : {}),
-    ...(tool.description ? { description: tool.description } : {}),
-    ...(tool.inputSchema !== undefined
-      ? { inputSchema: boundedJson(tool.inputSchema, 12_000) }
-      : {}),
-  };
-}
-
-function boundedJson(value: unknown, maxLength: number): unknown {
-  try {
-    const serialized = JSON.stringify(value);
-    return serialized.length <= maxLength ? JSON.parse(serialized) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function recordInput(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function stringInput(input: Record<string, unknown>, key: string): string {
-  const value = input[key];
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function optionalRecordInput(
-  input: Record<string, unknown>,
-  key: string,
-): Record<string, unknown> {
-  return recordInput(input[key]);
 }

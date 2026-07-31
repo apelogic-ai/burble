@@ -1220,6 +1220,140 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("discovers and calls exact Google MCP-GW operations", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const identityIssuer = createMcpIdentityIssuer({
+      issuer: config.mcpIdentityIssuer
+    });
+    const mcpGwConfig: Config = {
+      ...config,
+      googleViaMcpGw: true,
+      mcpGwAudience: "https://mcp-gw.example/mcp",
+      mcpGwMcpUrl: "https://mcp-gw.example/mcp"
+    };
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-native",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/runtime.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const advertisedTools = [
+      { name: "google_oauth_status" },
+      {
+        name: "gws_drive_files_copy",
+        description: "Copy a Drive file",
+        inputSchema: {
+          type: "object",
+          properties: { params: { type: "object" } },
+          required: ["params"]
+        }
+      },
+      {
+        name: "gws_docs_documents_batch_update",
+        description: "Apply Docs batch updates",
+        inputSchema: { type: "object" }
+      },
+      { name: "github_search_pull_requests" }
+    ];
+    const deps = {
+      mcpIdentityIssuer: identityIssuer,
+      getSlackEmail: async () => "person@example.com",
+      listMcpGwTools: async () => advertisedTools,
+      callMcpGwTool: async (_clientConfig: unknown, call: unknown) => {
+        expect(call).toEqual({
+          name: "gws_drive_files_copy",
+          arguments: {
+            params: { fileId: "source-id" },
+            json: { name: "Copy" }
+          }
+        });
+        return {
+          status: "ok" as const,
+          result: {
+            content: [{ type: "text" as const, text: '{"id":"copy-id"}' }]
+          }
+        };
+      }
+    };
+
+    const listedResponse = await handleProviderMcpRequest(
+      mcpGwConfig,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: { name: "google_list_mcp_tools", arguments: {} }
+        },
+        token
+      ),
+      deps,
+      "google"
+    );
+    const listed = JSON.parse(
+      readMcpBody(await listedResponse.text()).result.content[0].text
+    );
+    expect(listed.content).toEqual([
+      {
+        name: "gws_drive_files_copy",
+        description: "Copy a Drive file",
+        inputSchema: advertisedTools[1]?.inputSchema
+      },
+      {
+        name: "gws_docs_documents_batch_update",
+        description: "Apply Docs batch updates",
+        inputSchema: { type: "object" }
+      }
+    ]);
+
+    const calledResponse = await handleProviderMcpRequest(
+      mcpGwConfig,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_call_mcp_tool",
+            arguments: {
+              name: "gws_drive_files_copy",
+              arguments: {
+                params: { fileId: "source-id" },
+                json: { name: "Copy" }
+              }
+            }
+          }
+        },
+        token
+      ),
+      deps,
+      "google"
+    );
+    const called = JSON.parse(
+      readMcpBody(await calledResponse.text()).result.content[0].text
+    );
+    expect(called).toMatchObject({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "gws_drive_files_copy",
+        burbleToolName: "google_call_mcp_tool"
+      }
+    });
+    store.close();
+  });
+
   test("returns Google connect guidance when provider MCP advertises only OAuth helpers", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const identityIssuer = createMcpIdentityIssuer({

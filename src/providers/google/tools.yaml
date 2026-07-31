@@ -136,6 +136,34 @@ tools:
         optional: true
         description: Optional destination Drive folder ID.
 
+  - name: google_list_mcp_tools
+    alias: google.listMcpTools
+    implementation: listMcpTools
+    title: Google MCP tools
+    description: List the Google operations currently advertised by the centralized MCP gateway for this user, including their exact input schemas.
+    risk: read
+    input: {}
+
+  - name: google_call_mcp_tool
+    alias: google.callMcpTool
+    implementation: callMcpTool
+    operationNameInput: name
+    operationArgumentsInput: arguments
+    operationCatalogTool: google_list_mcp_tools
+    title: Google MCP tool call
+    description: Call an exact Google operation advertised by the centralized MCP gateway with this user's connected identity.
+    risk: high_write
+    confirmation: none
+    input:
+      name:
+        type: string
+        min: 1
+        description: Exact MCP operation name returned by google.listMcpTools.
+      arguments:
+        type: object
+        optional: true
+        description: JSON arguments matching the discovered operation schema.
+
   - name: google_get_drive_file
     alias: google.getDriveFile
     implementation: getDriveFile

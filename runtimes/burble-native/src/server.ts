@@ -1280,6 +1280,12 @@ function compareRuntimeTools(
   if (provider !== 0) {
     return provider;
   }
+  const dynamicOperation =
+    Number(Boolean(right.operationNameInput)) -
+    Number(Boolean(left.operationNameInput));
+  if (dynamicOperation !== 0) {
+    return dynamicOperation;
+  }
   const risk = riskRank(left.risk) - riskRank(right.risk);
   if (risk !== 0) {
     return risk;

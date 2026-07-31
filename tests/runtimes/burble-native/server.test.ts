@@ -1004,6 +1004,89 @@ describe("Burble Native runtime server", () => {
     });
   });
 
+  test("keeps dynamic operation bridges available when a provider catalog exceeds the prompt limit", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const ordinaryTools = Array.from({ length: 24 }, (_, index) => ({
+      name: `google_read_${String(index).padStart(2, "0")}`,
+      alias: `google.read${String(index).padStart(2, "0")}`,
+      provider: "google",
+      title: `Google read ${index}`,
+      description: "Read provider data.",
+      enabled: true,
+      risk: "read",
+      routeRequired: true,
+      confirmation: "none",
+      retrySafe: true,
+      input: []
+    }));
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestTools(
+            withToolGroups(nativeRunRequest("copy a Drive file"), ["google"]),
+            [
+              ...ordinaryTools,
+              {
+                name: "google_call_mcp_tool",
+                alias: "google.callMcpTool",
+                provider: "google",
+                operationNameInput: "name",
+                operationArgumentsInput: "arguments",
+                title: "Google MCP operation",
+                description: "Call an exact advertised operation.",
+                enabled: true,
+                risk: "high_write",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: false,
+                input: [
+                  { name: "name", type: "string", required: true },
+                  { name: "arguments", type: "object", required: false }
+                ]
+              }
+            ]
+          )
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          return new Response(
+            sseEvent({
+              type: "response.completed",
+              response: {
+                output_text: "Done.",
+                usage: {
+                  input_tokens: 10,
+                  output_tokens: 2,
+                  total_tokens: 12
+                }
+              }
+            }),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const providerBody = JSON.parse(String(requests[0]?.init?.body));
+    expect(providerBody.input[0].content).toContain("google.callMcpTool");
+    expect(providerBody.input[0].content).toContain(
+      "1 additional tools omitted"
+    );
+  });
+
   test("does not expand a dynamic MCP bridge into same-provider tools", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const response = await handleRuntimeRequest(

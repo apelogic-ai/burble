@@ -33,9 +33,13 @@ describe("provider tool specs", () => {
     const atlassianBridge = atlassianProviderToolSpecs.find(
       (tool) => tool.name === "atlassian_call_mcp_tool",
     )!;
+    const googleBridge = googleProviderToolSpecs.find(
+      (tool) => tool.name === "google_call_mcp_tool",
+    )!;
 
     expect("grantCoverage" in githubBridge).toBe(false);
     expect("grantCoverage" in atlassianBridge).toBe(false);
+    expect("grantCoverage" in googleBridge).toBe(false);
     expect(githubBridge).toMatchObject({
       operationNameInput: "name",
       operationArgumentsInput: "arguments",
@@ -45,6 +49,11 @@ describe("provider tool specs", () => {
       operationNameInput: "name",
       operationArgumentsInput: "arguments",
       operationCatalogTool: "atlassian_list_mcp_tools",
+    });
+    expect(googleBridge).toMatchObject({
+      operationNameInput: "name",
+      operationArgumentsInput: "arguments",
+      operationCatalogTool: "google_list_mcp_tools",
     });
   });
 
@@ -96,6 +105,8 @@ describe("provider tool specs", () => {
     expect(names).toContain("google_slides_copy_presentation");
     expect(names).toContain("google_slides_create_slide");
     expect(names).toContain("google_slides_fill_placeholders");
+    expect(names).toContain("google_list_mcp_tools");
+    expect(names).toContain("google_call_mcp_tool");
     expect(
       googleProviderToolSpecs
         .find((tool) => tool.name === "google_search_drive_files")
