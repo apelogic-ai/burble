@@ -69,6 +69,7 @@ export type ManagedRuntimeAgentRunnerDeps = {
   fetch?: AgentRuntimeFetch;
   webSocketFactory?: AgentRuntimeWebSocketFactory;
   runSnapshotTimeoutMs?: number;
+  streamIdleSnapshotIntervalMs?: number;
   logInfo?: (message: string) => void;
   observability?: ObservabilitySink;
   resolveMcpGwConnectionStatuses?: (
@@ -155,6 +156,7 @@ const maxRuntimeRecentMessageChars = 300;
 const runtimeCapabilityCacheTtlMs = 60_000;
 const defaultMcpGwConnectionStatusCacheTtlMs = 30_000;
 const defaultRunSnapshotTimeoutMs = 180_000;
+const defaultStreamIdleSnapshotIntervalMs = 15_000;
 
 type RuntimeCapabilityCacheEntry = {
   expiresAt: number;
@@ -252,6 +254,8 @@ export function createManagedRuntimeAdapter(
   const observability = deps.observability;
   const runSnapshotTimeoutMs =
     deps.runSnapshotTimeoutMs ?? defaultRunSnapshotTimeoutMs;
+  const streamIdleSnapshotIntervalMs =
+    deps.streamIdleSnapshotIntervalMs ?? defaultStreamIdleSnapshotIntervalMs;
   const runtimeCapabilityCache: RuntimeCapabilityCache = new Map();
   const mcpGwConnectionStatusCache = new Map<
     string,
@@ -486,12 +490,22 @@ export function createManagedRuntimeAdapter(
               runtimeMessageDeltasEnabled(runtime),
               observeEvent,
               runSnapshotTimeoutMs,
+              streamIdleSnapshotIntervalMs,
+              () =>
+                probeCommittedRuntimeSnapshot({
+                  requestFetch,
+                  baseUrl,
+                  runtime,
+                  runId,
+                  timeoutMs: Math.min(streamIdleSnapshotIntervalMs, 5_000),
+                  logInfo,
+                }),
             );
           } catch (error) {
             if (!isManagedRuntimeFinalResponseTimeout(error)) {
               throw error;
             }
-            const recovered = await recoverRuntimeSnapshotAfterStreamTimeout({
+            const recovered = await probeCommittedRuntimeSnapshot({
               requestFetch,
               baseUrl,
               runtime,
@@ -1053,7 +1067,7 @@ function isManagedRuntimeFinalResponseTimeout(error: unknown): boolean {
   );
 }
 
-async function recoverRuntimeSnapshotAfterStreamTimeout(input: {
+async function probeCommittedRuntimeSnapshot(input: {
   requestFetch: AgentRuntimeFetch;
   baseUrl: string;
   runtime: RuntimeHandle | null;
@@ -1499,28 +1513,53 @@ async function* readStreamingRunResponse(
   emitMessageDeltas = true,
   onEvent?: (event: AgentRunEvent) => void,
   finalTimeoutMs = defaultRunSnapshotTimeoutMs,
+  idleSnapshotIntervalMs = defaultStreamIdleSnapshotIntervalMs,
+  recoverSnapshot?: () => Promise<RecoveredRuntimeSnapshot | null>,
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   if (!response.body) {
     return null;
   }
 
   let streamedText = "";
+  const observedToolEventKeys = new Set<string>();
   const events = readRuntimeEventStream(response);
   const iterator = events[Symbol.asyncIterator]();
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<IteratorResult<unknown>>((_, reject) => {
-    timeout = setTimeout(() => {
-      reject(
-        new Error(
-          `Managed runtime did not produce a final response within ${finalTimeoutMs}ms`,
-        ),
-      );
-    }, finalTimeoutMs);
-  });
+  const deadline = Date.now() + finalTimeoutMs;
+  let nextEvent = iterator.next();
 
   try {
     while (true) {
-      const result = await Promise.race([iterator.next(), timeoutPromise]);
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw managedRuntimeFinalResponseTimeout(finalTimeoutMs);
+      }
+      const waitMs = recoverSnapshot
+        ? Math.min(Math.max(1, idleSnapshotIntervalMs), remainingMs)
+        : remainingMs;
+      const step = await waitForRuntimeStreamEvent(nextEvent, waitMs);
+      if (step.type === "idle") {
+        if (Date.now() >= deadline) {
+          throw managedRuntimeFinalResponseTimeout(finalTimeoutMs);
+        }
+        const recovered = await recoverSnapshot?.();
+        if (!recovered) {
+          continue;
+        }
+        for (const event of recovered.toolEvents) {
+          const eventKey = runtimeToolEventKey(event);
+          if (eventKey && observedToolEventKeys.has(eventKey)) {
+            continue;
+          }
+          if (eventKey) {
+            observedToolEventKeys.add(eventKey);
+          }
+          onEvent?.(event);
+          yield event;
+        }
+        return recovered.output;
+      }
+
+      const result = step.result;
       if (result.done) {
         break;
       }
@@ -1539,6 +1578,11 @@ async function* readStreamingRunResponse(
         return event.response;
       }
 
+      const eventKey = runtimeToolEventKey(event);
+      if (eventKey) {
+        observedToolEventKeys.add(eventKey);
+      }
+
       if (event.type === "message_delta") {
         streamedText = appendStreamedText(streamedText, event.text);
       } else if (event.type === "message_replace") {
@@ -1549,11 +1593,13 @@ async function* readStreamingRunResponse(
         (event.type === "message_delta" || event.type === "message_replace") &&
         !emitMessageDeltas
       ) {
+        nextEvent = iterator.next();
         continue;
       }
 
       onEvent?.(event);
       yield event;
+      nextEvent = iterator.next();
     }
   } catch (error) {
     if (streamedText.trim() && isRuntimeStreamClosedError(error)) {
@@ -1565,9 +1611,6 @@ async function* readStreamingRunResponse(
 
     throw error;
   } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
     iterator.return?.().catch(() => undefined);
   }
 
@@ -1578,6 +1621,34 @@ async function* readStreamingRunResponse(
     };
   }
   return null;
+}
+
+function managedRuntimeFinalResponseTimeout(timeoutMs: number): Error {
+  return new Error(
+    `Managed runtime did not produce a final response within ${timeoutMs}ms`,
+  );
+}
+
+async function waitForRuntimeStreamEvent(
+  nextEvent: Promise<IteratorResult<unknown>>,
+  waitMs: number,
+): Promise<
+  | { type: "event"; result: IteratorResult<unknown> }
+  | { type: "idle" }
+> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      nextEvent.then((result) => ({ type: "event" as const, result })),
+      new Promise<{ type: "idle" }>((resolve) => {
+        timeout = setTimeout(() => resolve({ type: "idle" }), waitMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function readRuntimeEventStream(response: Response): AsyncIterable<unknown> {

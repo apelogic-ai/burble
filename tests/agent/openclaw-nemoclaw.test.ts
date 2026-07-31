@@ -1487,6 +1487,148 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
   });
 
+  test("recovers a committed run snapshot while the HTTP event stream is idle", async () => {
+    const calls: string[] = [];
+    const logs: string[] = [];
+    const encoder = new TextEncoder();
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      runSnapshotTimeoutMs: 5_000,
+      streamIdleSnapshotIntervalMs: 5,
+      logInfo: (message) => logs.push(message),
+      fetch: async (url, init) => {
+        const parsed = new URL(String(url));
+        calls.push(`${init?.method ?? "GET"} ${parsed.pathname}`);
+        if (parsed.pathname === "/capabilities") {
+          return Response.json({
+            ...openClawCapabilityManifest,
+            transports: ["http", "ndjson", "websocket"]
+          });
+        }
+        if (parsed.pathname === "/runs") {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode(
+                    `${JSON.stringify({ type: "status", text: "Still working..." })}\n`
+                  )
+                );
+              }
+            }),
+            {
+              headers: {
+                "content-type": "application/x-ndjson; charset=utf-8"
+              }
+            }
+          );
+        }
+        if (/^\/runs\/[^/]+$/.test(parsed.pathname)) {
+          return Response.json({
+            response: {
+              classification: "user_private",
+              text: "Recovered before the run deadline"
+            },
+            events: []
+          });
+        }
+        throw new Error(`Unexpected request ${url}`);
+      }
+    });
+
+    const startedAt = Date.now();
+    await expect(
+      collectAgentRun(runner, {
+        principal,
+        conversation,
+        text: "summarize my GitHub work",
+        connections: { github: connection }
+      })
+    ).resolves.toEqual({
+      classification: "user_private",
+      text: "Recovered before the run deadline"
+    });
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(calls).toEqual([
+      "POST /runs",
+      expect.stringMatching(/^GET \/runs\/[0-9a-f-]+$/)
+    ]);
+    expect(logs).toContainEqual(
+      expect.stringContaining("Managed runtime final snapshot recovered")
+    );
+  });
+
+  test("keeps waiting when an idle run snapshot is not final", async () => {
+    const calls: string[] = [];
+    const encoder = new TextEncoder();
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      runSnapshotTimeoutMs: 1_000,
+      streamIdleSnapshotIntervalMs: 5,
+      fetch: async (url, init) => {
+        const parsed = new URL(String(url));
+        calls.push(`${init?.method ?? "GET"} ${parsed.pathname}`);
+        if (parsed.pathname === "/capabilities") {
+          return Response.json({
+            ...openClawCapabilityManifest,
+            transports: ["http", "ndjson", "websocket"]
+          });
+        }
+        if (parsed.pathname === "/runs") {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode(
+                    `${JSON.stringify({ type: "status", text: "Still working..." })}\n`
+                  )
+                );
+                setTimeout(() => {
+                  controller.enqueue(
+                    encoder.encode(
+                      `${JSON.stringify({
+                        type: "final",
+                        response: {
+                          classification: "user_private",
+                          text: "Final event arrived"
+                        }
+                      })}\n`
+                    )
+                  );
+                  controller.close();
+                }, 20);
+              }
+            }),
+            {
+              headers: {
+                "content-type": "application/x-ndjson; charset=utf-8"
+              }
+            }
+          );
+        }
+        if (/^\/runs\/[^/]+$/.test(parsed.pathname)) {
+          return Response.json({ status: "running", events: [] });
+        }
+        throw new Error(`Unexpected request ${url}`);
+      }
+    });
+
+    await expect(
+      collectAgentRun(runner, {
+        principal,
+        conversation,
+        text: "summarize my GitHub work",
+        connections: { github: connection }
+      })
+    ).resolves.toEqual({
+      classification: "user_private",
+      text: "Final event arrived"
+    });
+    expect(
+      calls.filter((call) => /^GET \/runs\/[0-9a-f-]+$/.test(call)).length
+    ).toBeGreaterThan(0);
+  });
+
   test("stops managed runtimes after final response timeouts", async () => {
     const stoppedRuntimeIds: string[] = [];
     const capturedDiagnostics: Array<{ runtimeId: string; runId?: string }> = [];
