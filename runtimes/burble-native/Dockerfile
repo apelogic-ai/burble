@@ -12,6 +12,7 @@ COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 
 COPY runtimes/burble-native/package.json runtimes/burble-native/tsconfig.json ./
 COPY runtimes/burble-native/src ./src
+COPY runtimes/skills ./skills
 COPY packages/runtime-sdk /runtime/node_modules/@burble/runtime-sdk
 RUN cd /runtime/node_modules/@burble/runtime-sdk && bun install --production
 RUN groupadd --gid 1000660000 sandbox \

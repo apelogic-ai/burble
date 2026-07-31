@@ -297,7 +297,8 @@ describe("buildRuntimeManifest", () => {
     expect(manifest.skills).toEqual([
       { id: "atlassian-jira", version: "1", enabled: true },
       { id: "core", version: "1", enabled: true },
-      { id: "github", version: "1", enabled: true }
+      { id: "github", version: "1", enabled: true },
+      { id: "google-workspace", version: "1", enabled: true }
     ]);
     expect(manifest.memory).toEqual({
       userMemoryEnabled: false,

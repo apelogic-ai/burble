@@ -111,7 +111,8 @@ type SkillVersionRecord = {
 const defaultRuntimeSkills: SkillVersionRecord[] = [
   { id: "core", version: "1" },
   { id: "github", version: "1" },
-  { id: "atlassian-jira", version: "1" }
+  { id: "atlassian-jira", version: "1" },
+  { id: "google-workspace", version: "1" }
 ];
 
 export function buildRuntimeManifest(input: {

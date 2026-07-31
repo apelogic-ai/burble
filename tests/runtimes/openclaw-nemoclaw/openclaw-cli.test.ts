@@ -792,7 +792,8 @@ describe("runOpenClawCliRequest", () => {
             skills: [
               { id: "core", version: "1", enabled: true },
               { id: "github", version: "1", enabled: true },
-              { id: "atlassian-jira", version: "1", enabled: true }
+              { id: "atlassian-jira", version: "1", enabled: true },
+              { id: "google-workspace", version: "1", enabled: true }
             ],
             memory: {
               userMemoryEnabled: true,
@@ -828,7 +829,57 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain("# Burble Runtime Skill");
     expect(prompts[0]).not.toContain("# GitHub Skill");
     expect(prompts[0]).not.toContain("# Atlassian Jira Skill");
+    expect(prompts[0]).not.toContain("# Google Workspace Workflow Skill");
     expect(prompts[0]).toContain("- enabled bundled skills: core@1");
+
+    await runOpenClawCliRequest(
+      {
+        input: {
+          text: "copy a Drive file",
+          toolGroups: {
+            groups: ["google"],
+            reasons: ["Google file workflow"]
+          },
+          connections: {}
+        },
+        runtime: {
+          id: "rt_123",
+          manifest: {
+            version: "1",
+            policyHash: "policy-hash-google",
+            skills: [
+              { id: "google-workspace", version: "1", enabled: true }
+            ],
+            memory: {
+              userMemoryEnabled: false,
+              workspaceMemoryEnabled: false,
+              jobMemoryEnabled: false
+            },
+            streaming: {
+              messageDeltasEnabled: true
+            }
+          }
+        }
+      },
+      config,
+      async () => {
+        throw new Error("unexpected tool call");
+      },
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1] ?? "");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ response: { text: "Done." } }),
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(prompts[1]).toContain("# Google Workspace Workflow Skill");
+    expect(prompts[1]).toContain(
+      "- enabled bundled skills: google-workspace@1"
+    );
   });
 
   test("honors runtime manifest skills and memory context in the prompt", async () => {

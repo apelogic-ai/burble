@@ -49,7 +49,12 @@ export type CliCommandRunner = (
   options: { timeoutMs: number; env?: Record<string, string> }
 ) => Promise<CliCommandResult>;
 
-const preloadedRuntimeSkillNames = ["core", "github", "atlassian-jira"] as const;
+const preloadedRuntimeSkillNames = [
+  "core",
+  "github",
+  "atlassian-jira",
+  "google-workspace"
+] as const;
 type PreloadedRuntimeSkillName = (typeof preloadedRuntimeSkillNames)[number];
 type RuntimeToolGroup = NonNullable<
   RunRequest["input"]["toolGroups"]
@@ -3079,7 +3084,17 @@ function isAllowedJiraWriteMcpToolName(toolName: string): boolean {
 }
 
 function loadRuntimeSkill(name: string): string {
-  return readFileSync(new URL(`../skills/${name}.md`, import.meta.url), "utf8").trim();
+  for (const url of [
+    new URL(`../skills/${name}.md`, import.meta.url),
+    new URL(`../../skills/${name}.md`, import.meta.url)
+  ]) {
+    try {
+      return readFileSync(url, "utf8").trim();
+    } catch {
+      // Source tests and runtime images place shared skills differently.
+    }
+  }
+  throw new Error(`Bundled runtime skill ${name} is unavailable`);
 }
 
 function formatEnabledRuntimeSkills(request: RunRequest): string {
@@ -3151,6 +3166,8 @@ function runtimeToolGroupForSkill(
       return "github";
     case "atlassian-jira":
       return "jira";
+    case "google-workspace":
+      return "google";
     default:
       return null;
   }

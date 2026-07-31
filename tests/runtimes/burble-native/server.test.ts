@@ -1087,6 +1087,83 @@ describe("Burble Native runtime server", () => {
     );
   });
 
+  test("loads provider workflow skills and authoritative time into the model context", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const baseRequest = withRuntimeManifestTools(
+      withToolGroups(nativeRunRequest("copy this invoice for the next period"), [
+        "google"
+      ]),
+      [
+        {
+          name: "google_call_mcp_tool",
+          alias: "google.callMcpTool",
+          provider: "google",
+          operationNameInput: "name",
+          operationArgumentsInput: "arguments",
+          title: "Google MCP operation",
+          description: "Call an exact advertised operation.",
+          enabled: true,
+          risk: "high_write",
+          routeRequired: true,
+          confirmation: "none",
+          retrySafe: false,
+          input: [
+            { name: "name", type: "string", required: true },
+            { name: "arguments", type: "object", required: false }
+          ]
+        }
+      ]
+    );
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestSkills(baseRequest, [
+            { id: "google-workspace", version: "1", enabled: true }
+          ])
+        )
+      }),
+      {
+        now: () => new Date("2026-07-31T19:00:00.000Z"),
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          return new Response(
+            sseEvent({
+              type: "response.completed",
+              response: {
+                output_text: "Done.",
+                usage: {
+                  input_tokens: 10,
+                  output_tokens: 2,
+                  total_tokens: 12
+                }
+              }
+            }),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const providerBody = JSON.parse(String(requests[0]?.init?.body));
+    const prompt = String(providerBody.input[0].content);
+    expect(prompt).toContain("Current UTC time: 2026-07-31T19:00:00.000Z");
+    expect(prompt).toContain("Google Workspace Workflow Skill");
+    expect(prompt).toContain("reuse it instead of searching again");
+    expect(prompt).toContain("copy the source file before editing the copy");
+    expect(prompt).toContain("Do not claim completion");
+  });
+
   test("does not expand a dynamic MCP bridge into same-provider tools", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const response = await handleRuntimeRequest(
@@ -2834,7 +2911,7 @@ function withToolGroups<T extends ReturnType<typeof nativeRunRequest>>(
 function withRuntimeManifestTools<T extends ReturnType<typeof nativeRunRequest>>(
   request: T,
   tools: Array<Record<string, unknown>>
-): T {
+) {
   return {
     ...request,
     runtime: {
@@ -2852,6 +2929,30 @@ function withRuntimeManifestTools<T extends ReturnType<typeof nativeRunRequest>>
         streaming: {
           messageDeltasEnabled: true
         }
+      }
+    }
+  };
+}
+
+function withRuntimeManifestSkills<
+  T extends {
+    runtime: {
+      manifest: {
+        skills: Array<Record<string, unknown>>;
+      };
+    };
+  }
+>(
+  request: T,
+  skills: Array<{ id: string; version: string; enabled: boolean }>
+): T {
+  return {
+    ...request,
+    runtime: {
+      ...request.runtime,
+      manifest: {
+        ...request.runtime.manifest,
+        skills
       }
     }
   };

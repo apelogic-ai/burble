@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   readRuntimeToolErrorDiagnostic,
   parseRuntimeRunRequest,
@@ -26,6 +27,7 @@ type RuntimeServerContext = {
   env?: Record<string, string | undefined>;
   fetch?: RuntimeFetch;
   logInfo?: (message: string) => void;
+  now?: () => Date;
 };
 
 type RuntimeRequestOptions = RuntimeServerContext;
@@ -255,7 +257,7 @@ async function* runNativeTurn(
   }
   let responseText = "";
   let usage: RunUsage | undefined;
-  let input = buildOpenAiInput(request);
+  let input = buildOpenAiInput(request, context.now?.() ?? new Date());
   const turnDeadline = createTurnDeadline(context.env);
   const maxToolLoopSteps = readMaxToolLoopSteps(context.env);
   let toolCallSteps = 0;
@@ -995,7 +997,10 @@ function throwIfTurnTimedOut(deadline: TurnDeadline): void {
   }
 }
 
-function buildOpenAiInput(request: RunRequest): OpenAiInputItem[] {
+function buildOpenAiInput(
+  request: RunRequest,
+  now: Date
+): OpenAiInputItem[] {
   const recentMessages = request.input.context?.recentMessages ?? [];
   const history = recentMessages
     .map((message) => `${message.author}: ${message.text}`)
@@ -1006,6 +1011,8 @@ function buildOpenAiInput(request: RunRequest): OpenAiInputItem[] {
   const text = [
     "You are Burble, a concise Slack-native work assistant.",
     "Format answers as Slack mrkdwn, not standard Markdown: use *bold* instead of **bold** and <url|label> instead of [label](url).",
+    `Current UTC time: ${now.toISOString()}`,
+    formatEnabledRuntimeSkills(request),
     attachmentContext,
     scheduledJobContext,
     formatModelToolGuidance(request, toolCatalog),
@@ -1015,6 +1022,55 @@ function buildOpenAiInput(request: RunRequest): OpenAiInputItem[] {
     .filter(Boolean)
     .join("\n\n");
   return [{ role: "user", content: text }];
+}
+
+const bundledRuntimeSkillIds = ["google-workspace"] as const;
+type BundledRuntimeSkillId = (typeof bundledRuntimeSkillIds)[number];
+const bundledRuntimeSkills = Object.fromEntries(
+  bundledRuntimeSkillIds.map((id) => [id, loadRuntimeSkill(id)])
+) as Record<BundledRuntimeSkillId, string>;
+
+function formatEnabledRuntimeSkills(request: RunRequest): string {
+  const enabledSkillIds = new Set(
+    (request.runtime.manifest?.skills ?? [])
+      .filter((skill) => skill.enabled)
+      .map((skill) => skill.id)
+  );
+  const selectedProviders = new Set(
+    selectedRuntimeTools(request).map((tool) => tool.provider)
+  );
+  const skills = bundledRuntimeSkillIds.flatMap((id) =>
+    enabledSkillIds.has(id) && runtimeSkillMatchesProviders(id, selectedProviders)
+      ? [bundledRuntimeSkills[id]]
+      : []
+  );
+  return skills.length > 0
+    ? `Enabled runtime skills:\n\n${skills.join("\n\n")}`
+    : "";
+}
+
+function runtimeSkillMatchesProviders(
+  skillId: BundledRuntimeSkillId,
+  providers: Set<string>
+): boolean {
+  switch (skillId) {
+    case "google-workspace":
+      return providers.has("google");
+  }
+}
+
+function loadRuntimeSkill(id: BundledRuntimeSkillId): string {
+  for (const url of [
+    new URL(`../skills/${id}.md`, import.meta.url),
+    new URL(`../../skills/${id}.md`, import.meta.url)
+  ]) {
+    try {
+      return readFileSync(url, "utf8").trim();
+    } catch {
+      // Source tests and runtime images place shared skills differently.
+    }
+  }
+  throw new Error(`Bundled runtime skill ${id} is unavailable`);
 }
 
 function formatModelToolGuidance(
