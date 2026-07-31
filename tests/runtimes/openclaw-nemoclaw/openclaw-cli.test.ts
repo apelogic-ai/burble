@@ -761,7 +761,7 @@ describe("runOpenClawCliRequest", () => {
     expect(fallbackCatalogText).not.toContain("google.searchDriveFiles");
   });
 
-  test("filters preloaded runtime skills by selected tool groups", async () => {
+  test("filters discovered runtime skills by selected tool groups", async () => {
     const prompts: string[] = [];
 
     const response = await runOpenClawCliRequest(
@@ -830,7 +830,7 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).not.toContain("# GitHub Skill");
     expect(prompts[0]).not.toContain("# Atlassian Jira Skill");
     expect(prompts[0]).not.toContain("# Google Workspace Workflow Skill");
-    expect(prompts[0]).toContain("- enabled bundled skills: core@1");
+    expect(prompts[0]).toContain("- enabled skills: core@1");
 
     await runOpenClawCliRequest(
       {
@@ -878,7 +878,7 @@ describe("runOpenClawCliRequest", () => {
 
     expect(prompts[1]).toContain("# Google Workspace Workflow Skill");
     expect(prompts[1]).toContain(
-      "- enabled bundled skills: google-workspace@1"
+      "- enabled skills: google-workspace@1"
     );
   });
 
@@ -947,7 +947,7 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).not.toContain("# GitHub Skill");
     expect(prompts[0]).toContain("Runtime policy manifest:");
     expect(prompts[0]).toContain("- policyHash: policy-hash-123");
-    expect(prompts[0]).toContain("- enabled bundled skills: core@1");
+    expect(prompts[0]).toContain("- enabled skills: core@1");
     expect(prompts[0]).toContain("- memory.user: disabled");
     expect(prompts[0]).toContain("- memory.workspace: enabled");
     expect(prompts[0]).toContain("- memory.jobs: enabled");

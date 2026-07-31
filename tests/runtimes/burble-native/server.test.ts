@@ -1164,6 +1164,73 @@ describe("Burble Native runtime server", () => {
     expect(prompt).toContain("Do not claim completion");
   });
 
+  test("loads another discovered provider skill without runtime registration", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const baseRequest = withRuntimeManifestTools(
+      withToolGroups(nativeRunRequest("find my open pull requests"), ["github"]),
+      [
+        {
+          name: "github_search_issues",
+          alias: "github.searchIssues",
+          provider: "github",
+          title: "GitHub issue search",
+          description: "Search GitHub issues and pull requests.",
+          enabled: true,
+          risk: "read",
+          routeRequired: true,
+          confirmation: "none",
+          retrySafe: true,
+          input: [{ name: "query", type: "string", required: true }]
+        }
+      ]
+    );
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestSkills(baseRequest, [
+            { id: "github", version: "1", enabled: true },
+            { id: "google-workspace", version: "1", enabled: true }
+          ])
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          return new Response(
+            sseEvent({
+              type: "response.completed",
+              response: {
+                output_text: "Done.",
+                usage: {
+                  input_tokens: 10,
+                  output_tokens: 2,
+                  total_tokens: 12
+                }
+              }
+            }),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const providerBody = JSON.parse(String(requests[0]?.init?.body));
+    const prompt = String(providerBody.input[0].content);
+    expect(prompt).toContain("# GitHub Skill");
+    expect(prompt).not.toContain("# Google Workspace Workflow Skill");
+  });
+
   test("does not expand a dynamic MCP bridge into same-provider tools", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const response = await handleRuntimeRequest(

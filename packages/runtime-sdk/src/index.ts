@@ -42,6 +42,12 @@ export {
   type RuntimeScheduledJobContext,
   type RuntimeScheduledJobContextFormatOptions
 } from "./scheduled-job-context";
+export {
+  loadRuntimeSkills,
+  selectRuntimeSkills,
+  type RuntimeSkillDefinition,
+  type RuntimeSkillEnablement
+} from "./runtime-skills";
 export { stripRuntimeToolCallProtocolFragments } from "./runtime-text-protocol";
 export {
   authorizeRuntimeBearerOrHeaderToken,

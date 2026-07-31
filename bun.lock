@@ -26,8 +26,9 @@
     },
     "packages/runtime-sdk": {
       "name": "@burble/runtime-sdk",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
+        "yaml": "^2.9.0",
         "zod": "^4.4.3",
       },
     },

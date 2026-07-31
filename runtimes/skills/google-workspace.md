@@ -1,3 +1,8 @@
+---
+id: google-workspace
+version: "1"
+toolGroups: [google]
+---
 # Google Workspace Workflow Skill
 
 Use the available provider tools as atomic operations. For capabilities not

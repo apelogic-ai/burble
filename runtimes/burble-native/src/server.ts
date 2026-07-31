@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import {
   readRuntimeToolErrorDiagnostic,
   parseRuntimeRunRequest,
@@ -9,6 +8,10 @@ import {
   formatRuntimeScheduledJobContext,
   withTrustedScheduledJobId
 } from "@burble/runtime-sdk/scheduled-job-context";
+import {
+  loadRuntimeSkills,
+  selectRuntimeSkills
+} from "@burble/runtime-sdk/runtime-skills";
 import {
   authorizeRuntimeBearerOrHeaderToken,
   createRuntimeContractServer,
@@ -1024,53 +1027,22 @@ function buildOpenAiInput(
   return [{ role: "user", content: text }];
 }
 
-const bundledRuntimeSkillIds = ["google-workspace"] as const;
-type BundledRuntimeSkillId = (typeof bundledRuntimeSkillIds)[number];
-const bundledRuntimeSkills = Object.fromEntries(
-  bundledRuntimeSkillIds.map((id) => [id, loadRuntimeSkill(id)])
-) as Record<BundledRuntimeSkillId, string>;
+const runtimeSkillCatalog = loadRuntimeSkills([
+  new URL("../skills/", import.meta.url),
+  new URL("../../skills/", import.meta.url)
+]);
 
 function formatEnabledRuntimeSkills(request: RunRequest): string {
-  const enabledSkillIds = new Set(
-    (request.runtime.manifest?.skills ?? [])
-      .filter((skill) => skill.enabled)
-      .map((skill) => skill.id)
-  );
   const selectedProviders = new Set(
     selectedRuntimeTools(request).map((tool) => tool.provider)
   );
-  const skills = bundledRuntimeSkillIds.flatMap((id) =>
-    enabledSkillIds.has(id) && runtimeSkillMatchesProviders(id, selectedProviders)
-      ? [bundledRuntimeSkills[id]]
-      : []
-  );
+  const skills = selectRuntimeSkills(runtimeSkillCatalog, {
+    enabledSkills: request.runtime.manifest?.skills ?? [],
+    selectedToolGroups: selectedProviders
+  });
   return skills.length > 0
-    ? `Enabled runtime skills:\n\n${skills.join("\n\n")}`
+    ? `Enabled runtime skills:\n\n${skills.map((skill) => skill.content).join("\n\n")}`
     : "";
-}
-
-function runtimeSkillMatchesProviders(
-  skillId: BundledRuntimeSkillId,
-  providers: Set<string>
-): boolean {
-  switch (skillId) {
-    case "google-workspace":
-      return providers.has("google");
-  }
-}
-
-function loadRuntimeSkill(id: BundledRuntimeSkillId): string {
-  for (const url of [
-    new URL(`../skills/${id}.md`, import.meta.url),
-    new URL(`../../skills/${id}.md`, import.meta.url)
-  ]) {
-    try {
-      return readFileSync(url, "utf8").trim();
-    } catch {
-      // Source tests and runtime images place shared skills differently.
-    }
-  }
-  throw new Error(`Bundled runtime skill ${id} is unavailable`);
 }
 
 function formatModelToolGuidance(
