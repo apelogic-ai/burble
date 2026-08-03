@@ -33,6 +33,7 @@ OAuth credentials are required for the basic app; the rest are conditional.
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Optional Google OAuth |
 | `HUBSPOT_CLIENT_ID`, `HUBSPOT_CLIENT_SECRET` | Optional HubSpot OAuth |
 | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_API_KEY` | Optional model provider keys |
+| `BURBLE_INFERENCE_API_KEY` | Bearer credential Burble sends when `litellm.mode=external` |
 | `INTERNAL_API_TOKEN` | Internal runtime/tool gateway bearer token |
 | `AGENT_RUNTIME_TOKEN_SECRET` | Runtime JWT signing secret fallback |
 | `AGENT_RUNTIME_SANDBOX_TOKEN` | Optional sandbox provider token |

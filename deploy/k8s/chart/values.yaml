@@ -83,6 +83,7 @@ config:
   ollamaBaseUrl: https://ollama.com
 
 secret:
+  # For external LiteLLM, provide BURBLE_INFERENCE_API_KEY in this Secret.
   existingSecret: ""
   optionalKeys: true
 
