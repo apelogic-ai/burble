@@ -18,8 +18,9 @@ export async function generateReleaseReport(input: {
     throw new Error("Chart repository basename must match the chart name burble");
   }
 
-  const [imageDigest, chartDigest, scanRaw] = await Promise.all([
+  const [imageDigest, platformDigest, chartDigest, scanRaw] = await Promise.all([
     readDigest(join(input.artifactsDirectory, "image.digest")),
+    readDigest(join(input.artifactsDirectory, "image-platform.digest")),
     readDigest(join(input.artifactsDirectory, "chart.digest")),
     readFile(join(input.artifactsDirectory, "ecr-image-scan.json"), "utf8")
   ]);
@@ -44,6 +45,7 @@ export async function generateReleaseReport(input: {
 | Check | Result |
 | --- | --- |
 | ECR scan status | \`${scan.status}\` |
+| Scanned Linux/amd64 manifest | \`${platformDigest}\` |
 | Unresolved critical findings | \`${scan.criticalFindings}\` |
 
 Both OCI artifacts are signed by digest. Their OCI references carry SBOM,
@@ -54,6 +56,8 @@ build-provenance, and vulnerability-scan attestations.
 - \`burble-image.spdx.json\`
 - \`burble-image.provenance.json\`
 - \`burble-image.scan.json\`
+- \`image-index.json\`
+- \`image-platform.digest\`
 - \`ecr-image-scan.json\`
 - \`burble-chart.spdx.json\`
 - \`burble-chart.provenance.json\`

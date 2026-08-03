@@ -98,6 +98,7 @@ describe("release evidence", () => {
     const directory = await temporaryDirectory();
     await Promise.all([
       writeFile(join(directory, "image.digest"), `${digest("c")}\n`),
+      writeFile(join(directory, "image-platform.digest"), `${digest("e")}\n`),
       writeFile(join(directory, "chart.digest"), `${digest("d")}\n`),
       writeFile(
         join(directory, "ecr-image-scan.json"),
@@ -123,6 +124,7 @@ describe("release evidence", () => {
       `oci://123456789012.dkr.ecr.us-east-1.amazonaws.com/platform/charts/burble@${digest("d")}`
     );
     expect(report).toContain("Unresolved critical findings | `0`");
+    expect(report).toContain(`Scanned Linux/amd64 manifest | \`${digest("e")}\``);
     expect(report).toContain("burble-image.spdx.json");
     expect(report).toContain("burble-chart.provenance.json");
   });
