@@ -155,11 +155,13 @@ export function createSchedulerTimer(input: {
           }
         }
         if (!existingCapability) {
+          const inferredTools = inferAllowedToolsForScheduledJob(job);
           input.store.upsertAgentJobCapability({
             jobId: job.jobId,
             workspaceId: job.workspaceId,
             slackUserId: job.slackUserId,
-            requiredTools: inferAllowedToolsForScheduledJob(job),
+            requiredTools: inferredTools,
+            expectedTools: inferredTools,
             routeId: job.routeId,
             runtimeType: job.runtimeType,
             capabilityProfile: "scheduled_job",

@@ -24,6 +24,8 @@ export type RuntimeManifestTool = {
   name: string;
   alias: string;
   provider: string;
+  operationNameInput?: string;
+  operationArgumentsInput?: string;
   title: string;
   description: string;
   enabled: boolean;
@@ -109,7 +111,8 @@ type SkillVersionRecord = {
 const defaultRuntimeSkills: SkillVersionRecord[] = [
   { id: "core", version: "1" },
   { id: "github", version: "1" },
-  { id: "atlassian-jira", version: "1" }
+  { id: "atlassian-jira", version: "1" },
+  { id: "google-workspace", version: "1" }
 ];
 
 export function buildRuntimeManifest(input: {
@@ -203,6 +206,12 @@ function manifestTool(input: {
     name: input.tool.name,
     alias: input.tool.alias,
     provider: input.tool.provider,
+    ...(input.tool.operationNameInput
+      ? { operationNameInput: input.tool.operationNameInput }
+      : {}),
+    ...(input.tool.operationArgumentsInput
+      ? { operationArgumentsInput: input.tool.operationArgumentsInput }
+      : {}),
     title: input.tool.title,
     description: input.tool.description,
     enabled:

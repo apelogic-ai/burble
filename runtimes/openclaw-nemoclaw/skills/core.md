@@ -1,3 +1,8 @@
+---
+id: core
+version: "1"
+toolGroups: []
+---
 # Burble Runtime Skill
 
 You are Burble's OpenClaw runtime.

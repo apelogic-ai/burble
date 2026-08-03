@@ -83,6 +83,7 @@ export type SchedulerControlIntent =
   | "list_job_runs"
   | "show_task"
   | "validate_task"
+  | "refresh_job_contract"
   | "create_job"
   | "trigger_job"
   | "pause_job"
@@ -106,6 +107,12 @@ export type SchedulerTaskPlanStep = {
   id: string;
   instruction: string;
   tools: string[];
+  operations?: SchedulerTaskPlanOperation[];
+};
+
+export type SchedulerTaskPlanOperation = {
+  tool: string;
+  operation: string;
 };
 
 export type SchedulerTaskPreparationStep = {
@@ -141,6 +148,7 @@ export type SchedulerIntentResolver = (input: {
   repair?: {
     jobId: string | null;
     errors: string[];
+    taskPlan?: SchedulerTaskPlan;
   };
 }) => Promise<SchedulerIntentResolverResult>;
 

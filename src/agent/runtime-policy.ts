@@ -22,6 +22,7 @@ export const defaultWorkspaceRuntimePolicy = {
       { id: "core", version: "1" },
       { id: "github", version: "1" },
       { id: "atlassian-jira", version: "1" },
+      { id: "google-workspace", version: "1" },
     ],
   },
 } as const;

@@ -297,7 +297,8 @@ describe("buildRuntimeManifest", () => {
     expect(manifest.skills).toEqual([
       { id: "atlassian-jira", version: "1", enabled: true },
       { id: "core", version: "1", enabled: true },
-      { id: "github", version: "1", enabled: true }
+      { id: "github", version: "1", enabled: true },
+      { id: "google-workspace", version: "1", enabled: true }
     ]);
     expect(manifest.memory).toEqual({
       userMemoryEnabled: false,
@@ -331,6 +332,53 @@ describe("buildRuntimeManifest", () => {
       risk: "moderate_write",
       confirmation: "none",
       retrySafe: false
+    });
+  });
+
+  test("preserves dynamic operation argument metadata for runtimes", () => {
+    const manifest = buildRuntimeManifest({
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      runtime: {
+        engine: "burble-native",
+        factory: "static",
+        ttlMs: 60_000,
+        reaperEnabled: true
+      },
+      defaultStreaming: true,
+      defaultModel: "openai:gpt-5.4",
+      toolCatalog: [
+        {
+          provider: "source-control",
+          name: "source_control_call",
+          alias: "sourceControl.call",
+          implementation: "call",
+          operationNameInput: "operation",
+          operationArgumentsInput: "parameters",
+          operationCatalogTool: "source_control_list_operations",
+          title: "Source control operation",
+          description: "Call an advertised source control operation.",
+          input: {
+            operation: {
+              type: "string"
+            },
+            parameters: {
+              type: "object",
+              optional: true
+            }
+          }
+        }
+      ],
+      workspacePolicy: [],
+      userPreferences: []
+    });
+
+    expect(manifest.tools[0]).toMatchObject({
+      name: "source_control_call",
+      operationNameInput: "operation",
+      operationArgumentsInput: "parameters"
     });
   });
 

@@ -109,6 +109,18 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses scheduled task contract refresh intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"refresh_job_contract","confidence":0.97,"jobId":"job_openshell"}',
+      ),
+    ).toEqual({
+      intent: "refresh_job_contract",
+      confidence: 0.97,
+      jobId: "job_openshell",
+    });
+  });
+
   test("parses generic recurring and preparation plans without flattening setup into the prompt", () => {
     expect(
       parseSchedulerIntentResponse(
@@ -183,6 +195,65 @@ describe("scheduler intent resolver", () => {
             id: "report",
             instruction: "Return only net-new results.",
             tools: [],
+          },
+        ],
+      },
+    });
+  });
+
+  test("parses exact dynamic operation selections in recurring steps", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        JSON.stringify({
+          intent: "create_job",
+          confidence: 0.99,
+          jobId: null,
+          create: {
+            title: "Review activity",
+            prompt: "Review activity.",
+            schedule: {
+              kind: "cron",
+              expression: "0 * * * *",
+              timezone: "UTC",
+            },
+          },
+          taskPlan: {
+            preparation: [],
+            steps: [
+              {
+                id: "inspect",
+                instruction: "Inspect records and comments.",
+                tools: ["github_call_mcp_tool"],
+                operations: [
+                  {
+                    tool: "github_call_mcp_tool",
+                    operation: "issue_read",
+                  },
+                  {
+                    tool: "github_call_mcp_tool",
+                    operation: "issue_comments",
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      taskPlan: {
+        steps: [
+          {
+            id: "inspect",
+            operations: [
+              {
+                tool: "github_call_mcp_tool",
+                operation: "issue_read",
+              },
+              {
+                tool: "github_call_mcp_tool",
+                operation: "issue_comments",
+              },
+            ],
           },
         ],
       },
@@ -685,12 +756,24 @@ describe("scheduler intent resolver", () => {
         errors: [
           "missing_required_tool: Task requires google_get_drive_file but the grant does not include it.",
         ],
+        taskPlan: {
+          preparation: [],
+          steps: [
+            {
+              id: "read",
+              instruction: "Read the configured state.",
+              tools: ["google_get_drive_file"],
+            },
+          ],
+        },
       },
     });
 
     expect(prompt).toContain("Pre-flight repair request");
     expect(prompt).toContain("job_stateful");
     expect(prompt).toContain("missing_required_tool");
+    expect(prompt).toContain("Original recurring task plan");
+    expect(prompt).toContain("Read the configured state.");
     expect(prompt).toContain("Return one corrected candidate");
   });
 

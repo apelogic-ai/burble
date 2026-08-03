@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   AgentJobCapabilityRecord,
+  AgentJobOperationGrant,
   AgentJobRunAuditRecord,
   AgentJobRunRecord,
   AgentRuntimeEngine,
@@ -248,6 +249,7 @@ export type SchedulerUpdateJobInput = SchedulerJobMutationInput & {
 export type SchedulerTaskCapabilityUpdate = {
   requiredTools: string[];
   expectedTools?: string[];
+  operationGrants?: AgentJobOperationGrant[];
   stateRefs?: ScheduledJobStateRef[];
   stateRefMode?: "merge" | "replace" | "clear";
 };
@@ -655,8 +657,10 @@ export function createSchedulerControlPlane(
         );
         if (!capability) {
           ensureScheduledJobCapability(store, record, timestamp);
+          const inferredTools = inferAllowedToolsForScheduledJob(record);
           capability = {
-            requiredTools: inferAllowedToolsForScheduledJob(record),
+            requiredTools: inferredTools,
+            expectedTools: inferredTools,
           };
         }
         const validation = validateScheduledTask(record, capability);
@@ -1171,12 +1175,14 @@ function ensureScheduledJobCapability(
   job: ScheduledJobRecord,
   now: Date,
 ): void {
+  const inferredTools = inferAllowedToolsForScheduledJob(job);
   store.upsertAgentJobCapability({
     jobId: job.jobId,
     workspaceId: job.workspaceId,
     slackUserId: job.slackUserId,
-    requiredTools: inferAllowedToolsForScheduledJob(job),
-    expectedTools: null,
+    requiredTools: inferredTools,
+    expectedTools: inferredTools,
+    operationGrants: [],
     routeId: job.routeId,
     runtimeType: job.runtimeType,
     capabilityProfile: "scheduled_job",
@@ -1225,13 +1231,19 @@ function resolveScheduledJobCapability(
     ? [...new Set(capability.expectedTools ?? capability.requiredTools)].sort()
     : options.preserveExistingRequiredTools
       ? (existing?.expectedTools ?? null)
-      : null;
+      : requiredTools;
   return {
     jobId: job.jobId,
     workspaceId: job.workspaceId,
     slackUserId: job.slackUserId,
     requiredTools,
     expectedTools,
+    operationGrants:
+      capability?.operationGrants ??
+      (options.preserveExistingRequiredTools
+        ? existing?.operationGrants
+        : undefined) ??
+      [],
     routeId: job.routeId,
     policyHash: existing?.policyHash ?? null,
     capabilityProfile: existing?.capabilityProfile ?? "scheduled_job",
@@ -1255,6 +1267,7 @@ function persistScheduledJobCapability(
     slackUserId: job.slackUserId,
     requiredTools: capability.requiredTools,
     expectedTools: capability.expectedTools,
+    operationGrants: capability.operationGrants,
     routeId: job.routeId,
     policyHash: capability.policyHash,
     capabilityProfile: capability.capabilityProfile,

@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { formatRuntimeScheduledJobContextLines } from "@burble/runtime-sdk/scheduled-job-context";
 import {
+  loadRuntimeSkills,
+  selectRuntimeSkills,
+  type RuntimeSkillDefinition
+} from "@burble/runtime-sdk/runtime-skills";
+import {
   containsRuntimeToolCallProtocolFragments,
   stripRuntimeToolCallProtocolFragments
 } from "@burble/runtime-sdk/runtime-text-protocol";
@@ -49,20 +54,18 @@ export type CliCommandRunner = (
   options: { timeoutMs: number; env?: Record<string, string> }
 ) => Promise<CliCommandResult>;
 
-const preloadedRuntimeSkillNames = ["core", "github", "atlassian-jira"] as const;
-type PreloadedRuntimeSkillName = (typeof preloadedRuntimeSkillNames)[number];
 type RuntimeToolGroup = NonNullable<
   RunRequest["input"]["toolGroups"]
 >["groups"][number];
 const maxRecentSlackContextMessages = 12;
 const maxRecentSlackContextMessageChars = 300;
-const preloadedRuntimeSkillText: Record<PreloadedRuntimeSkillName, string> =
-  Object.fromEntries(
-    preloadedRuntimeSkillNames.map((name) => [name, loadRuntimeSkill(name)])
-  ) as Record<PreloadedRuntimeSkillName, string>;
-const defaultPreloadedRuntimeSkills = preloadedRuntimeSkillNames.map((name) => ({
-  id: name,
-  version: "1",
+const runtimeSkillCatalog = loadRuntimeSkills([
+  new URL("../skills/", import.meta.url),
+  new URL("../../skills/", import.meta.url)
+]);
+const defaultRuntimeSkills = runtimeSkillCatalog.map((skill) => ({
+  id: skill.id,
+  version: skill.version,
   enabled: true
 }));
 const openClawCliShimPath = "/usr/local/bin/openclaw";
@@ -3078,88 +3081,22 @@ function isAllowedJiraWriteMcpToolName(toolName: string): boolean {
   ].includes(toolName.trim().toLowerCase());
 }
 
-function loadRuntimeSkill(name: string): string {
-  return readFileSync(new URL(`../skills/${name}.md`, import.meta.url), "utf8").trim();
-}
-
 function formatEnabledRuntimeSkills(request: RunRequest): string {
-  const skills = effectiveRuntimeSkills(request);
-  return skills
-    .map((skill) => preloadedRuntimeSkillText[skill.id])
-    .filter(Boolean)
+  return effectiveRuntimeSkills(request)
+    .map((skill) => skill.content)
     .join("\n\n");
 }
 
-function effectiveRuntimeSkills(
-  request: RunRequest
-): Array<{ id: PreloadedRuntimeSkillName; version: string; enabled: boolean }> {
+function effectiveRuntimeSkills(request: RunRequest): RuntimeSkillDefinition[] {
   const selectedGroups = selectedRuntimeToolGroups(request);
   const manifestSkills = request.runtime?.manifest?.skills;
-  if (!manifestSkills || manifestSkills.length === 0) {
-    return filterRuntimeSkillsBySelectedGroups(
-      defaultPreloadedRuntimeSkills,
-      selectedGroups
-    );
-  }
-
-  const enabledManifestSkills = manifestSkills.flatMap((skill) => {
-    if (
-      skill.enabled &&
-      isPreloadedRuntimeSkillName(skill.id)
-    ) {
-      return [
-        {
-          id: skill.id,
-          version: skill.version,
-          enabled: true
-        }
-      ];
-    }
-    return [];
+  return selectRuntimeSkills(runtimeSkillCatalog, {
+    enabledSkills:
+      manifestSkills && manifestSkills.length > 0
+        ? manifestSkills
+        : defaultRuntimeSkills,
+    selectedToolGroups: selectedGroups
   });
-  return filterRuntimeSkillsBySelectedGroups(
-    enabledManifestSkills,
-    selectedGroups
-  );
-}
-
-function filterRuntimeSkillsBySelectedGroups(
-  skills: Array<{
-    id: PreloadedRuntimeSkillName;
-    version: string;
-    enabled: boolean;
-  }>,
-  selectedGroups: Set<RuntimeToolGroup> | null
-): Array<{ id: PreloadedRuntimeSkillName; version: string; enabled: boolean }> {
-  if (!selectedGroups) {
-    return skills;
-  }
-
-  return skills.filter((skill) => {
-    const group = runtimeToolGroupForSkill(skill.id);
-    return group ? selectedGroups.has(group) : true;
-  });
-}
-
-function runtimeToolGroupForSkill(
-  skillId: PreloadedRuntimeSkillName
-): RuntimeToolGroup | null {
-  switch (skillId) {
-    case "core":
-      return "conversation";
-    case "github":
-      return "github";
-    case "atlassian-jira":
-      return "jira";
-    default:
-      return null;
-  }
-}
-
-function isPreloadedRuntimeSkillName(
-  value: string
-): value is PreloadedRuntimeSkillName {
-  return preloadedRuntimeSkillNames.includes(value as PreloadedRuntimeSkillName);
 }
 
 function formatRuntimePolicyContext(request: RunRequest): string[] {
@@ -3185,7 +3122,7 @@ function formatRuntimePolicyContext(request: RunRequest): string[] {
   return [
     "Runtime policy manifest:",
     `- policyHash: ${manifest.policyHash}`,
-    `- enabled bundled skills: ${enabledSkills || "none"}`,
+    `- enabled skills: ${enabledSkills || "none"}`,
     `- memory.user: ${manifest.memory.userMemoryEnabled ? "enabled" : "disabled"}`,
     `- memory.workspace: ${manifest.memory.workspaceMemoryEnabled ? "enabled" : "disabled"}`,
     `- memory.jobs: ${manifest.memory.jobMemoryEnabled ? "enabled" : "disabled"}`,
@@ -3229,7 +3166,7 @@ function buildOpenClawPrompt(
   rejectedDirectResponses: RejectedDirectResponse[] = []
 ): string {
   const sections = [
-    "Preloaded Burble runtime skills:",
+    "Enabled Burble runtime skills:",
     formatEnabledRuntimeSkills(request),
     "",
     "Do not run first-time assistant setup. Do not ask who you are, who the user is, what kind of assistant you are, what style you should use, or for an emoji/persona setup. Do not mention bootstrap-pending, bootstrap blockers, setup state, defaults, name/nature/vibe/emoji, or workspace bootstrap. The Slack user and assistant identity are already established by Burble.",

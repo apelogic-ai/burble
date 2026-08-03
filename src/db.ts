@@ -216,6 +216,7 @@ export type AgentJobCapabilityRecord = {
   slackUserId: string;
   requiredTools: string[];
   expectedTools?: string[] | null;
+  operationGrants?: AgentJobOperationGrant[];
   routeId: string | null;
   policyHash: string | null;
   capabilityProfile: string;
@@ -224,6 +225,13 @@ export type AgentJobCapabilityRecord = {
   visibilityPolicy: unknown;
   createdAt: string;
   updatedAt: string;
+};
+
+export type AgentJobOperationGrant = {
+  tool: string;
+  operation: string;
+  description?: string;
+  inputSchema?: unknown;
 };
 
 export type SkillCatalogRecord = {
@@ -291,10 +299,15 @@ type AgentJobRunAuditRow = Omit<
 
 type AgentJobCapabilityRow = Omit<
   AgentJobCapabilityRecord,
-  "requiredTools" | "expectedTools" | "stateRefs" | "visibilityPolicy"
+  | "requiredTools"
+  | "expectedTools"
+  | "operationGrants"
+  | "stateRefs"
+  | "visibilityPolicy"
 > & {
   requiredToolsJson: string;
   expectedToolsJson: string | null;
+  operationGrantsJson: string;
   stateRefsJson: string;
   visibilityPolicyJson: string;
 };
@@ -532,6 +545,7 @@ export function createTokenStore(path: string) {
       slack_user_id TEXT NOT NULL,
       required_tools_json TEXT NOT NULL,
       expected_tools_json TEXT,
+      operation_grants_json TEXT NOT NULL DEFAULT '[]',
       route_id TEXT,
       policy_hash TEXT,
       capability_profile TEXT NOT NULL DEFAULT 'scheduled_job',
@@ -595,6 +609,11 @@ export function createTokenStore(path: string) {
   );
   ensureAgentJobCapabilityColumn(db, "runtime_type", "TEXT");
   ensureAgentJobCapabilityColumn(db, "expected_tools_json", "TEXT");
+  ensureAgentJobCapabilityColumn(
+    db,
+    "operation_grants_json",
+    "TEXT NOT NULL DEFAULT '[]'"
+  );
   ensureAgentJobCapabilityColumn(
     db,
     "state_refs_json",
@@ -1555,6 +1574,7 @@ export function createTokenStore(path: string) {
       slack_user_id,
       required_tools_json,
       expected_tools_json,
+      operation_grants_json,
       route_id,
       policy_hash,
       capability_profile,
@@ -1564,12 +1584,13 @@ export function createTokenStore(path: string) {
       created_at,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(job_id) DO UPDATE SET
       workspace_id = excluded.workspace_id,
       slack_user_id = excluded.slack_user_id,
       required_tools_json = excluded.required_tools_json,
       expected_tools_json = excluded.expected_tools_json,
+      operation_grants_json = excluded.operation_grants_json,
       route_id = excluded.route_id,
       policy_hash = excluded.policy_hash,
       capability_profile = excluded.capability_profile,
@@ -1585,6 +1606,7 @@ export function createTokenStore(path: string) {
       slack_user_id AS slackUserId,
       required_tools_json AS requiredToolsJson,
       expected_tools_json AS expectedToolsJson,
+      operation_grants_json AS operationGrantsJson,
       route_id AS routeId,
       policy_hash AS policyHash,
       capability_profile AS capabilityProfile,
@@ -1606,6 +1628,7 @@ export function createTokenStore(path: string) {
       slack_user_id AS slackUserId,
       required_tools_json AS requiredToolsJson,
       expected_tools_json AS expectedToolsJson,
+      operation_grants_json AS operationGrantsJson,
       route_id AS routeId,
       policy_hash AS policyHash,
       capability_profile AS capabilityProfile,
@@ -2652,6 +2675,7 @@ export function createTokenStore(path: string) {
       slackUserId: string;
       requiredTools: string[];
       expectedTools?: string[] | null;
+      operationGrants?: AgentJobOperationGrant[] | null;
       routeId?: string | null;
       policyHash?: string | null;
       capabilityProfile?: string | null;
@@ -2672,6 +2696,9 @@ export function createTokenStore(path: string) {
           : input.expectedTools === null
             ? null
             : stableJson(normalizeRequiredTools(input.expectedTools)),
+        input.operationGrants === undefined
+          ? (existing?.operationGrantsJson ?? "[]")
+          : stableJson(normalizeOperationGrants(input.operationGrants)),
         input.routeId ?? null,
         input.policyHash ?? null,
         normalizeCapabilityProfile(input.capabilityProfile),
@@ -3186,6 +3213,7 @@ function toAgentJobCapabilityRecord(
       row.expectedToolsJson === null
         ? null
         : requiredToolsFromJson(row.expectedToolsJson),
+    operationGrants: operationGrantsFromJson(row.operationGrantsJson),
     routeId: row.routeId,
     policyHash: row.policyHash,
     capabilityProfile: normalizeCapabilityProfile(row.capabilityProfile),
@@ -3275,6 +3303,45 @@ function normalizeAgentMemoryOwnerId(
 function normalizeRequiredTools(requiredTools: string[]): string[] {
   return [...new Set(requiredTools.map((tool) => tool.trim()).filter(Boolean))]
     .sort();
+}
+
+function normalizeOperationGrants(
+  value: AgentJobOperationGrant[] | null | undefined
+): AgentJobOperationGrant[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const grants = new Map<string, AgentJobOperationGrant>();
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const tool = typeof entry.tool === "string" ? entry.tool.trim() : "";
+    const operation =
+      typeof entry.operation === "string" ? entry.operation.trim() : "";
+    if (!tool || !operation) {
+      continue;
+    }
+    grants.set(`${tool}\u0000${operation}`, {
+      tool,
+      operation,
+      ...(typeof entry.description === "string" && entry.description.trim()
+        ? { description: entry.description.trim() }
+        : {}),
+      ...(entry.inputSchema !== undefined
+        ? { inputSchema: entry.inputSchema }
+        : {})
+    });
+  }
+  return [...grants.values()].sort(
+    (left, right) =>
+      left.tool.localeCompare(right.tool) ||
+      left.operation.localeCompare(right.operation)
+  );
+}
+
+function operationGrantsFromJson(valueJson: string): AgentJobOperationGrant[] {
+  return normalizeOperationGrants(parseStoredJson(valueJson) as AgentJobOperationGrant[]);
 }
 
 function normalizeCapabilityProfile(value: string | null | undefined): string {

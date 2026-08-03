@@ -40,6 +40,9 @@ import type { AgentRuntimeEngine } from "../db";
 import { isAgentRuntimeEngine } from "@burble/runtime-sdk/runtime-engines";
 import {
   executeScheduledTaskPreparation,
+  preflightScheduledTaskOperations,
+  scheduledTaskOperationBridgeTools,
+  type ScheduledTaskOperationPreflight,
   type ScheduledTaskPreparationResult,
   validateScheduledTaskPlan,
 } from "../scheduler/task-preparation";
@@ -274,11 +277,73 @@ async function handleConversationInternal(
     };
   }
 
+  if (
+    schedulerControlIntent === "refresh_job_contract" &&
+    deps.schedulerControl?.updateJobPrompt
+  ) {
+    if (!schedulerJobIdHint) {
+      return unresolvedScheduledContractRefresh();
+    }
+    const jobs = await deps.schedulerControl.listJobs({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+    });
+    const job = jobs.find((candidate) => candidate.jobId === schedulerJobIdHint);
+    const prompt = job?.prompt;
+    if (!job || !prompt?.trim()) {
+      return unresolvedScheduledContractRefresh();
+    }
+    const tools = [
+      ...new Set(
+        job.expectedTools?.length
+          ? job.expectedTools
+          : job.requiredTools,
+      ),
+    ].toSorted();
+    const preparation = await prepareResolvedScheduledTask(
+      request,
+      deps,
+      {
+        preparation: [],
+        steps: [
+          {
+            id: "refresh",
+            instruction: prompt,
+            tools,
+          },
+        ],
+      },
+      { intent: "refresh_job_contract", jobId: schedulerJobIdHint },
+    );
+    if (!preparation.ok) {
+      return preparation.response;
+    }
+    if (!preparation.result) {
+      return unresolvedScheduledContractRefresh();
+    }
+    const result = await deps.schedulerControl.updateJobPrompt({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: schedulerJobIdHint,
+      prompt,
+      capability: scheduledTaskCapabilityUpdate(
+        preparation.result,
+        preparation.plan,
+      ),
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobContractRefreshResult(result),
+    };
+  }
+
   if (schedulerCreateRequest && deps.schedulerControl?.createJob) {
     const preparation = await prepareResolvedScheduledTask(
       request,
       deps,
       schedulerTaskPlan,
+      { intent: "create_job", jobId: null },
     );
     if (!preparation.ok) {
       return preparation.response;
@@ -297,7 +362,7 @@ async function handleConversationInternal(
         ? {
             capability: scheduledTaskCapabilityUpdate(
               preparation.result,
-              schedulerTaskPlan,
+              preparation.plan,
             ),
           }
         : {}),
@@ -429,6 +494,7 @@ async function handleConversationInternal(
       request,
       deps,
       schedulerTaskPlan,
+      { intent: "update_job", jobId: schedulerJobIdHint },
     );
     if (!preparation.ok) {
       return preparation.response;
@@ -462,7 +528,7 @@ async function handleConversationInternal(
         ? {
             capability: scheduledTaskCapabilityUpdate(
               preparation.result,
-              schedulerTaskPlan,
+              preparation.plan,
             ),
           }
         : {}),
@@ -509,6 +575,7 @@ async function handleConversationInternal(
       request,
       deps,
       schedulerTaskPlan,
+      { intent: "update_job_prompt", jobId: schedulerJobIdHint },
     );
     if (!preparation.ok) {
       return preparation.response;
@@ -530,7 +597,7 @@ async function handleConversationInternal(
         ? {
             capability: scheduledTaskCapabilityUpdate(
               preparation.result,
-              schedulerTaskPlan,
+              preparation.plan,
             ),
           }
         : {}),
@@ -838,6 +905,7 @@ async function resolveSchedulerControlIntent(
               : null,
           taskPlan:
             intent === "create_job" ||
+            intent === "refresh_job_contract" ||
             intent === "update_job_prompt" ||
             intent === "update_job"
               ? resolved.taskPlan ?? null
@@ -888,14 +956,30 @@ async function prepareResolvedScheduledTask(
   request: ConversationRequest,
   deps: ConversationDeps,
   plan: SchedulerTaskPlan | null,
+  target: {
+    intent:
+      | "create_job"
+      | "refresh_job_contract"
+      | "update_job"
+      | "update_job_prompt";
+    jobId: string | null;
+  },
 ): Promise<
-  | { ok: true; result: ScheduledTaskPreparationResult | null }
+  | {
+      ok: true;
+      result: ScheduledTaskPreparationResult | null;
+      plan: SchedulerTaskPlan | null;
+    }
   | { ok: false; response: ConversationResponse }
 > {
   if (!plan) {
-    return { ok: true, result: null };
+    return { ok: true, result: null, plan: null };
   }
-  if (plan.preparation.length > 0 && !deps.scheduledTaskPreparationExecutor) {
+  if (
+    (plan.preparation.length > 0 ||
+      scheduledTaskOperationBridgeTools(plan).length > 0) &&
+    !deps.scheduledTaskPreparationExecutor
+  ) {
     return {
       ok: false,
       response: {
@@ -906,18 +990,29 @@ async function prepareResolvedScheduledTask(
     };
   }
   try {
+    const resolved = await resolveScheduledTaskOperationPlan(
+      request,
+      deps,
+      plan,
+      target,
+    );
+    if (!resolved.ok) {
+      throw new Error(resolved.errors.join(" "));
+    }
     return {
       ok: true,
       result: await executeScheduledTaskPreparation({
         workspaceId: request.workspaceId,
         slackUserId: request.user.slackUserId,
-        plan,
+        plan: resolved.plan,
         executeTool:
           deps.scheduledTaskPreparationExecutor ??
           (async () => {
             throw new Error("Provider preparation is unavailable");
           }),
+        operationPreflight: resolved.preflight,
       }),
+      plan: resolved.plan,
     };
   } catch (error) {
     return {
@@ -931,12 +1026,129 @@ async function prepareResolvedScheduledTask(
   }
 }
 
+async function resolveScheduledTaskOperationPlan(
+  request: ConversationRequest,
+  deps: ConversationDeps,
+  plan: SchedulerTaskPlan,
+  target: {
+    intent:
+      | "create_job"
+      | "refresh_job_contract"
+      | "update_job"
+      | "update_job_prompt";
+    jobId: string | null;
+  },
+): Promise<
+  | {
+      ok: true;
+      plan: SchedulerTaskPlan;
+      preflight: ScheduledTaskOperationPreflight;
+    }
+  | { ok: false; errors: string[] }
+> {
+  const executeTool = deps.scheduledTaskPreparationExecutor;
+  if (!executeTool || scheduledTaskOperationBridgeTools(plan).length === 0) {
+    return {
+      ok: true,
+      plan,
+      preflight: { operationGrants: [], errors: [], catalogs: {} },
+    };
+  }
+  const preflight = await preflightScheduledTaskOperations({
+    workspaceId: request.workspaceId,
+    slackUserId: request.user.slackUserId,
+    plan,
+    executeTool,
+  });
+  if (preflight.errors.length === 0) {
+    return { ok: true, plan, preflight };
+  }
+  if (!deps.schedulerIntentResolver || !deps.schedulerControl) {
+    return { ok: false, errors: preflight.errors };
+  }
+
+  const jobs = await deps.schedulerControl.listJobs({
+    workspaceId: request.workspaceId,
+    slackUserId: request.user.slackUserId,
+  });
+  const repaired = await deps.schedulerIntentResolver({
+    text: request.text,
+    recentMessages: recentConversationTexts(request),
+    jobs,
+    repair: {
+      jobId: target.jobId,
+      errors: preflight.errors,
+      taskPlan: plan,
+    },
+  });
+  if (
+    repaired.intent !== target.intent ||
+    (repaired.jobId ?? null) !== target.jobId ||
+    repaired.failure ||
+    !repaired.taskPlan
+  ) {
+    return { ok: false, errors: preflight.errors };
+  }
+  if (!isOperationSelectionOnlyRepair(plan, repaired.taskPlan)) {
+    return {
+      ok: false,
+      errors: [
+        "Dynamic operation preflight repair changed task instructions, tools, or preparation. Only exact operation selections may change during this repair.",
+      ],
+    };
+  }
+  const repairedValidation = validateScheduledTaskPlan(repaired.taskPlan);
+  if (!repairedValidation.ok) {
+    return {
+      ok: false,
+      errors: repairedValidation.errors.map(
+        (error) => `Task plan validation failed: ${error}`,
+      ),
+    };
+  }
+  const repairedPreflight = await preflightScheduledTaskOperations({
+    workspaceId: request.workspaceId,
+    slackUserId: request.user.slackUserId,
+    plan: repaired.taskPlan,
+    executeTool,
+    catalogs: preflight.catalogs,
+  });
+  return repairedPreflight.errors.length === 0
+    ? {
+        ok: true,
+        plan: repaired.taskPlan,
+        preflight: repairedPreflight,
+      }
+    : { ok: false, errors: repairedPreflight.errors };
+}
+
+function isOperationSelectionOnlyRepair(
+  original: SchedulerTaskPlan,
+  repaired: SchedulerTaskPlan,
+): boolean {
+  return (
+    (original.stateRefMode ?? null) === (repaired.stateRefMode ?? null) &&
+    JSON.stringify(original.preparation) ===
+      JSON.stringify(repaired.preparation) &&
+    original.steps.length === repaired.steps.length &&
+    original.steps.every((step, index) => {
+      const candidate = repaired.steps[index];
+      return (
+        candidate?.id === step.id &&
+        candidate.instruction === step.instruction &&
+        JSON.stringify(candidate.tools) === JSON.stringify(step.tools)
+      );
+    })
+  );
+}
+
 function scheduledTaskCapabilityUpdate(
   preparation: ScheduledTaskPreparationResult,
   plan: SchedulerTaskPlan | null,
 ): {
   expectedTools: string[];
   requiredTools: string[];
+  operationGrants?: ScheduledTaskPreparationResult["operationGrants"];
   stateRefs?: ScheduledJobStateRef[];
   stateRefMode?: "merge" | "replace" | "clear";
 } {
@@ -948,6 +1160,9 @@ function scheduledTaskCapabilityUpdate(
   return {
     expectedTools: preparation.requiredTools,
     requiredTools: preparation.requiredTools,
+    ...(preparation.operationGrants && preparation.operationGrants.length > 0
+      ? { operationGrants: preparation.operationGrants }
+      : {}),
     ...(shouldIncludeStateRefs
       ? {
           stateRefs: preparation.stateRefs,
@@ -993,6 +1208,7 @@ async function repairScheduledPromptUpdate(
       request,
       deps,
       resolved.taskPlan ?? null,
+      { intent: "update_job_prompt", jobId },
     );
     if (!preparation.ok) {
       return null;
@@ -1011,7 +1227,7 @@ async function repairScheduledPromptUpdate(
         ? {
             capability: scheduledTaskCapabilityUpdate(
               preparation.result,
-              resolved.taskPlan ?? null,
+              preparation.plan,
             ),
           }
         : {}),
@@ -1057,6 +1273,7 @@ async function repairScheduledCreate(
       request,
       deps,
       resolved.taskPlan ?? null,
+      { intent: "create_job", jobId: null },
     );
     if (!preparation.ok) {
       return null;
@@ -1075,7 +1292,7 @@ async function repairScheduledCreate(
         ? {
             capability: scheduledTaskCapabilityUpdate(
               preparation.result,
-              resolved.taskPlan ?? null,
+              preparation.plan,
             ),
           }
         : {}),
@@ -1137,6 +1354,7 @@ function isSchedulerMutationIntent(
     intent === "pause_job" ||
     intent === "resume_job" ||
     intent === "delete_job" ||
+    intent === "refresh_job_contract" ||
     intent === "update_job_delivery" ||
     intent === "update_job" ||
     intent === "update_job_schedule" ||
@@ -1257,6 +1475,7 @@ function normalizeResolvedSchedulerIntent(
     result.intent === "update_job_runtime" ||
     result.intent === "show_task" ||
     result.intent === "validate_task" ||
+    result.intent === "refresh_job_contract" ||
     result.intent === "latest_run_status"
   ) {
     return result.intent;
@@ -1762,6 +1981,26 @@ export function formatScheduledJobPromptUpdateResult(
     return formatScheduledUpdateValidationFailure(result.validation);
   }
   return formatScheduledJobSelectionFailure(result);
+}
+
+function formatScheduledJobContractRefreshResult(
+  result: SchedulerUpdateJobPromptResult,
+): string {
+  if (result.ok) {
+    return `Refreshed scheduled job ${result.job.jobId} execution contract.`;
+  }
+  if (result.reason === "validation_failed") {
+    return formatScheduledUpdateValidationFailure(result.validation);
+  }
+  return formatScheduledJobSelectionFailure(result);
+}
+
+function unresolvedScheduledContractRefresh(): ConversationResponse {
+  return {
+    visibility: "ephemeral",
+    classification: "user_private",
+    text: "I couldn’t refresh that scheduled task because I could not resolve an existing task with a saved prompt. No scheduled-job changes were made.",
+  };
 }
 
 function formatScheduledUpdateValidationFailure(

@@ -8,7 +8,7 @@ import {
   type RuntimeHandle,
 } from "../../src/agent/runtime-factory";
 import type { RuntimeManifest } from "../../src/agent/runtime-manifest";
-import { collectAgentRun } from "../../src/agent/types";
+import { collectAgentRun, type AgentRunEvent } from "../../src/agent/types";
 import type { Config } from "../../src/config";
 import { createTokenStore } from "../../src/db";
 import { handleToolGatewayRequest } from "../../src/tool-gateway";
@@ -467,6 +467,7 @@ describe("managed runtime Burble Native integration", () => {
     };
     const calls: string[] = [];
     const events: string[] = [];
+    const capturedEvents: AgentRunEvent[] = [];
 
     const fetchRouter = async (
       url: string,
@@ -494,6 +495,10 @@ describe("managed runtime Burble Native integration", () => {
                 toolName: "google_search_drive_files",
                 callId: "hermes-provider-marker-test",
                 classification: "user_private",
+                status: "error",
+                errorCode: "provider_validation_failed",
+                errorMessage: "Query is invalid.",
+                operation: "drive_files_list",
               }),
               JSON.stringify({
                 type: "message_delta",
@@ -567,6 +572,7 @@ describe("managed runtime Burble Native integration", () => {
         },
       },
       (event) => {
+        capturedEvents.push(event);
         events.push(event.type);
       },
     );
@@ -577,6 +583,16 @@ describe("managed runtime Burble Native integration", () => {
     expect(events).toContain("tool_call");
     expect(events).toContain("tool_result");
     expect(events).toContain("message_delta");
+    expect(capturedEvents).toContainEqual({
+      type: "tool_result",
+      toolName: "google_search_drive_files",
+      callId: "hermes-provider-marker-test",
+      classification: "user_private",
+      status: "error",
+      errorCode: "provider_validation_failed",
+      errorMessage: "Query is invalid.",
+      operation: "drive_files_list",
+    });
     expect(events.some((event) => event.includes("type=final"))).toBe(true);
     expect(calls.some((call) => call.includes("/internal/tools/"))).toBe(false);
   });

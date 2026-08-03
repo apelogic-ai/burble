@@ -1273,6 +1273,17 @@ describe("createTokenStore", () => {
         "github_search_issues"
       ],
       expectedTools: ["github_search_issues"],
+      operationGrants: [
+        {
+          tool: "github_call_mcp_tool",
+          operation: "issue_read",
+          description: "Read one issue or pull request",
+          inputSchema: {
+            type: "object",
+            required: ["method", "owner", "repo", "issue_number"]
+          }
+        }
+      ],
       routeId: "convrt_123",
       policyHash: "policy-a",
       capabilityProfile: "scheduled_job",
@@ -1296,6 +1307,7 @@ describe("createTokenStore", () => {
       slackUserId: "U123",
       requiredTools: ["github_list_my_pull_requests"],
       expectedTools: ["github_list_my_pull_requests"],
+      operationGrants: [],
       routeId: "convrt_123",
       policyHash: "policy-b",
       capabilityProfile: "scheduled_job",
@@ -1314,6 +1326,17 @@ describe("createTokenStore", () => {
       slackUserId: "U123",
       requiredTools: ["github_list_my_pull_requests", "github_search_issues"],
       expectedTools: ["github_search_issues"],
+      operationGrants: [
+        {
+          tool: "github_call_mcp_tool",
+          operation: "issue_read",
+          description: "Read one issue or pull request",
+          inputSchema: {
+            type: "object",
+            required: ["method", "owner", "repo", "issue_number"]
+          }
+        }
+      ],
       routeId: "convrt_123",
       policyHash: "policy-a",
       capabilityProfile: "scheduled_job",
@@ -1338,6 +1361,7 @@ describe("createTokenStore", () => {
       slackUserId: "U123",
       requiredTools: ["github_list_my_pull_requests"],
       expectedTools: ["github_list_my_pull_requests"],
+      operationGrants: [],
       routeId: "convrt_123",
       policyHash: "policy-b",
       capabilityProfile: "scheduled_job",

@@ -1,4 +1,5 @@
 import type { Config } from "./config";
+import { readRuntimeToolErrorDiagnostic } from "@burble/runtime-sdk/runtime-contract";
 import type {
   AgentJobCapabilityRecord,
   AgentRuntimeEngine,
@@ -111,21 +112,14 @@ import {
 } from "./mcp/upstream-http-client";
 import {
   callMcpGwTool,
-  listMcpGwTools,
-  McpGwUnauthorizedError
+  listMcpGwTools
 } from "./mcp/mcp-gw-client";
 import {
-  isMcpGwProviderOAuthOnlyCatalog,
-  mcpGwGoogleToolCatalog,
-} from "./mcp/mcp-gw-provider-tools";
-import {
   applyMcpGwGoogleStateRefHints,
-  adaptMcpGwGoogleToolCall,
-  canAdaptMcpGwGoogleToolCall,
-  mcpGwGoogleToolResult
+  canAdaptMcpGwGoogleToolCall
 } from "./mcp/mcp-gw-google-adapter";
 import { handleMcpGwGitHubToolRequest } from "./mcp/mcp-gw-github-handler";
-import { resolveMcpUserAssertion } from "./mcp/user-assertion";
+import { handleMcpGwGoogleToolRequest } from "./mcp/provider-google";
 import type { McpIdentityIssuer } from "./mcp-identity";
 import { searchSlackMessages, searchSlackUsers } from "./providers/slack/client";
 import { searchWeb, type WebSearchDeps } from "./providers/web/client";
@@ -154,6 +148,7 @@ import { formatLogLine } from "./logging";
 import { buildScheduledJobContext } from "./agent/scheduled-job-context";
 import { assertScheduledJobCapabilityMatchesRuntime } from "./agent/scheduled-job-auth";
 import {
+  isScheduledJobOperationAllowed,
   isScheduledJobToolAllowed,
   normalizeScheduledJobToolNames
 } from "./agent/scheduled-job-tools";
@@ -992,9 +987,18 @@ export async function handleToolGatewayRequest(
   }
   body = { ...body, input: inputCoercion.input };
 
-  if (shouldRouteGoogleViaMcpGw(config, auth, providerToolSpec, body.input)) {
+  if (
+    shouldRouteGoogleViaMcpGw(config, auth, providerToolSpec, body.input) &&
+    auth.kind === "runtime"
+  ) {
     return respondWithAudit(
-      await handleMcpGwGoogleToolRequest(config, auth, toolName, body, deps)
+      await handleMcpGwGoogleToolRequest({
+        config,
+        runtime: auth.runtime,
+        deps,
+        toolName: providerToolSpec?.name ?? toolName,
+        args: body.input as Record<string, unknown>
+      })
     );
   }
 
@@ -2133,135 +2137,10 @@ function shouldRouteGoogleViaMcpGw(
     auth.kind === "runtime" &&
     config.googleViaMcpGw &&
     providerToolSpec?.provider === "google" &&
-    canAdaptMcpGwGoogleToolCall(providerToolSpec.name, input)
+    (providerToolSpec.implementation === "listMcpTools" ||
+      providerToolSpec.implementation === "callMcpTool" ||
+      canAdaptMcpGwGoogleToolCall(providerToolSpec.name, input))
   );
-}
-
-async function handleMcpGwGoogleToolRequest(
-  config: Config,
-  auth: ToolGatewayAuth,
-  toolName: string,
-  body: ToolGatewayBody,
-  deps: ToolGatewayDeps
-): Promise<ToolResult<unknown>> {
-  if (auth.kind !== "runtime") {
-    return {
-      classification: "user_private",
-      content: {
-        error: "runtime_auth_required",
-        message: "Runtime auth required."
-      }
-    };
-  }
-
-  const adaptedTool = adaptMcpGwGoogleToolCall(toolName, body.input);
-  if (!adaptedTool.ok) {
-    return {
-      classification: "user_private",
-      content: {
-        error: "mcp_gw_tool_not_adapted",
-        burbleToolName: adaptedTool.burbleToolName,
-        message: adaptedTool.message
-      }
-    };
-  }
-
-  if (!config.mcpGwMcpUrl || !config.mcpGwAudience || !deps.mcpIdentityIssuer) {
-    return {
-      classification: "user_private",
-      content: {
-        error: "mcp_gw_not_configured",
-        message:
-          "Google via MCP-GW is enabled but MCP-GW URL, audience, or identity issuer is not configured."
-      }
-    };
-  }
-
-  const getSlackEmail = resolveMcpGwEmailGetter(deps);
-  if (!getSlackEmail) {
-    return {
-      classification: "user_private",
-      content: {
-        error: "mcp_gw_identity_unavailable",
-        message:
-          "Google via MCP-GW requires a trusted Slack email resolver."
-      }
-    };
-  }
-
-  try {
-    const assertion = await resolveMcpUserAssertion({
-      workspaceId: auth.runtime.workspaceId,
-      slackUserId: auth.runtime.slackUserId,
-      audience: config.mcpGwAudience,
-      issuer: deps.mcpIdentityIssuer,
-      getSlackEmail
-    });
-    const clientConfig = {
-      url: config.mcpGwMcpUrl,
-      bearerToken: assertion.token,
-    };
-    const advertisedToolNames = await (
-      deps.listMcpGwTools ?? listMcpGwTools
-    )(clientConfig).then((tools) => tools.map((tool) => tool.name));
-    if (
-      isMcpGwProviderOAuthOnlyCatalog(
-        advertisedToolNames,
-        mcpGwGoogleToolCatalog,
-      )
-    ) {
-      return mcpGwGoogleToolResult(adaptedTool, {
-        status: "needs_connect",
-        provider: "google",
-        message: "Google Workspace account is not connected",
-      });
-    }
-    if (!advertisedToolNames.includes(adaptedTool.name)) {
-      return {
-        classification: "user_private",
-        content: {
-          error: "mcp_gw_tool_not_advertised",
-          message: `Google tool ${adaptedTool.name} is not advertised by MCP-GW.`,
-        },
-      };
-    }
-    const result = await (deps.callMcpGwTool ?? callMcpGwTool)(
-      clientConfig,
-      {
-        name: adaptedTool.name,
-        arguments: adaptedTool.arguments
-      }
-    );
-
-    return mcpGwGoogleToolResult(adaptedTool, result);
-  } catch (error) {
-    if (error instanceof McpGwUnauthorizedError) {
-      return {
-        classification: "user_private",
-        content: {
-          error: "mcp_gw_unauthorized",
-          message: error.message,
-          ...(error.protectedResourceMetadataUrl
-            ? { protectedResourceMetadataUrl: error.protectedResourceMetadataUrl }
-            : {})
-        }
-      };
-    }
-
-    return {
-      classification: "user_private",
-      content: {
-        error: "mcp_gw_call_failed",
-        message: formatToolGatewayErrorMessage(error)
-      }
-    };
-  }
-}
-
-function resolveMcpGwEmailGetter(
-  deps: ToolGatewayDeps
-): ((slackUserId: string) => Promise<string>) | null {
-  return deps.getSlackEmail ?? null;
 }
 
 function resolveToolGatewayConnection(
@@ -2384,6 +2263,32 @@ function validateAndStripScheduledJobToolGatewayInput(
   }
 
   const strippedInput = stripScheduledJobIds(body.input);
+  const operationInput = findScheduledJobOperationInput(
+    toolName,
+    strippedInput
+  );
+  if (
+    operationInput &&
+    !isScheduledJobOperationAllowed({
+      operationGrants: capability.operationGrants,
+      toolName,
+      operation: operationInput.operation
+    })
+  ) {
+    return {
+      body,
+      response: jsonResponse(
+        {
+          classification: "user_private",
+          content: {
+            error: "scheduled_job_operation_denied",
+            message: `Operation ${operationInput.operation} is not available through ${toolName} for scheduled job ${jobId}.`
+          }
+        },
+        403
+      )
+    };
+  }
   const scheduledJob = buildScheduledJobContext(capability);
   const deniedStateInput = findDeniedScheduledJobStateInput(
     toolName,
@@ -2417,6 +2322,25 @@ function validateAndStripScheduledJobToolGatewayInput(
     },
     response: null
   };
+}
+
+function findScheduledJobOperationInput(
+  toolName: string,
+  input: unknown
+): { operation: string } | null {
+  const operationNameInput = findProviderToolSpec(toolName)?.operationNameInput;
+  if (
+    !operationNameInput ||
+    !input ||
+    typeof input !== "object" ||
+    Array.isArray(input)
+  ) {
+    return null;
+  }
+  const value = (input as Record<string, unknown>)[operationNameInput];
+  return typeof value === "string" && value.trim()
+    ? { operation: value.trim() }
+    : null;
 }
 
 function findDeniedScheduledJobStateInput(
@@ -5396,6 +5320,7 @@ function jsonResponseWithAudit(
   result: ToolResult<unknown>,
   observabilityContext?: ToolGatewayObservabilityContext
 ): Response {
+  const toolError = readRuntimeToolErrorDiagnostic(result);
   if (auth.kind === "runtime") {
     store.recordAgentRuntimeEvent({
       runtimeId: auth.runtime.id,
@@ -5403,6 +5328,7 @@ function jsonResponseWithAudit(
       summary: {
         toolName,
         classification: result.classification,
+        ...(toolError ? { status: "error", ...toolError } : {}),
         itemCount: Array.isArray(result.content) ? result.content.length : null
       }
     });
@@ -5456,6 +5382,8 @@ function emitToolGatewayCompleted(
 ): void {
   try {
     const durationMs = context ? Date.now() - context.startedAt : null;
+    const toolError = readRuntimeToolErrorDiagnostic(result);
+    const status = toolError ? "error" : "ok";
     if (auth.kind === "runtime") {
       console.info(
         [
@@ -5465,7 +5393,15 @@ function emitToolGatewayCompleted(
           `toolName=${toolName}`,
           `provider=${readToolProviderForTelemetry(toolName)}`,
           `classification=${result.classification}`,
+          `status=${status}`,
           ...(durationMs !== null ? [`durationMs=${durationMs}`] : []),
+          ...(toolError?.errorCode ? [`code=${toolError.errorCode}`] : []),
+          ...(toolError?.operation
+            ? [`operation=${toolError.operation}`]
+            : []),
+          ...(toolError?.errorMessage
+            ? [`message=${toolError.errorMessage}`]
+            : []),
           `itemCount=${Array.isArray(result.content) ? result.content.length : "null"}`
         ].join(" ")
       );
@@ -5476,12 +5412,27 @@ function emitToolGatewayCompleted(
       toolName,
       classification: result.classification,
       durationMs: durationMs ?? 0,
-      status: "ok",
+      status,
       attributes: {
         authKind: auth.kind,
         provider: readToolProviderForTelemetry(toolName),
+        ...(toolError?.errorCode
+          ? { toolErrorCode: toolError.errorCode }
+          : {}),
+        ...(toolError?.operation
+          ? { toolOperation: toolError.operation }
+          : {}),
         itemCount: Array.isArray(result.content) ? result.content.length : null
-      }
+      },
+      ...(toolError
+        ? {
+            error: {
+              message:
+                toolError.errorMessage ?? "Tool returned a structured error.",
+              ...(toolError.errorCode ? { code: toolError.errorCode } : {})
+            }
+          }
+        : {})
     });
   } catch (emitError) {
     console.warn(

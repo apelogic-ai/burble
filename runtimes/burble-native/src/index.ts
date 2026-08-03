@@ -15,7 +15,10 @@ server = Bun.serve<RuntimeWebSocketData>({
   fetch: (request) =>
     handleRuntimeRequest(
       request,
-      { env: Bun.env },
+      {
+        env: Bun.env,
+        logInfo: (message) => console.log(message)
+      },
       {
         upgradeWebSocket: (runId) =>
           server.upgrade(request, {

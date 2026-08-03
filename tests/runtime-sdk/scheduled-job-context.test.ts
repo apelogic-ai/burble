@@ -46,6 +46,37 @@ describe("scheduled job runtime context helpers", () => {
     ]);
   });
 
+  test("formats bounded operation input contracts for runtime planning", () => {
+    expect(
+      formatRuntimeScheduledJobContextLines({
+        ...scheduledJob,
+        operationGrants: [
+          {
+            tool: "github_call_mcp_tool",
+            operation: "pull_request_read",
+            description: "Read pull request details",
+            inputSchema: {
+              type: "object",
+              properties: {
+                method: {
+                  type: "string",
+                  enum: ["get", "get_comments"],
+                  description: "Pull request read method",
+                },
+                owner: { type: "string" },
+                pullNumber: { type: "number" },
+                optionalFilter: { type: "string" },
+              },
+              required: ["method", "owner", "pullNumber"],
+            },
+          },
+        ],
+      }),
+    ).toContain(
+      '- allowedOperation tool=github_call_mcp_tool operation=pull_request_read description="Read pull request details" input={method:string(get|get_comments),required; owner:string,required; pullNumber:number,required; optionalFilter:string,optional}',
+    );
+  });
+
   test("uses the trusted scheduler job id over model-supplied input", () => {
     expect(
       withTrustedScheduledJobId(

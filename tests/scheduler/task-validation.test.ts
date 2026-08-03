@@ -23,6 +23,50 @@ function scheduledJob(prompt: string): ScheduledJobRecord {
 }
 
 describe("scheduled task validation", () => {
+  test("rejects legacy provider grants without resolved expected operations", () => {
+    const validation = validateScheduledTask(
+      {
+        ...scheduledJob("Process the configured external state."),
+        title: "Legacy external-state task",
+      },
+      {
+        expectedTools: null,
+        requiredTools: ["github_search_issues"],
+      },
+    );
+
+    expect(validation).toMatchObject({
+      ok: false,
+      expectedTools: [],
+      errors: [
+        {
+          code: "legacy_execution_contract",
+          message:
+            "This scheduled task uses a legacy capability contract without resolved expected operations. Recreate or re-save the scheduled task before running it.",
+        },
+      ],
+    });
+  });
+
+  test("keeps literal delivery jobs valid without expected operations", () => {
+    const validation = validateScheduledTask(
+      {
+        ...scheduledJob("Post exactly this message: :heart:"),
+        title: "Heart",
+      },
+      {
+        expectedTools: [],
+        requiredTools: ["conversation.sendMessage"],
+      },
+    );
+
+    expect(validation).toMatchObject({
+      ok: true,
+      expectedTools: [],
+      errors: [],
+    });
+  });
+
   test("uses resolved task operations instead of re-inferring discovery from prompt wording", () => {
     const validation = validateScheduledTask(
       scheduledJob(
@@ -39,7 +83,7 @@ describe("scheduled task validation", () => {
           "google_append_to_drive_text_file",
         ],
         requiredTools: [
-          "github_call_mcp_tool",
+          "github_search_issues",
           "google_append_to_drive_text_file",
           "google_get_drive_file",
         ],
@@ -59,7 +103,7 @@ describe("scheduled task validation", () => {
       "google_get_drive_file",
     ]);
     expect(validation.grantedTools).toEqual([
-      "github_call_mcp_tool",
+      "github_search_issues",
       "google_append_to_drive_text_file",
       "google_get_drive_file",
     ]);
@@ -190,24 +234,30 @@ describe("scheduled task validation", () => {
     expect(validation).toMatchObject({ ok: true, errors: [] });
   });
 
-  test("accepts the generic MCP-GW GitHub tool as explicit GitHub coverage", () => {
+  test("rejects a generic MCP bridge as coverage for a concrete operation", () => {
     const validation = validateScheduledTask(
       scheduledJob(
         "Find open pull requests in repositories under the apelogic-ai GitHub organization.",
       ),
       {
+        expectedTools: ["github_search_issues"],
         requiredTools: ["github_call_mcp_tool"],
       },
     );
 
     expect(validation).toMatchObject({
-      ok: true,
-      errors: [],
+      ok: false,
+      errors: [
+        {
+          code: "missing_required_tool",
+          tool: "github_search_issues",
+        },
+      ],
       warnings: [],
     });
   });
 
-  test("uses catalog-declared provider dispatch coverage generically", () => {
+  test("rejects a provider bridge as coverage for provider discovery", () => {
     const validation = validateScheduledTask(
       scheduledJob("Inspect the connected provider's available operations."),
       {
@@ -217,10 +267,52 @@ describe("scheduled task validation", () => {
     );
 
     expect(validation).toMatchObject({
-      ok: true,
-      errors: [],
+      ok: false,
+      errors: [
+        {
+          code: "missing_required_tool",
+          tool: "atlassian_list_mcp_tools",
+        },
+      ],
       warnings: [],
     });
+  });
+
+  test("requires exact operation grants for a dynamic MCP bridge", () => {
+    const missing = validateScheduledTask(
+      scheduledJob("Read issue comments through the connected provider."),
+      {
+        expectedTools: ["github_call_mcp_tool"],
+        requiredTools: ["github_call_mcp_tool"],
+        operationGrants: [],
+      },
+    );
+    const exact = validateScheduledTask(
+      scheduledJob("Read issue comments through the connected provider."),
+      {
+        expectedTools: ["github_call_mcp_tool"],
+        requiredTools: ["github_call_mcp_tool"],
+        operationGrants: [
+          {
+            tool: "github_call_mcp_tool",
+            operation: "issue_read",
+            description: "Read issue details and comments",
+            inputSchema: { type: "object" },
+          },
+        ],
+      },
+    );
+
+    expect(missing).toMatchObject({
+      ok: false,
+      errors: [
+        {
+          code: "missing_operation_grant",
+          tool: "github_call_mcp_tool",
+        },
+      ],
+    });
+    expect(exact).toMatchObject({ ok: true, errors: [] });
   });
 
   test("does not let GitHub write grants cover organization PR search", () => {
@@ -229,6 +321,7 @@ describe("scheduled task validation", () => {
         "Find open pull requests in repositories under the apelogic-ai GitHub organization.",
       ),
       {
+        expectedTools: ["github_search_issues"],
         requiredTools: ["github_create_issue"],
       },
     );
@@ -237,6 +330,7 @@ describe("scheduled task validation", () => {
         "Find open pull requests in repositories under the apelogic-ai GitHub organization.",
       ),
       {
+        expectedTools: ["github_search_issues"],
         requiredTools: [
           "github_create_issue",
           "github_list_my_pull_requests",
@@ -261,6 +355,7 @@ describe("scheduled task validation", () => {
     const validation = validateScheduledTask(
       scheduledJob("Find the latest AI news on the web."),
       {
+        expectedTools: ["web_search"],
         requiredTools: ["github_call_mcp_tool"],
       },
     );

@@ -7,6 +7,7 @@ RUN apk add --no-cache iproute2
 COPY runtimes/openclaw-nemoclaw/package.json runtimes/openclaw-nemoclaw/tsconfig.json ./
 COPY runtimes/openclaw-nemoclaw/src ./src
 COPY runtimes/openclaw-nemoclaw/skills ./skills
+COPY runtimes/skills ./skills
 COPY packages/runtime-sdk /runtime/node_modules/@burble/runtime-sdk
 RUN cd /runtime/node_modules/@burble/runtime-sdk && bun install --production
 RUN echo 'sandbox:x:1000660000:' >> /etc/group \

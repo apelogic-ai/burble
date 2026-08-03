@@ -1,3 +1,8 @@
+---
+id: github
+version: "1"
+toolGroups: [github]
+---
 # GitHub Skill
 
 For GitHub questions and actions, use only the available Burble GitHub tools or
@@ -16,4 +21,3 @@ Use `github.listAssignedIssues` for assigned issue summaries and
 
 When GitHub tool results are empty, say that no matching visible GitHub items
 were found. Do not invent likely matches.
-

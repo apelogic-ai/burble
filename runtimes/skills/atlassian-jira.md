@@ -1,3 +1,8 @@
+---
+id: atlassian-jira
+version: "1"
+toolGroups: [jira]
+---
 # Atlassian Jira Skill
 
 Prefer REST-backed Burble tools for ordinary Jira CRUD:

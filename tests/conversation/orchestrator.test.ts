@@ -1109,6 +1109,229 @@ describe("handleConversation", () => {
     expect(response.text).toContain("Created scheduled job job_created.");
   });
 
+  test("discovers and persists exact dynamic operations before creating a task", async () => {
+    let resolverCalls = 0;
+    const preparationCalls: unknown[] = [];
+    const creates: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Create an hourly task that reviews pull request details.",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: (input) => {
+            creates.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job_dynamic",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: input.title,
+                prompt: input.prompt,
+                schedule: input.schedule,
+                routeId: input.routeId ?? null,
+                state: "scheduled",
+                runtimeType: input.runtimeType ?? null,
+                createdAt: "2026-07-23T16:00:00.000Z",
+                updatedAt: "2026-07-23T16:00:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async (input) => {
+          resolverCalls += 1;
+          if (resolverCalls === 2) {
+            expect(input.repair?.jobId).toBeNull();
+            expect(input.repair?.errors.join("\n")).toContain(
+              "github_call_mcp_tool",
+            );
+            expect(input.repair?.errors.join("\n")).toContain("issue_read");
+            expect(input.repair?.errors.join("\n")).toContain("issue_comments");
+          }
+          return {
+            intent: "create_job",
+            confidence: 0.99,
+            jobId: null,
+            create: {
+              title: "Pull request review",
+              prompt: "Review pull request details.",
+              schedule: {
+                kind: "cron",
+                expression: "0 * * * *",
+                timezone: "UTC",
+              },
+            },
+            taskPlan: {
+              preparation: [],
+              steps: [
+                {
+                  id: "review",
+                  instruction: "Review pull request details.",
+                  tools: ["github_call_mcp_tool"],
+                  ...(resolverCalls === 2
+                    ? {
+                        operations: [
+                          {
+                            tool: "github_call_mcp_tool",
+                            operation: "issue_read",
+                          },
+                        ],
+                      }
+                    : {}),
+                },
+              ],
+            },
+          };
+        },
+        scheduledTaskPreparationExecutor: async (input) => {
+          preparationCalls.push(input);
+          expect(input.tool).toBe("github_list_mcp_tools");
+          return {
+            value: [
+              {
+                name: "issue_read",
+                title: "Read issue or pull request",
+                description: "Read one issue or pull request.",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    owner: { type: "string" },
+                    repo: { type: "string" },
+                    issue_number: { type: "number" },
+                  },
+                  required: ["owner", "repo", "issue_number"],
+                },
+              },
+              {
+                name: "issue_comments",
+                title: "Read comments",
+                inputSchema: { type: "object" },
+              },
+            ],
+          };
+        },
+      }),
+    );
+
+    expect(resolverCalls).toBe(2);
+    expect(preparationCalls).toHaveLength(1);
+    expect(creates).toEqual([
+      expect.objectContaining({
+        capability: {
+          expectedTools: ["github_call_mcp_tool"],
+          requiredTools: ["github_call_mcp_tool"],
+          operationGrants: [
+            {
+              tool: "github_call_mcp_tool",
+              operation: "issue_read",
+              description: "Read one issue or pull request.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  owner: { type: "string" },
+                  repo: { type: "string" },
+                  issue_number: { type: "number" },
+                },
+                required: ["owner", "repo", "issue_number"],
+              },
+            },
+          ],
+        },
+      }),
+    ]);
+    expect(response.text).toContain("Created scheduled job job_dynamic.");
+  });
+
+  test("rejects operation-selection repairs that add preparation side effects", async () => {
+    let resolverCalls = 0;
+    const preparationCalls: string[] = [];
+    let createCalls = 0;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Create an hourly task that reviews pull request details.",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: () => {
+            createCalls += 1;
+            throw new Error("invalid repaired task must not be created");
+          },
+        },
+        schedulerIntentResolver: async () => {
+          resolverCalls += 1;
+          return {
+            intent: "create_job",
+            confidence: 0.99,
+            jobId: null,
+            create: {
+              title: "Pull request review",
+              prompt: "Review pull request details.",
+              schedule: {
+                kind: "cron",
+                expression: "0 * * * *",
+                timezone: "UTC",
+              },
+            },
+            taskPlan: {
+              preparation:
+                resolverCalls === 2
+                  ? [
+                      {
+                        id: "create_state",
+                        tool: "google_create_drive_text_file",
+                        input: { name: "Unexpected", text: "" },
+                        saveAs: "unexpected",
+                      },
+                    ]
+                  : [],
+              steps: [
+                {
+                  id: "review",
+                  instruction: "Review pull request details.",
+                  tools: ["github_call_mcp_tool"],
+                  ...(resolverCalls === 2
+                    ? {
+                        operations: [
+                          {
+                            tool: "github_call_mcp_tool",
+                            operation: "issue_read",
+                          },
+                        ],
+                      }
+                    : {}),
+                },
+              ],
+            },
+          };
+        },
+        scheduledTaskPreparationExecutor: async (input) => {
+          preparationCalls.push(input.tool);
+          if (input.tool !== "github_list_mcp_tools") {
+            throw new Error("repair must not add preparation side effects");
+          }
+          return {
+            value: [
+              {
+                name: "issue_read",
+                inputSchema: { type: "object" },
+              },
+            ],
+          };
+        },
+      }),
+    );
+
+    expect(resolverCalls).toBe(2);
+    expect(preparationCalls).toEqual(["github_list_mcp_tools"]);
+    expect(createCalls).toBe(0);
+    expect(response.text).toContain("No scheduled-job changes were made.");
+  });
+
   test("repairs one side-effect-free task creation after pre-flight rejection", async () => {
     let resolverCalls = 0;
     let createCalls = 0;
@@ -3011,6 +3234,203 @@ describe("handleConversation", () => {
     expect(response.text).toContain("Task validation failed");
     expect(response.text).toContain("job_github_checker");
     expect(response.text).toContain("missing_required_tool");
+  });
+
+  test("refreshes an existing task operation contract without changing task semantics", async () => {
+    const updates: unknown[] = [];
+    let resolverCalls = 0;
+    const prompt =
+      "Inspect pull requests and discussions, then report relevant activity.";
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: [
+          "Re-save the Daily project pulse scheduled job.",
+          "Keep its current prompt, schedule, route, runtime, and bound state unchanged.",
+          "Re-resolve and preflight all recurring provider operations.",
+        ].join(" "),
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [
+            {
+              jobId: "job_openshell",
+              title: "Daily project pulse",
+              prompt,
+              schedule: {
+                kind: "cron",
+                expression: "0 16 * * *",
+                timezone: "UTC",
+              },
+              state: "scheduled",
+              runtimeType: "burble-native",
+              requiredTools: [
+                "github_call_mcp_tool",
+                "github_search_issues",
+                "google_get_drive_file",
+              ],
+              expectedTools: [
+                "github_call_mcp_tool",
+                "github_search_issues",
+                "google_get_drive_file",
+              ],
+              stateRefs: [
+                {
+                  provider: "google",
+                  kind: "document",
+                  id: "state-123",
+                  purpose: "Deduplicate prior reports",
+                },
+              ],
+              routeId: "convrt_project",
+              updatedAt: "2026-07-20T23:05:53.232Z",
+            },
+          ],
+          updateJobPrompt: (input) => {
+            updates.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job_openshell",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Daily project pulse",
+                prompt: input.prompt,
+                schedule: {
+                  kind: "cron",
+                  expression: "0 16 * * *",
+                  timezone: "UTC",
+                },
+                routeId: "convrt_project",
+                state: "scheduled",
+                runtimeType: "burble-native",
+                createdAt: "2026-07-20T23:05:53.232Z",
+                updatedAt: "2026-07-24T16:50:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async (input) => {
+          resolverCalls += 1;
+          if (resolverCalls === 1) {
+            return {
+              intent: "refresh_job_contract",
+              confidence: 0.99,
+              jobId: "job_openshell",
+            };
+          }
+          expect(input.repair?.jobId).toBe("job_openshell");
+          expect(
+            (
+              input.repair as
+                | { taskPlan?: unknown }
+                | undefined
+            )?.taskPlan,
+          ).toEqual({
+            preparation: [],
+            steps: [
+              {
+                id: "refresh",
+                instruction: prompt,
+                tools: [
+                  "github_call_mcp_tool",
+                  "github_search_issues",
+                  "google_get_drive_file",
+                ],
+              },
+            ],
+          });
+          expect(input.repair?.errors.join("\n")).toContain(
+            "requires at least one exact recurring operation",
+          );
+          return {
+            intent: "refresh_job_contract",
+            confidence: 0.99,
+            jobId: "job_openshell",
+            taskPlan: {
+              preparation: [],
+              steps: [
+                {
+                  id: "refresh",
+                  instruction: prompt,
+                  tools: [
+                    "github_call_mcp_tool",
+                    "github_search_issues",
+                    "google_get_drive_file",
+                  ],
+                  operations: [
+                    {
+                      tool: "github_call_mcp_tool",
+                      operation: "pull_request_read",
+                    },
+                    {
+                      tool: "github_call_mcp_tool",
+                      operation: "get_discussion",
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        },
+        scheduledTaskPreparationExecutor: async (input) => {
+          expect(input.tool).toBe("github_list_mcp_tools");
+          return {
+            value: [
+              {
+                name: "pull_request_read",
+                description: "Read pull request details.",
+                inputSchema: { type: "object" },
+              },
+              {
+                name: "get_discussion",
+                description: "Read a discussion.",
+                inputSchema: { type: "object" },
+              },
+            ],
+          };
+        },
+      }),
+    );
+
+    expect(resolverCalls).toBe(2);
+    expect(updates).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job_openshell",
+        prompt,
+        capability: {
+          expectedTools: [
+            "github_call_mcp_tool",
+            "github_search_issues",
+            "google_get_drive_file",
+          ],
+          requiredTools: [
+            "github_call_mcp_tool",
+            "github_search_issues",
+            "google_get_drive_file",
+          ],
+          operationGrants: [
+            {
+              tool: "github_call_mcp_tool",
+              operation: "get_discussion",
+              description: "Read a discussion.",
+              inputSchema: { type: "object" },
+            },
+            {
+              tool: "github_call_mcp_tool",
+              operation: "pull_request_read",
+              description: "Read pull request details.",
+              inputSchema: { type: "object" },
+            },
+          ],
+        },
+      },
+    ]);
+    expect(response.text).toContain(
+      "Refreshed scheduled job job_openshell execution contract.",
+    );
   });
 
   test("shows scheduled task details from scheduler resolver intent", async () => {

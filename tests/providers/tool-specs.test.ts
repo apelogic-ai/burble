@@ -26,17 +26,35 @@ type HermesProviderToolHints = {
 };
 
 describe("provider tool specs", () => {
-  test("loads provider-wide grant coverage from tool metadata", () => {
-    expect(
-      githubProviderToolSpecs.find(
-        (tool) => tool.name === "github_call_mcp_tool"
-      )?.grantCoverage
-    ).toBe("provider");
-    expect(
-      atlassianProviderToolSpecs.find(
-        (tool) => tool.name === "atlassian_call_mcp_tool"
-      )?.grantCoverage
-    ).toBe("provider");
+  test("does not give dynamic MCP bridges provider-wide execution coverage", () => {
+    const githubBridge = githubProviderToolSpecs.find(
+      (tool) => tool.name === "github_call_mcp_tool",
+    )!;
+    const atlassianBridge = atlassianProviderToolSpecs.find(
+      (tool) => tool.name === "atlassian_call_mcp_tool",
+    )!;
+    const googleBridge = googleProviderToolSpecs.find(
+      (tool) => tool.name === "google_call_mcp_tool",
+    )!;
+
+    expect("grantCoverage" in githubBridge).toBe(false);
+    expect("grantCoverage" in atlassianBridge).toBe(false);
+    expect("grantCoverage" in googleBridge).toBe(false);
+    expect(githubBridge).toMatchObject({
+      operationNameInput: "name",
+      operationArgumentsInput: "arguments",
+      operationCatalogTool: "github_list_mcp_tools",
+    });
+    expect(atlassianBridge).toMatchObject({
+      operationNameInput: "name",
+      operationArgumentsInput: "arguments",
+      operationCatalogTool: "atlassian_list_mcp_tools",
+    });
+    expect(googleBridge).toMatchObject({
+      operationNameInput: "name",
+      operationArgumentsInput: "arguments",
+      operationCatalogTool: "google_list_mcp_tools",
+    });
   });
 
   test("loads GitHub MCP tool metadata from YAML", () => {
@@ -87,6 +105,8 @@ describe("provider tool specs", () => {
     expect(names).toContain("google_slides_copy_presentation");
     expect(names).toContain("google_slides_create_slide");
     expect(names).toContain("google_slides_fill_placeholders");
+    expect(names).toContain("google_list_mcp_tools");
+    expect(names).toContain("google_call_mcp_tool");
     expect(
       googleProviderToolSpecs
         .find((tool) => tool.name === "google_search_drive_files")

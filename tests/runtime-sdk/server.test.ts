@@ -442,6 +442,33 @@ describe("runtime SDK contract server", () => {
     ]);
   });
 
+  test("includes completed event history in run snapshots", async () => {
+    const runId = `run-snapshot-${crypto.randomUUID()}`;
+    const started = await server.handleRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: { prefer: "respond-async" },
+        body: JSON.stringify({ runId, input: { text: "snapshot" } })
+      }),
+      { suffix: "world" }
+    );
+    expect(started?.status).toBe(200);
+
+    const snapshot = await server.handleRequest(
+      new Request(`http://runtime/runs/${encodeURIComponent(runId)}`),
+      { suffix: "world" }
+    );
+
+    expect(await snapshot?.json()).toEqual({
+      response: { text: "snapshot world" },
+      events: [
+        { type: "status", text: "working" },
+        { type: "message_delta", text: "snapshot" },
+        { type: "final", response: { text: "snapshot world" } }
+      ]
+    });
+  });
+
   test("authenticates Bun WebSocket event streams with the bearer header", async () => {
     const runId = `run-bun-ws-${crypto.randomUUID()}`;
     let bunServer: Bun.Server<{ runId: string }> | undefined;

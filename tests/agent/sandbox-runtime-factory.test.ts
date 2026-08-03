@@ -479,6 +479,61 @@ describe("createSandboxRuntimeFactory", () => {
     store.close();
   });
 
+  test("reprovisions an attached runtime with an incompatible contract version", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider();
+    const capabilityUrls: string[] = [];
+    let firstSandboxCapabilityCalls = 0;
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "burble-native",
+      image: "burble-native-runtime:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      startCommand: ["burble-native-entrypoint"],
+      healthCheckAttempts: 1,
+      fetch: async (url) => {
+        if (url.endsWith("/capabilities")) {
+          capabilityUrls.push(url);
+          const firstSandboxVersion =
+            firstSandboxCapabilityCalls++ === 0 ? "2" : "1";
+          return Response.json({
+            runtimeType: "burble-native",
+            version: url.includes("sandbox-1")
+              ? firstSandboxVersion
+              : "2",
+          });
+        }
+        return new Response("ok");
+      },
+    });
+
+    const first = await factory.getOrCreateRuntime(principal);
+    const second = await factory.getOrCreateRuntime(principal);
+
+    expect(second.id).toBe(first.id);
+    expect(second.endpointUrl).toBe("http://sandbox-2.local:8080");
+    expect(provider.provisionCalls).toHaveLength(2);
+    expect(provider.terminated).toEqual(["sandbox-1"]);
+    expect(capabilityUrls).toEqual([
+      "http://sandbox-1.local:8080/capabilities",
+      "http://sandbox-1.local:8080/capabilities",
+      "http://sandbox-2.local:8080/capabilities",
+    ]);
+    expect(
+      store
+        .listAgentRuntimeEvents(first.id)
+        .filter((event) => event.eventType === "runtime_stopped")
+        .map((event) => event.summaryJson),
+    ).toContainEqual(
+      expect.stringContaining("runtime_contract_version_mismatch"),
+    );
+
+    store.close();
+  });
+
   test("reprovisions existing MCP-enabled sandboxes before the injected runtime JWT expires", async () => {
     const store = createTokenStore(":memory:");
     const provider = createFakeRuntimeSandboxProvider();

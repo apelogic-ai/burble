@@ -2,7 +2,6 @@ import type { AgentJobCapabilityRecord, ScheduledJobRecord } from "../db";
 import {
   expandProviderToolDependencies,
   findProviderToolSpec,
-  providerToolCatalog,
 } from "../providers/catalog";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 
@@ -47,19 +46,35 @@ export type SchedulerTaskGrant = Pick<
   AgentJobCapabilityRecord,
   "requiredTools" | "expectedTools"
 > &
-  Partial<Pick<AgentJobCapabilityRecord, "stateRefs">>;
+  Partial<Pick<AgentJobCapabilityRecord, "operationGrants" | "stateRefs">>;
+
+export const LEGACY_SCHEDULED_TASK_CONTRACT_MESSAGE =
+  "This scheduled task uses a legacy capability contract without resolved expected operations. Recreate or re-save the scheduled task before running it.";
 
 export function validateScheduledTask(
   record: ScheduledJobRecord,
   capability: SchedulerTaskGrant | null,
 ): SchedulerTaskValidation {
+  const grantedTools = [...(capability?.requiredTools ?? [])].sort();
+  const legacyContractIssue = legacyScheduledTaskContractIssue(
+    record,
+    capability,
+  );
+  if (legacyContractIssue) {
+    return {
+      ok: false,
+      expectedTools: [],
+      grantedTools,
+      errors: [legacyContractIssue],
+      warnings: [],
+    };
+  }
   const expectedTools = expandProviderToolDependencies(
     capability?.expectedTools === null ||
       capability?.expectedTools === undefined
       ? inferAllowedToolsForScheduledJob(record)
       : capability.expectedTools,
   );
-  const grantedTools = [...(capability?.requiredTools ?? [])].sort();
   const grantedToolSet = new Set(grantedTools);
   const errors: SchedulerTaskValidationIssue[] = [];
   const warnings: SchedulerTaskValidationIssue[] = [];
@@ -73,6 +88,18 @@ export function validateScheduledTask(
       });
     }
     const spec = findProviderToolSpec(tool);
+    if (
+      spec?.operationNameInput &&
+      !capability?.operationGrants?.some(
+        (grant) => grant.tool === spec.name && Boolean(grant.operation.trim()),
+      )
+    ) {
+      errors.push({
+        code: "missing_operation_grant",
+        message: `Task requires an exact downstream operation binding for ${tool}.`,
+        tool,
+      });
+    }
     for (const stateInput of spec?.stateRefRequired
       ? (spec.stateRefInputs ?? [])
       : []) {
@@ -93,6 +120,31 @@ export function validateScheduledTask(
     grantedTools,
     errors,
     warnings,
+  };
+}
+
+export function legacyScheduledTaskContractIssue(
+  record: ScheduledJobRecord,
+  capability: SchedulerTaskGrant | null,
+): SchedulerTaskValidationIssue | null {
+  if (
+    !capability ||
+    capability.expectedTools !== null &&
+      capability.expectedTools !== undefined
+  ) {
+    return null;
+  }
+  const hasProviderGrant = capability.requiredTools.some((tool) =>
+    Boolean(findProviderToolSpec(tool)),
+  );
+  const impliesProviderWork =
+    inferAllowedToolsForScheduledJob(record).length > 0;
+  if (!hasProviderGrant && !impliesProviderWork) {
+    return null;
+  }
+  return {
+    code: "legacy_execution_contract",
+    message: LEGACY_SCHEDULED_TASK_CONTRACT_MESSAGE,
   };
 }
 
@@ -117,18 +169,5 @@ function isExpectedToolCovered(
   expectedTool: string,
   grantedToolSet: Set<string>,
 ): boolean {
-  if (grantedToolSet.has(expectedTool)) {
-    return true;
-  }
-
-  const expectedSpec = findProviderToolSpec(expectedTool);
-  if (!expectedSpec) {
-    return false;
-  }
-  return providerToolCatalog.some(
-    (tool) =>
-      tool.provider === expectedSpec.provider &&
-      tool.grantCoverage === "provider" &&
-      grantedToolSet.has(tool.name),
-  );
+  return grantedToolSet.has(expectedTool);
 }

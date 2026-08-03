@@ -472,6 +472,7 @@ describe("scheduler timer", () => {
       jobId: "job-open-prs",
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: ["github_search_issues"],
       requiredTools: ["github_list_my_pull_requests"],
       runtimeType: "openclaw",
       capabilityProfile: "scheduled_job",
@@ -618,6 +619,11 @@ describe("scheduler timer", () => {
       jobId: "job-ai-news",
       workspaceId: "T123",
       slackUserId: "U123",
+      expectedTools: [
+        "google_append_to_drive_text_file",
+        "google_get_drive_file",
+        "web_search",
+      ],
       requiredTools: [
         "google_append_to_drive_text_file",
         "google_get_drive_file",

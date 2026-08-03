@@ -29,6 +29,12 @@ import {
   mcpGwGoogleToolCatalog,
 } from "./mcp-gw-provider-tools";
 import { resolveMcpUserAssertion } from "./user-assertion";
+import {
+  advertisedDynamicTools,
+  dynamicOperationName,
+  dynamicToolArguments,
+  isAdvertisedDynamicOperation,
+} from "./mcp-gw-dynamic-tools";
 
 type GoogleTools = ReturnType<typeof createGoogleTools>;
 type GoogleToolArgs = Record<string, unknown>;
@@ -52,8 +58,14 @@ export function registerGoogleMcpTools(input: {
     if (!isProviderMcpToolEnabled(input.policy, spec.name)) {
       continue;
     }
+    const isMcpGwFacade =
+      spec.implementation === "listMcpTools" ||
+      spec.implementation === "callMcpTool";
+    if (isMcpGwFacade && !input.config.googleViaMcpGw) {
+      continue;
+    }
     const handler = handlers[spec.implementation];
-    if (!handler) {
+    if (!handler && !isMcpGwFacade) {
       throw new Error(`Missing Google MCP handler for ${spec.implementation}`);
     }
 
@@ -67,7 +79,7 @@ export function registerGoogleMcpTools(input: {
       async (args) => {
         if (
           input.config.googleViaMcpGw &&
-          canAdaptMcpGwGoogleToolCall(spec.name, args)
+          (isMcpGwFacade || canAdaptMcpGwGoogleToolCall(spec.name, args))
         ) {
           return mcpToolResult(
             await handleMcpGwGoogleToolRequest({
@@ -85,7 +97,11 @@ export function registerGoogleMcpTools(input: {
             input.store,
             input.runtime,
             "google",
-            (connection) => handler(connection, args as GoogleToolArgs)
+            (connection) =>
+              (handler as GoogleMcpHandler)(
+                connection,
+                args as GoogleToolArgs
+              )
           )
         );
       }
@@ -93,24 +109,13 @@ export function registerGoogleMcpTools(input: {
   }
 }
 
-async function handleMcpGwGoogleToolRequest(input: {
+export async function handleMcpGwGoogleToolRequest(input: {
   config: Config;
   runtime: AgentRuntimeRecord;
   deps: ProviderMcpDeps;
   toolName: string;
   args: GoogleToolArgs;
 }): Promise<ToolResult<unknown>> {
-  const adaptedTool = adaptMcpGwGoogleToolCall(input.toolName, input.args);
-  if (!adaptedTool.ok) {
-    return {
-      classification: "user_private",
-      content: {
-        error: "mcp_gw_tool_not_adapted",
-        message: adaptedTool.message
-      }
-    };
-  }
-
   if (
     !input.config.mcpGwMcpUrl ||
     !input.config.mcpGwAudience ||
@@ -149,20 +154,74 @@ async function handleMcpGwGoogleToolRequest(input: {
       url: input.config.mcpGwMcpUrl,
       bearerToken: assertion.token,
     };
-    const advertisedToolNames = await (
+    const advertisedTools = await (
       input.deps.listMcpGwTools ?? listMcpGwTools
-    )(clientConfig).then((tools) => tools.map((tool) => tool.name));
+    )(clientConfig);
+    const advertisedToolNames = advertisedTools.map((tool) => tool.name);
     if (
       isMcpGwProviderOAuthOnlyCatalog(
         advertisedToolNames,
         mcpGwGoogleToolCatalog,
       )
     ) {
-      return mcpGwGoogleToolResult(adaptedTool, {
-        status: "needs_connect",
-        provider: "google",
-        message: "Google Workspace account is not connected",
-      });
+      return googleConnectionRequiredResult();
+    }
+
+    if (input.toolName === "google_list_mcp_tools") {
+      return {
+        classification: "user_private",
+        content: advertisedDynamicTools({
+          tools: advertisedTools,
+          isOperationName: mcpGwGoogleToolCatalog.isProviderToolName,
+          excludedNames: mcpGwGoogleToolCatalog.oauthToolNames,
+        }),
+      };
+    }
+
+    if (input.toolName === "google_call_mcp_tool") {
+      const args = dynamicToolArguments(input.args);
+      const name = dynamicOperationName(args);
+      if (
+        !isAdvertisedDynamicOperation({
+          name,
+          tools: advertisedTools,
+          isOperationName: mcpGwGoogleToolCatalog.isProviderToolName,
+          excludedNames: mcpGwGoogleToolCatalog.oauthToolNames,
+        })
+      ) {
+        return {
+          classification: "user_private",
+          content: {
+            error: "google_mcp_tool_not_allowed",
+            message: `MCP-GW tool \`${name}\` is not an advertised Google operation.`,
+          },
+        };
+      }
+      const toolArguments = dynamicToolArguments(args.arguments);
+      const result = await (input.deps.callMcpGwTool ?? callMcpGwTool)(
+        clientConfig,
+        { name, arguments: toolArguments }
+      );
+      return mcpGwGoogleToolResult(
+        {
+          ok: true,
+          burbleToolName: input.toolName,
+          name,
+          arguments: toolArguments,
+        },
+        result
+      );
+    }
+
+    const adaptedTool = adaptMcpGwGoogleToolCall(input.toolName, input.args);
+    if (!adaptedTool.ok) {
+      return {
+        classification: "user_private",
+        content: {
+          error: "mcp_gw_tool_not_adapted",
+          message: adaptedTool.message
+        }
+      };
     }
     if (!advertisedToolNames.includes(adaptedTool.name)) {
       return {
@@ -204,6 +263,17 @@ async function handleMcpGwGoogleToolRequest(input: {
       }
     };
   }
+}
+
+function googleConnectionRequiredResult(): ToolResult<unknown> {
+  return {
+    classification: "user_private",
+    content: {
+      error: "google_not_connected",
+      message: "Google Workspace account is not connected. Reconnect with `/auth google`.",
+      authCommand: "/auth google"
+    }
+  };
 }
 
 function createGoogleMcpHandlers(

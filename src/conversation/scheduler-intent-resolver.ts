@@ -7,6 +7,7 @@ import type {
   SchedulerIntentResolver,
   SchedulerIntentResolverResult,
   SchedulerTaskPlan,
+  SchedulerTaskPlanOperation,
   SchedulerTaskPlanStep,
   SchedulerTaskPreparationStep,
 } from "./types";
@@ -68,7 +69,16 @@ export function createLlmSchedulerIntentResolver(
       deps.logWarn?.("Scheduler intent resolver returned invalid JSON.");
       return invalidSchedulerIntentResponse();
     }
-    if (needsSchedulerMutationRepair(responseText, parsed)) {
+    const requiresRepairTaskPlan = Boolean(
+      input.repair?.taskPlan && parsed.intent === "refresh_job_contract",
+    );
+    if (
+      needsSchedulerMutationRepair(
+        responseText,
+        parsed,
+        requiresRepairTaskPlan,
+      )
+    ) {
       deps.logWarn?.(
         "Scheduler intent resolver returned an incomplete or malformed mutation payload; attempting one structural repair.",
       );
@@ -77,7 +87,10 @@ export function createLlmSchedulerIntentResolver(
           generate({
             model,
             system: schedulerIntentSystemPrompt,
-            prompt: schedulerMutationRepairPrompt(responseText),
+            prompt: schedulerMutationRepairPrompt(
+              responseText,
+              input.repair,
+            ),
             maxRetries: 0,
           }),
           timeoutMs,
@@ -90,7 +103,11 @@ export function createLlmSchedulerIntentResolver(
         if (
           !repaired ||
           !isSameSchedulerMutationTarget(parsed, repaired) ||
-          needsSchedulerMutationRepair(repairedResponse.text, repaired)
+          needsSchedulerMutationRepair(
+            repairedResponse.text,
+            repaired,
+            requiresRepairTaskPlan,
+          )
         ) {
           deps.logWarn?.("Scheduler mutation structural repair remained invalid.");
           return invalidSchedulerIntentResponse();
@@ -154,12 +171,15 @@ function invalidSchedulerIntentResponse(): SchedulerIntentResolverResult {
 function needsSchedulerMutationRepair(
   responseText: string,
   parsed: SchedulerIntentResolverResult,
+  requireTaskPlan = false,
 ): boolean {
   const raw = parseJsonRecord(responseText);
   if (raw && Object.hasOwn(raw, "taskPlan") && !parsed.taskPlan) {
     return true;
   }
   switch (parsed.intent) {
+    case "refresh_job_contract":
+      return requireTaskPlan && !parsed.taskPlan;
     case "create_job":
       return !parsed.create;
     case "update_job_prompt":
@@ -190,12 +210,27 @@ function isSameSchedulerMutationTarget(
   );
 }
 
-function schedulerMutationRepairPrompt(originalResponse: string): string {
+function schedulerMutationRepairPrompt(
+  originalResponse: string,
+  repair?: {
+    jobId: string | null;
+    errors: string[];
+    taskPlan?: SchedulerTaskPlan;
+  },
+): string {
   return [
     "Repair this scheduler-intent JSON so its mutation payload matches the required schema.",
     "Preserve the original intent and jobId exactly.",
     "Preserve the requested task semantics, preparation semantics, instructions, and step ordering.",
     "Use ordinary JSON identifiers and exact canonical tool names from the system catalog.",
+    ...(repair?.taskPlan
+      ? [
+          "This is a dynamic-operation pre-flight repair.",
+          `Original recurring task plan: ${JSON.stringify(repair.taskPlan)}`,
+          ...repair.errors.map((error) => `Pre-flight error: ${error}`),
+          "Return the original task plan unchanged except for adding exact advertised selections to recurring operations arrays.",
+        ]
+      : []),
     "Return one complete JSON object and no markdown.",
     "Original response:",
     originalResponse,
@@ -220,6 +255,9 @@ function mergeRepairedTaskPlan(
     steps: original.steps.map((step, index) => ({
       ...step,
       tools: repaired.steps[index]!.tools,
+      ...(repaired.steps[index]!.operations
+        ? { operations: repaired.steps[index]!.operations }
+        : {}),
     })),
     preparation: original.preparation.map((step, index) => ({
       ...step,
@@ -279,7 +317,7 @@ function withTimeout<T>(
 const schedulerIntentSystemPrompt = [
   "You classify Slack messages for Burble's scheduled-job control plane.",
   "Return only one JSON object. Do not include markdown.",
-  "Valid intents: list_jobs, list_job_runs, show_task, validate_task, create_job, trigger_job, pause_job, resume_job, delete_job, update_job_delivery, update_job, update_job_schedule, update_job_prompt, update_job_runtime, latest_run_status, none.",
+  "Valid intents: list_jobs, list_job_runs, show_task, validate_task, refresh_job_contract, create_job, trigger_job, pause_job, resume_job, delete_job, update_job_delivery, update_job, update_job_schedule, update_job_prompt, update_job_runtime, latest_run_status, none.",
   "Classify only scheduler/cron/background-job control requests.",
   "Never mutate a scheduled task from an ordinary conversational follow-up, even when a current task has a similar topic. The current message must explicitly refer to a job, task, schedule, cron, or other scheduler control action.",
   "Task specs are configured scheduled tasks. Job runs are executions of task specs.",
@@ -289,8 +327,13 @@ const schedulerIntentSystemPrompt = [
   "create.prompt is the executable task only. Remove schedule and delivery clauses such as every 30 min, hourly, report back here, to this channel.",
   "For update_job_schedule, include schedule with the new cron schedule and include jobId when one current task/job clearly matches the user reference.",
   "For update_job_prompt, include prompt with the new executable task prompt and include jobId when one current task/job clearly matches the user reference.",
+  "Use refresh_job_contract when the user explicitly asks to re-save, refresh, re-resolve, rebind, or preflight an existing task against current provider catalogs while preserving its task semantics and settings. Include jobId. Omit taskPlan only on the initial classification when no pre-flight repair request is present.",
+  "During a refresh_job_contract pre-flight repair, return the supplied original recurring task plan unchanged except for adding exact advertised selections to its operations arrays. Keep preparation empty and do not alter instructions or tools.",
+  "refresh_job_contract is a mutation that rebuilds exact recurring operation grants; do not classify it as validate_task.",
   "When a task creation or update contains multiple requested steps, return taskPlan instead of copying the user's message into prompt.",
   "taskPlan.steps are recurring executable steps. Each step has id, instruction, and the exact recurring provider tool names it requires in tools.",
+  "For a recurring dynamic operation bridge, also include operations as an array of {tool, operation} using only exact operation names supplied by live pre-flight repair context.",
+  "Never invent a dynamic operation name. The control plane discovers the live operation catalog and will request one repair when exact selections are missing or stale.",
   "taskPlan.preparation contains one-time provider calls that must finish before the task is updated. Each preparation step has id, tool, input, saveAs, and optional purpose.",
   "Current task specs include opaque stateRefs. Preserve and reuse matching existing refs by default; do not rediscover or recreate them.",
   "Recurring tools marked stateRefRequired require a matching durable stateRef from the same provider. If no matching current stateRef exists, add a one-time preparation step that resolves or creates the resource and bind its returned id into recurring instructions with a {{resources.<saveAs>.<field>}} placeholder.",
@@ -342,7 +385,11 @@ function schedulerIntentPrompt(
     expectedTools?: string[];
     stateRefs?: unknown[];
   }>,
-  repair?: { jobId: string | null; errors: string[] },
+  repair?: {
+    jobId: string | null;
+    errors: string[];
+    taskPlan?: SchedulerTaskPlan;
+  },
 ): string {
   return [
     `Message: ${JSON.stringify(text)}`,
@@ -368,8 +415,13 @@ function schedulerIntentPrompt(
       ? [
           "Pre-flight repair request:",
           `- jobId=${JSON.stringify(repair.jobId)}`,
+          ...(repair.taskPlan
+            ? [
+                `- Original recurring task plan: ${JSON.stringify(repair.taskPlan)}`,
+              ]
+            : []),
           ...repair.errors.map((error) => `- ${error}`),
-          "Return one corrected candidate for the same job and requested mutation. Do not add preparation side effects.",
+          "Return one corrected candidate for the same job and requested mutation. Preserve the original recurring task plan exactly except for operation selections. Do not add preparation side effects.",
         ]
       : []),
     "Return JSON with shape:",
@@ -377,7 +429,9 @@ function schedulerIntentPrompt(
     'For create_job use: {"intent":"create_job","confidence":0.94,"jobId":null,"create":{"title":"Heart emoji every 30 min","prompt":"Post exactly this message: ❤️","schedule":{"kind":"cron","expression":"*/30 * * * *","timezone":"UTC"}}}',
     'For update_job_schedule use: {"intent":"update_job_schedule","confidence":0.94,"jobId":"job_123","schedule":{"kind":"cron","expression":"*/45 * * * *","timezone":"UTC"}}',
     'For update_job_prompt use: {"intent":"update_job_prompt","confidence":0.94,"jobId":"job_123","prompt":"Post exactly this message: ❤️❤️"}',
+    'For a contract refresh use: {"intent":"refresh_job_contract","confidence":0.98,"jobId":"job_123"}',
     'For a planned update use: {"intent":"update_job_prompt","confidence":0.98,"jobId":"job_123","taskPlan":{"preparation":[],"steps":[{"id":"collect","instruction":"Find the latest news and select the top five.","tools":["web_search"]},{"id":"report","instruction":"Return the results.","tools":[]}]}}',
+    'For a repaired dynamic operation step use: {"id":"inspect","instruction":"Inspect the requested records.","tools":["dynamic_bridge_tool"],"operations":[{"tool":"dynamic_bridge_tool","operation":"exact_advertised_operation"}]}',
     'For update_job_runtime use: {"intent":"update_job_runtime","confidence":0.94,"jobId":"job_123","runtimeType":"burble-native"}',
     'For a composite update use: {"intent":"update_job","confidence":0.97,"jobId":"job_123","prompt":"Post exactly this message: ❤️","schedule":{"kind":"cron","expression":"*/15 * * * *","timezone":"UTC"},"runtimeType":"burble-native"}',
   ].join("\n");
@@ -407,6 +461,7 @@ export function parseSchedulerIntentResponse(
     intent !== "list_job_runs" &&
     intent !== "show_task" &&
     intent !== "validate_task" &&
+    intent !== "refresh_job_contract" &&
     intent !== "create_job" &&
     intent !== "trigger_job" &&
     intent !== "pause_job" &&
@@ -446,6 +501,7 @@ export function parseSchedulerIntentResponse(
       : null;
   const taskPlan =
     intent === "create_job" ||
+    intent === "refresh_job_contract" ||
     intent === "update_job_prompt" ||
     intent === "update_job"
       ? parseSchedulerTaskPlan(parsed.taskPlan)
@@ -504,10 +560,47 @@ function parseSchedulerTaskPlanStep(value: unknown): SchedulerTaskPlanStep | nul
   const instruction =
     typeof value.instruction === "string" ? value.instruction.trim() : "";
   const tools = parseToolNames(value.tools);
-  if (!id || !instruction || !tools) {
+  const operations =
+    value.operations === undefined
+      ? []
+      : parseSchedulerTaskPlanOperations(value.operations);
+  if (!id || !instruction || !tools || !operations) {
     return null;
   }
-  return { id, instruction, tools };
+  return {
+    id,
+    instruction,
+    tools,
+    ...(operations.length > 0 ? { operations } : {}),
+  };
+}
+
+function parseSchedulerTaskPlanOperations(
+  value: unknown,
+): SchedulerTaskPlanOperation[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const operations: SchedulerTaskPlanOperation[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (!isRecord(entry)) {
+      return null;
+    }
+    const tool = typeof entry.tool === "string" ? entry.tool.trim() : "";
+    const operation =
+      typeof entry.operation === "string" ? entry.operation.trim() : "";
+    if (!tool || !operation) {
+      return null;
+    }
+    const key = `${tool}\u0000${operation}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    operations.push({ tool, operation });
+  }
+  return operations;
 }
 
 function parseSchedulerPreparationStep(
