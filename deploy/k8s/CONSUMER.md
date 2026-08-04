@@ -39,6 +39,7 @@ HUBSPOT_CLIENT_SECRET
 OPENAI_API_KEY
 ANTHROPIC_API_KEY
 OLLAMA_API_KEY
+BURBLE_INFERENCE_API_KEY
 INTERNAL_API_TOKEN
 AGENT_RUNTIME_TOKEN_SECRET
 AGENT_RUNTIME_SANDBOX_TOKEN
@@ -93,6 +94,12 @@ agentgateway:
   mode: external
   externalUrl: https://agentgateway.platform.example.com/mcp
 ```
+
+In external mode, `BURBLE_INFERENCE_API_KEY` is the credential Burble sends to
+an external LiteLLM endpoint. Store it in the Secret referenced by
+`secret.existingSecret` (or materialized by `externalSecret`) rather than in the
+values file. Provider-owned keys such as `OPENAI_API_KEY` belong behind
+LiteLLM and are not required by Burble in this mode.
 
 ## 4. Deploy
 

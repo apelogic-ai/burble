@@ -40,6 +40,7 @@ At minimum, the client overlay must set:
   - `SLACK_APP_TOKEN`
   - `GITHUB_CLIENT_ID`
   - `GITHUB_CLIENT_SECRET`
+  - `BURBLE_INFERENCE_API_KEY` when `litellm.mode=external`
   - optional provider keys such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
     `JIRA_CLIENT_ID`, `GOOGLE_CLIENT_ID`, and matching secrets
 
@@ -66,7 +67,9 @@ litellm:
   externalBaseUrl: https://litellm.example.internal/v1
 ```
 
-The chart deploys no LiteLLM workload and only passes the URL to Burble.
+The chart deploys no LiteLLM workload and only passes the URL to Burble. Put
+`BURBLE_INFERENCE_API_KEY` in the app Secret; Burble sends it as the bearer
+credential to the external LiteLLM-compatible endpoint.
 
 ## agentgateway modes
 
@@ -95,6 +98,8 @@ The chart deploys no agentgateway workload and only passes the URL to Burble.
 ```bash
 helm lint deploy/k8s/chart -f deploy/k8s/chart/ci/test-values.yaml
 helm template burble deploy/k8s/chart -f deploy/k8s/chart/ci/test-values.yaml
+helm lint deploy/k8s/chart -f deploy/k8s/chart/ci/external-values.yaml
+helm template burble deploy/k8s/chart -f deploy/k8s/chart/ci/external-values.yaml
 ```
 
 ## Install example

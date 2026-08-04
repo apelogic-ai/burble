@@ -62,6 +62,36 @@ async function main(): Promise<void> {
   expectText(releaseDocs, tag, `docs/releases.md must include the current release tag ${tag}`);
   expectText(releaseWorkflow, "v*.*.*", "release workflow must run for version tags");
   expectText(releaseWorkflow, "gh release create", "release workflow must create GitHub Releases");
+  expectText(
+    releaseWorkflow,
+    "role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}",
+    "release workflow must assume the repository-variable AWS role"
+  );
+  expectText(
+    releaseWorkflow,
+    "platforms: linux/amd64",
+    "release workflow must build the supported Linux/amd64 image"
+  );
+  expectText(
+    releaseWorkflow,
+    '--app-version "$VERSION"',
+    "release workflow must pin chart appVersion to the release version"
+  );
+  expectText(
+    releaseWorkflow,
+    "wait-for-ecr-scan.ts",
+    "release workflow must enforce the ECR scan gate"
+  );
+  expectText(
+    releaseWorkflow,
+    "generate-release-report.ts",
+    "release workflow must generate immutable release evidence"
+  );
+  expectText(
+    releaseDocs,
+    "BURBLE_INFERENCE_API_KEY",
+    "release documentation must identify the external LiteLLM credential"
+  );
 }
 
 function readSemver(value: unknown, message: string): string {

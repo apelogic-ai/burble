@@ -1,0 +1,20 @@
+image:
+  repository: registry.example.invalid/platform/burble
+  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+config:
+  baseUrl: https://burble.example.invalid
+
+secret:
+  existingSecret: example-secret
+
+litellm:
+  mode: external
+  externalBaseUrl: https://inference.example.invalid/v1
+
+agentgateway:
+  mode: external
+  externalUrl: https://mcp.example.invalid/mcp
+
+networkPolicy:
+  enabled: false
