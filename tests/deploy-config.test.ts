@@ -106,6 +106,16 @@ describe("dev deploy config", () => {
     expect(caddyfile).toContain("reverse_proxy burble-app:3000");
   });
 
+  test("refreshes app runtime packages before installing operational tools", () => {
+    const upgradeIndex = appDockerfile.indexOf("apk upgrade --no-cache");
+    const installIndex = appDockerfile.indexOf(
+      "apk add --no-cache docker-cli openssh-client"
+    );
+
+    expect(upgradeIndex).toBeGreaterThanOrEqual(0);
+    expect(installIndex).toBeGreaterThan(upgradeIndex);
+  });
+
   test("passes Slack, GitHub, and Jira OAuth settings to the app", () => {
     for (const name of [
       "SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required",

@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.1.3]
+
+- Refresh final application-image OS packages before installing runtime tools so immutable
+  releases include current Alpine security fixes and pass the critical-finding gate.
+
 ## [0.1.2]
 
 - Add the deployable Burble Native runtime, scalable runtime-skill loading, and stricter managed
